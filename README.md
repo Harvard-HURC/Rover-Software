@@ -14,4 +14,7 @@ We use [pixi](https://pixi.prefix.dev/latest/#installation) to manage ROS packag
 ## Project Structure
 Most of our work is structured into folders called "packages". Whenever you create a new package, please add a description of it here:
 - `rover_description`: Contains the URDFs that define the rover's structure, joints, actuators, sensors, etc
+- `rover_sim`: Contains SDFs, URDFs, launch configurations, and any other tools that help with simulating the rover in Gazebo
 
+## Contributing
+Please do not push directly to the main branch. Any time you want to do work locally, please create a new branch with a descriptive name for that feature. To merge your work into the main branch, please create a pull request that can be reviewed by the team. (You can pull from your branch on the rover or base station any time you need to test with real hardware).
