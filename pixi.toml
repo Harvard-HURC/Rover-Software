@@ -5,7 +5,12 @@ name = "src"
 platforms = ["osx-arm64", "win-64", "linux-64"]
 version = "0.1.0"
 
+[target.osx-arm64.activation.env]
+GZ_TRANSPORT_LOCALHOST_ONLY="1"
+GZ_IP="127.0.0.1"
+
 [dependencies]
 ros-jazzy-desktop = ">=0.11.0,<0.12"
 ros2-ros-gz-sim = ">=1.0.23,<2"
 ros2-ros-gz-bridge = ">=1.0.23,<2"
+ros-dev-tools = ">=1.0.3,<2"
