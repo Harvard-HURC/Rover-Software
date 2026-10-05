@@ -1,0 +1,11 @@
+[workspace]
+authors = ["Beckett O'Brien <44044350+BeckettOBrien@users.noreply.github.com>"]
+channels = ["https://prefix.dev/robostack-jazzy"]
+name = "src"
+platforms = ["osx-arm64", "win-64", "linux-64"]
+version = "0.1.0"
+
+[dependencies]
+ros-jazzy-desktop = ">=0.11.0,<0.12"
+ros2-ros-gz-sim = ">=1.0.23,<2"
+ros2-ros-gz-bridge = ">=1.0.23,<2"

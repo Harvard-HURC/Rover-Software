@@ -57,3 +57,6 @@ CATKIN_IGNORE
 .DS_Store
 
 .idea/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
