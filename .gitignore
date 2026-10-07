@@ -11,7 +11,8 @@ sim/build/
 # Python bytecode caches
 __pycache__/
 
-# generated URC mission worlds, test courses, their models and maps (pixi run sim-worlds, sim-maps; deterministic)
+# generated URC mission worlds, test courses and their models (pixi run sim-worlds; deterministic), and their
+# rendered maps (pixi run sim-maps)
 sim/models/urc_*/
 sim/worlds/urc_*
 sim/worlds/proving_ground.*
