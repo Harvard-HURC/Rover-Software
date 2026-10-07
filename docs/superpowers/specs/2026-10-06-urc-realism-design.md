@@ -3,9 +3,11 @@
 Date: 2026-10-06
 Status: **implemented** (2026-10-07), in waves 0–3 on git branches merged into `main` (WS-0; WS-D, WS-T1,
 WS-A, WS-F1; WS-T2 in phases T2a and T2b, WS-F2; WS-V). This document is revision 2 of the design as it was
-reviewed, kept as written, except §5.8 (updated by WS-0) and this status. What changed during implementation,
-and where each goal and calibration target stands, is in §17 (Changes during implementation; §17.6 lists the
-fixes after the adversarial review). The code is the reference; `sim/README.md` describes it as built.
+reviewed, kept as written, except §5.8 (updated by WS-0), §6.3's motor rows (the user's top speed, 2026-10-07),
+short *As built* notes that point to §17 where the design no longer describes the rover, and this status. What
+changed during implementation, and where each goal and calibration target stands, is in §17 (Changes during
+implementation; §17.6 lists the fixes after the adversarial review, §17.7 the user's decisions of 2026-10-07).
+The code is the reference; `sim/README.md` describes it as built.
 
 Inputs (research of 2026-10-06). Every number below comes from one of these or carries a label:
 
@@ -50,7 +52,8 @@ After this work:
    packed ground and 0.26 on fresh sand, slowing as the wheels dig in. It judders when slow on rock. The loaded
    diagonal stalls when the current limit is below what the ground demands.
 3. **Pictures.** A patched terrain shader, a procedural sky with haze, the sun of the mission date, a visible
-   far-field horizon and wheel dust make the pictures read as a desert.
+   far-field horizon and wheel dust make the pictures read as a desert. *As built: no wheel dust by default
+   (§17.7).*
 4. **Fly and Map views.** The driver station gets a Fly view and a Map view, with a Gazebo-rendered orthophoto of
    each world.
 
@@ -60,7 +63,7 @@ After this work:
 |---|---|---|
 | "the terrains are still kind of simplistic", "less even" | Roughness of every ground type matches its MDRS counterpart at 4–32 m | Each synthetic ground type: the median plane-detrended RMS height at 4/8/16 m lies within the real p25–p75 of the same type, measured on the real Autonomy square painted by the same rules (§5.4). Each synthetic world's natural ground: RMS p50 and p90 at 4/8/16 m within ±30 % of the real whole-square distribution. Today's worlds are 3–4× too smooth at 4 m and 1.5–3× at 8 m, and about right at 16 m (M, verified rev2) |
 | "more kind of slabs" | Tabular caprock blocks and sub-metre ledges where MDRS has them | Block fields reproduce the measured cumulative counts N(≥1), N(≥2), N(≥4 m) within ±30 %, and 8–9 % cover by 1–7 m blocks (M). Features of 7 m or more are ledges or macro shape. Sizes below 1 m are extrapolated (A). Rims shed slabs; benches carry 0.1–1 m risers (§5.5) |
-| "sometimes dust or sandish" | Sand that sinks, resists, slips and digs in; dusty clay; gravel lags; dust behind the wheels | Spin in place on fresh loose sand: 0.26 ± 0.04 of the command. A sustained spin slows to 0.6–0.8× of that as the wheels dig in (§6.5, (A) strength, Q12). Wheels sit 2–3 cm into sand on screen. Dust plumes scale with speed, slip and surface |
+| "sometimes dust or sandish" | Sand that sinks, resists, slips and digs in; dusty clay; gravel lags; dust behind the wheels | Spin in place on fresh loose sand: 0.26 ± 0.04 of the command. A sustained spin slows to 0.6–0.8× of that as the wheels dig in (§6.5, (A) strength, Q12). Wheels sit 2–3 cm into sand on screen. Dust plumes scale with speed, slip and surface. *As built (§17.3, §17.7): strong dig-in by default; no dust by default, its rate rule behind a switch* |
 | "Take a look at how terrains actually look… load more detailed maps" | Real 0.5 m lidar and NAIP 2024 where a world stands on real ground | Autonomy is built from `route_area_lidar_0p5m.tif` and `route_area_naip2024.tif`. Gazebo-rendered map vs its colour map: smoothed Lab ΔE ≤ 5. Colour map vs boosted NAIP: ΔE ≤ 5 outside de-shaded and inpainted pixels (§11). Today the rendered map differs from NAIP by ΔE 29.3 (M) |
 | "analyze the soil that usually is in these kind of deserts" | Surfaces from the NRCS soil survey and published traction data | Every ground type carries μs, μk, Crr, bulldozing, slip, sinkage and dig-in, each with a source or an (A) label (§5.6). Autonomy's ground raster comes from SSURGO map units |
 | "I do not feel like this rover is real, it feels like a simulation" | Physical drivetrain and believable pictures | Drivetrain targets of §6.9 met. Terrain no longer mirror-like. Sky, haze, mission sun and a visible far field in every URC world and every station view |
@@ -97,13 +100,13 @@ After this work:
 | D12 | **A patched copy of gz-rendering's media**, made at build time from the pixi env plus a diff, and set via `GZ_RENDERING_RESOURCE_PATH`. It carries a Terra roughness fix, a procedural clear sky and distance haze. If the diff does not apply, it warns and the stock media are used; the build never fails. | (M) Stock Terra gives roughness 0 (a mirror) when a layer has no roughness map; the dark wavy "puddles" in today's worlds are sky reflections. (M/R [26]) gz-sim 8 never applies SDF `<fog>` or `<sky><cubemap_uri>`. Frame cost within noise. |
 | D13 | **Sun of the mission date**: 2027-05-28 10:30 MDT at 38.418 N, −110.777 → elevation 49.8°, azimuth 102°, direction (−0.630, 0.138, −0.764); intensity 1.4, colour (1.0, 0.95, 0.87); ambient (0.32, 0.34, 0.40). **NAIP is de-shaded before draping**, so slopes are not shaded twice. | (M) Computed with the NOAA algorithm in the render prototype; intensity honoured (mean ground 147 → 169 DN). Critique check: 49.9°, azimuth 102.5°. (M) NAIP 2024 has west-facing steep slopes 15 % darker: a baked morning sun. Draping it unchanged under a sim sun shades slopes twice and keeps NAIP's cast shadows under a different sun. De-shading method in §5.7. |
 | D14 | **A far-field ring per world** (visual GLB, 65 × 80 km on a 120 m grid, Earth curvature, a hole under the terrain) replaces the 8 km horizon plane. **Viewer cameras and the rover's RGB render to 80 km**; the depth image stays clipped at 40 m. A 2–8 km middle ring is phase 2. | (M) The Henry Mountains and Factory Butte appear in the right places; +260–300 MB; frame cost within noise, measured with far clip 80,000 m in every view. (R) Today's clip far is 2000 m (eye, chase), 6000 m (fly, rev1) and 40 m (rover RGB-D). gz-sensors 8 `RgbdCameraSensor` reads `<depth_camera><clip>` separately and clips the depth buffer, so RGB can reach 80 km while depth stays at 40 m. |
-| D15 | **Dust**: one particle emitter behind each rear wheel, on the rocker link. The drivetrain drives its rate from wheel speed, slip and the surface's dust factor. Emitters start with `<emitting>false</emitting>`, with an explicit `<topic>` and `<particle_scatter_ratio>` 0, so depth and lidar do not see dust (Q11). | (M) Particle emitters render in camera sensors; tuned plume parameters in `render/manifest.json`; rate can be changed at runtime on the emitter's `cmd` topic. (R) `<emitting>` defaults to true, and gz-sim creates emitters from link SDF even without the system. `particle_scatter_ratio` defaults to 0.65, which makes depth and lidar see particles. |
+| D15 | **Dust**: one particle emitter behind each rear wheel, on the rocker link. The drivetrain drives its rate from wheel speed, slip and the surface's dust factor. Emitters start with `<emitting>false</emitting>`, with an explicit `<topic>` and `<particle_scatter_ratio>` 0, so depth and lidar do not see dust (Q11). *As built (§17.1, §17.7): gz-rendering 8.2.2's depth shader ignores the scatter ratio and sees any visible particle, so the rover has no dust by default; `DriveParams.dust` brings it back.* | (M) Particle emitters render in camera sensors; tuned plume parameters in `render/manifest.json`; rate can be changed at runtime on the emitter's `cmd` topic. (R) `<emitting>` defaults to true, and gz-sim creates emitters from link SDF even without the system. `particle_scatter_ratio` defaults to 0.65, which makes depth and lidar see particles. |
 | D16 | **FlyCamera is its own C++ system.** It integrates velocity commands every physics step, keeps clearance from the world's own heightmap, and switches to orthographic projection from an `events::SceneUpdate` hook, keeping no rendering pointer. Its deadman runs on wall time by default and on sim time in tests. | (M) Picture motion CV 0.46 % with plugin integration, vs 26–35 % with Python `set_pose`. Blocking Python service calls stall ~1 s under busy subscribers. PreRender/Render/PostRender hooks cost 35–45 % sim speed; SceneUpdate costs nothing. SDF orthographic settings are ignored. A stored CameraPtr crashes gz at shutdown. |
 | D17 | **The Map view uses an offline orthophoto rendered by Gazebo** for each world (`sim/tools/render_map.py`), with live markers. The hillshade stays as a fallback, with a fixed metres-per-colour scale. The map is stale when any input changes: world SDF, heightmap, colour map, GLBs, media patch. | (M) 4096 px orthophotos in 4.7–17.7 s per world; 2–3.3 MB JPEG; tile seams geometrically continuous. |
 | D18 | **Tyre compliance (hub links with radial and axial springs) is phase 2**, behind a `Params` flag. | (M) It turns 400–480 Hz contact chatter into a physical 12–16 Hz wheel hop, but adds 8 joints and changes the joint tree. Its RTF cost was not measured separately. |
 | D19 | **Imagery: NAIP 2024 is the production source.** The NAIP 2021 route-area file is redundant; deleting it needs the user's OK (Q3). The far-field DEM and overview stay. | (M) NAIP 2024 is 4-band, newer, and on the DEM's pixel grid (each 1 m DEM pixel = 2 × 2 image pixels). |
 | D20 | **Default drivetrain parameters = the prototype's validated set** (gear 50, efficiency 0.8, 20 A), not the datasheet alternative (51, 0.7), until the real drivetrain is chosen (Q7). | (M) `results_summary.json`; (R) IMS 3-stage datasheet [22]. |
-| D21 | **Dig-in state per wheel on loose soil.** Extra sinkage grows with slip at the contact and heals with travel. It scales that wheel's rolling resistance (×D) and bulldozing (×D²), within a cap D_max (§6.5). The default is mild (D_max 1.15–1.25, (A)); a strong preset reproduces getting stuck (Q12). | (R) Wheel sinkage at slip 0.6 is 3–7× the static sinkage for lunar-rover wheels [36]; slip sinkage is a known soil–vehicle effect [35]. (R) URC 2017, Team Anveshak (45.6 kg): "When performing a zero radius turn in loose soil, one of the drive motors stalled"; the wheels "got stuck in the soil as they were trying to dig the soil" [14]. Without dig-in, the model cannot dig: spinning on sand needs only 5–8 N·m per wheel, against 35.6 N·m available. |
+| D21 | **Dig-in state per wheel on loose soil.** Extra sinkage grows with slip at the contact and heals with travel. It scales that wheel's rolling resistance (×D) and bulldozing (×D²), within a cap D_max (§6.5). The default is mild (D_max 1.15–1.25, (A)); a strong preset reproduces getting stuck (Q12). *As built (§17.1, §17.7): the strong preset is the default, straight-climb stalls in loose ground included.* | (R) Wheel sinkage at slip 0.6 is 3–7× the static sinkage for lunar-rover wheels [36]; slip sinkage is a known soil–vehicle effect [35]. (R) URC 2017, Team Anveshak (45.6 kg): "When performing a zero radius turn in loose soil, one of the drive motors stalled"; the wheels "got stuck in the soil as they were trying to dig the soil" [14]. Without dig-in, the model cannot dig: spinning on sand needs only 5–8 N·m per wheel, against 35.6 N·m available. |
 | D22 | **`DriveParams.mode` = `diffdrive` \| `physical`.** In wave 1 the default stays `diffdrive`, and its generated output stays byte-identical. WS-T2 flips the default at the start of wave 2. DiffDrive stays as a permanent variant for A/B tests, the cost regression and as a fallback. | (Critique E) A rover-model change in wave 1 would change tests owned by other workstreams and deadlock the wave gate. The "≤ +25 % vs DiffDrive" check needs a DiffDrive rover. (M) DiffDrive and torque control must never be in the same model: with DiffDrive present, `Joint::SetForce` overrides its velocity command and the rover does not move. |
 | D23 | **Slip compliance uses the real wheel speed (no floor) and is zero while a contact sticks.** One isotropic compliance per contact. | (R) DART slip compliance is constraint force mixing on the friction rows: slip speed = compliance × force, even at rest (`dart/dynamics/ShapeFrame.hpp`; gz-physics `ContactProperties.hh` "force-dependent slip"). Revision 1's 0.1 m/s floor would make a parked rover creep, about 0.5 m/min on 15° regolith (computed, critiques P and E). gz `WheelSlip` uses the real wheel speed. |
 | D24 | **Effective-track multiplier** `track_multiplier` in the drivetrain, default 1.0 (raw skid-steer response). Like Clearpath's `wheel_separation_multiplier`, it scales both the commanded wheel-speed difference and the odometry track. | (R) Clearpath ships 1.875 for Husky [18]. Without compensation, the operator gets 0.18–0.44 of the commanded yaw rate (§5.6). The default is a user decision (Q10). |
@@ -538,6 +541,8 @@ Other model changes:
   from `Params.wheel_speed` × `Params.wheel_radius`.
 - The tyre collision's friction becomes isotropic μ 1.0 (no `fdir1`). The plugin overrides every wheel contact.
 - The dust emitters are declared with `<emitting>false</emitting>`, `<topic>` and `<particle_scatter_ratio>0`.
+  *As built: the emitters, `<dust_rate>`, the `<dust>` groups and `<dust_rule>` only with `DriveParams.dust`,
+  off by default (§17.7).*
 - DiffDrive must be removed, not kept alongside (D22).
 
 In wave 1, all of these changes exist only in the `physical` variant. At the start of wave 2, WS-T2 makes the
@@ -645,7 +650,8 @@ under the wheel's deepest contact.
     settles at D = 1.22 (computed). That is far milder than the 3–7× of [36], chosen so that the default spin
     slows but does not stop.
   - Spinning stops entirely once Crr·D·c + k_b·D²·a ≥ μk·c: on sand near D ≈ 1.7. A "strong" preset (D_max 2.0,
-    dig_rate 0.05) reproduces Anveshak's stuck zero-radius turn [14]; choosing it is Q12.
+    dig_rate 0.05) reproduces Anveshak's stuck zero-radius turn [14]; choosing it is Q12. *As built: the
+    strong preset is the default (§17.1), kept with its straight-climb stalls (§17.7).*
   - The state is not geometric: the wheel does not visibly sink further (§4).
 - **Slip**: from slip compliance (§6.4). On flat sand at 0.5 m/s it gives slip × Crr = 20 % (M), which restates
   the parameters (§6.9).
@@ -656,6 +662,7 @@ under the wheel's deepest contact.
     (0.80, 0.70, 0.56) fading alpha 0.28 → 0; soft puff texture.
   - Emitters sit on the rocker links behind the rear wheels (a wheel link spins).
   - Worlds load `gz-sim-particle-emitter-system`.
+  - *As built: all of this only with `DriveParams.dust`, off by default; the rover has no dust (§17.7).*
 
 ### 6.6 Solver
 
@@ -745,7 +752,7 @@ input parameters and checks they are wired. **(A)** means it tests an assumed su
      worlds, so only the geometry is per world.
    - The horizon plane goes; the catch-floor box stays.
 5. **Vegetation and pebbles** (D10, §5.5) as merged GLB chunks.
-6. **Dust** (D15).
+6. **Dust** (D15). *As built: off by default (§17.7).*
 7. **Cameras**:
    - Clip far 80,000 m for the eye, chase and fly cameras and the rover's RGB.
    - The rover's depth stays 0.1–40 m via `<depth_camera><clip>`, which gz-sensors 8 `RgbdCameraSensor` honours.
@@ -1189,6 +1196,8 @@ wave 2 if Q2 approves it.
 
 ## 14. Open questions for the user
 
+*As built: the user's answers are in §17.1, and those of 2026-10-07 on what the build left open in §17.7.*
+
 1. **Real terrain for Astrobiology?** Move it onto the real 0.5 m DEM and NAIP at its real coordinates (units
    re-placed on the real banded hills, wash and ledge there)? Or keep today's layout with real micro-relief (the
    default)? Delivery's designed course (ridge and radio shadow) stays synthetic either way.
@@ -1366,7 +1375,7 @@ diagnosis and fix were taken. **Accepted, different fix** means the diagnosis wa
 | E6 | A rover-model change in wave 1 crosses ownership; the gate can deadlock; no DiffDrive for the cost regression; simulate.py lacks overrides | Accepted | `DriveParams.mode` with a byte-identical default in wave 1, flipped by WS-T2 in phase T2a (D22, §12); DiffDrive kept as a variant; simulate.py gains rover and Params overrides (WS-0); `Params.wheel_speed` and `wheel_radius` kept for the station |
 | E7 | Shared working tree with no git; generated outputs and the build dir are unowned | Accepted | D25: worktrees after `git init` (Q9) or private copies, with per-copy build dirs; generated outputs only in the owner's copy; no `sim-test` inside a wave (§12) |
 | E8 | Ownership gaps: media.py, TerrainType fields, NAIP reader, fly model in gen_model, WS-T2 load | Accepted; one fix rejected | media.py → WS-A; WS-0 freezes the dataclasses, adds `dem.read_raster` and splits `viewers.py` (owned by WS-F1, then WS-F2); props.py not edited in wave 1. **Rejected**: splitting WS-T2 into two agents, because both halves edit `world.py`. Instead, T2 runs as two serial phases with a checkpoint |
-| E9 | Dust emitters default to emitting; depth sees particles | Accepted | `<emitting>false</emitting>`, explicit `<topic>`, `particle_scatter_ratio` 0 (D15); depth-under-dust test; Q11 |
+| E9 | Dust emitters default to emitting; depth sees particles | Accepted | `<emitting>false</emitting>`, explicit `<topic>`, `particle_scatter_ratio` 0 (D15); depth-under-dust test; Q11. *As built: the ratio never reaches the depth shader, so the rover has no dust by default (§17.1, §17.7)* |
 | E10 | `cmd_timeout` 0.5 s breaks GUI Teleop | Accepted | Default 0 (hold the last command, like DiffDrive); the station keeps its own deadman (§6.2); test |
 | E11 | G1 is low risk for collision; Delivery and Astrobiology at 2049² are not gated | Accepted | G1 idle result recorded (§10.2), with a driving run added; new gate G7 for 2049² |
 | E12 | The slab recipe cannot reach its own cover target | Accepted | As P10 |
@@ -1409,7 +1418,7 @@ tuned what the targets needed and wrote this section. Measurements are on the M4
 | Q | Decision | Built as |
 |---|---|---|
 | Q1 | Astrobiology keeps its layout, with real micro-relief | As decided (relief swatches, badland belts, slabs, risers) |
-| Q2 | Equipment Servicing on Dantzig, approximate per-wheel friction, no lander optimisation | Dantzig there (gate G5: PGS 0.86× by CPU time). The lander's collisions got collide bitmask `ABOVE_GROUND` (17.2): a filter, not an optimisation of the lander, but listed for the user to confirm |
+| Q2 | Equipment Servicing on Dantzig, approximate per-wheel friction, no lander optimisation | Dantzig there (gate G5: PGS 0.86× by CPU time). The lander's collisions got collide bitmask `ABOVE_GROUND` (17.2): a filter, not an optimisation of the lander; the user approved it on 2026-10-07 (17.7) |
 | Q3 | Keep all data | Nothing deleted; the far-field rasters moved to `sim/data/dem` and `sim/data/imagery` |
 | Q4 | No wet variant | Not built |
 | Q5 | In Fly a gamepad still drives; Fly/Map marked sim only; no referee logging | As decided |
@@ -1418,8 +1427,8 @@ tuned what the targets needed and wrote this section. Measurements are on the M4
 | Q8 | Wheel type unknown | Spec's assumption; tyre compliance off |
 | Q9 | git worktrees | One per workstream |
 | Q10 | Raw turn physics, `track_multiplier` 1.0; the station shows commanded vs achieved yaw rate | As decided (station Drivetrain panel and "got N %") |
-| Q11 | Depth and point cloud do not see dust | **Not achievable with visible dust** in gz-rendering 8.2.2: its depth shader takes every particle pixel with any red for a return, at a fixed scatter ratio that neither `particle_scatter_ratio` (1e-6, 0.1, 1 alike) nor a ratio sent on the emitter's topic reaches. Only a particle material without a diffuse stays out of the depth image, and it renders black: the rover's dust did so until the review (17.6), and now is visible and tan. The emitters sit behind the rear wheels, so a forward camera rarely sees it. `test_render` keeps the target as an expected failure, on the rover's own emitter |
-| Q12 | Strong dig-in by default, mild available | Strong on loose sand, wash sand and dusty clay; mild under a switch (`terrains.DIG`). The crusted sand sheet keeps mild values under both (17.2) |
+| Q11 | Depth and point cloud do not see dust. 2026-10-07: rather no dust than dust in depth (17.7) | **Met by having no dust**: the rover has no dust emitters unless `gen_model.DriveParams.dust` is on (off by default). Visible dust and Q11 do not go together in gz-rendering 8.2.2: its depth shader takes every particle pixel with any red for a return, at a fixed scatter ratio that neither `particle_scatter_ratio` (1e-6, 0.1, 1 alike) nor a ratio sent on the emitter's topic reaches. Only a particle material without a diffuse stays out of the depth image, and it renders black: the rover's dust did so until the review (17.6), then was visible and tan, and seen by depth. `test_render` keeps the target as an expected failure, on the rover's own emitter, as the record for the switch: when it passes, the dust can come back on |
+| Q12 | Strong dig-in by default, mild available. 2026-10-07: kept, straight-climb stalls in loose ground included (17.7) | Strong on loose sand, wash sand and dusty clay; mild under a switch (`terrains.DIG`). The crusted sand sheet keeps mild values under both (17.2) |
 | Q14 | Leebench as sand sheet + regolith with sparse gravel | As decided (`landscape.SSURGO_UNITS`) |
 
 Folded-in known issues: the rover RGB-D is 1280×720 (a 20 cm tag decodes to 5 m square on; 2.5 m before); the
@@ -1457,7 +1466,8 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 - No SDF camera noise: `<noise>` on an `rgbd_camera` aborts gz on Metal (Ogre RenderingAPIException).
 - `rover_test.sdf` and the test worlds of `simulate.py` stay on Dantzig, on which `test_drivetrain` was
   calibrated (§6.6 suggested PGS there). The DiffDrive variant is no longer byte-identical to the wave-0 rover
-  (§11): since T2a every rover carries the HD camera and the dust emitters.
+  (§11): since T2a every rover carries the HD camera and the dust emitters (since 2026-10-07 the emitters only
+  with `DriveParams.dust`, 17.7).
 
 **Ground (§5).**
 - Friction tiles are deleted entirely, and `features.Patch` lost `level` and `falloff`: zones only paint.
@@ -1528,9 +1538,9 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 | Each synthetic world's natural ground p50 and p90 within ±30 % of the real square | **Met** for Delivery and Astrobiology; **not met** for Equipment Servicing, by design | Delivery −18/−26 %, −7/−22 %, +4/−22 % (p50/p90 at 4/8/16 m); Astrobiology −4/−16 %, +7/−16 %, +20/−21 %; Equipment Servicing −32/−51 %, −20/−56 %, −12/−66 %: rule 1.d's "relatively flat" site (4 m p50 1.82 cm, §5.2 asks ≤ 2 cm) |
 | Block fields: N(≥1), N(≥2), N(≥4) within ±30 %, 8–9 % cover by 1–7 m blocks | **Met** (against the table less features ≥ 7 m) | 1.69/0.81/0.14 per 100 m² against 1.67/0.74/0.17; cover 8.3 %; badland edges 0.54/0.28/0.074 against 0.55/0.27/0.074 |
 | Sand: fresh spin 0.26 ± 0.04 | **Met** | 0.248 (closed form 0.261) |
-| Sand: a sustained spin slows to 0.6–0.8× (§6.5 mild) | **Replaced by the user's strong default, met**; mild met | Strong: 0.145 in the first second, 0.018 (0.07×) from the third: the rover cannot turn and drives out at ~0.22 m/s of 0.3 commanded. Mild: 0.19–0.22, 0.74× |
+| Sand: a sustained spin slows to 0.6–0.8× (§6.5 mild) | **Replaced by the user's strong default, met** (kept 2026-10-07, 17.7); mild met | Strong: 0.145 in the first second, 0.018 (0.07×) from the third: the rover cannot turn and drives out at ~0.22 m/s of 0.3 commanded. Mild: 0.19–0.22, 0.74× |
 | Wheels sit 2–3 cm into sand on screen | **Met** (by construction, checked in physics) | Collision carve 2 cm under sand, 3 cm under wash sand: a parked rover rests 0.030 m lower on wash sand than on the visual surface, 0.025 m lower than on regolith |
-| Dust scales with speed, slip and surface | **Met** for the rate; dust in depth not avoided (Q11); no fade (17.6) | Rate test: sand > 3× rock; one "off" when stopped |
+| Dust scales with speed, slip and surface | **Met** for the rate, behind a switch that is off by default (17.7): the rover has no dust, so none reaches the depth image (Q11). With the switch on, depth sees the dust and it does not fade (17.6) | Rate test, switch on: sand > 3× rock; one "off" when stopped. The default rover sends nothing to its emitter topics |
 | Autonomy from the 0.5 m lidar and NAIP 2024 | **Met** | 4097² over 2048 m; de-shaded NAIP 2024 |
 | Rendered map vs its colour map, smoothed CIE76 ≤ 5 | **Met** (after WS-V's sun change) | Median 2.35 Delivery, 2.34 Astrobiology, 2.11 Equipment Servicing, 2.44 Autonomy; p90 2.9–4.6 |
 | Colour map vs boosted NAIP ≤ 5 outside de-shaded and inpainted ground | **Met** | Median 0.52 on slopes < 5°, 0.72 at 5–10°, 1.17 at 10–20°, 2.28 over 20° (p90 6.3 there: the de-shading) |
@@ -1543,7 +1553,7 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 | Stick-slip judder on rock | **Not met** | 0.012 peak-to-peak/mean (target ≥ 0.8); 17.4 |
 | Stall at 0.7× / no stall at 1.3× the analytic current | **Met** | 6.8 A: 7.5° in 5 s (6.5 % of unlimited); 12.6 A: ≥ 85 %; monotonic |
 | Dig-in on loose sand | **Met** (strong default) | as above |
-| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); after the review fixes 460 (17.6); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed, 337 s after the review fixes; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach; all 6 again after them) |
+| The missions keep their meaning; mission tests pass | **Met**, with design changes the user approved on 2026-10-07 (17.7) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); after the review fixes 460 (17.6); 468 after the dust switch (17.7); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed, 337 s after the review fixes; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach; all 6 again after them) |
 | One catalogue, shared assets | **Met** | `terrains.TYPES`, `landscape` recipes, `urc_media`, `WorldBuilder`; missions say where and how much |
 
 ### 17.4 Status against §6.9
@@ -1571,20 +1581,14 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 
 ### 17.5 Open
 
-- Design changes the user has not yet approved: the Autonomy caprock rib, the 15° wash banks and soft-sand wash
-  floors, dig-in stopping Delivery's clay flank and the proving ground's sand dune, zones that no longer level
-  the ground, badland belts as round zones, recipe and NAIP shrubs instead of hand-placed ones, no zone decals
-  (Autonomy's zones now tint its drape, 17.6), the lander's collide bitmask (Q2), the sand sheet's mild dig-in
-  under the strong preset.
-- Strong dig-in also stalls straight climbs in loose ground (sand about 10–15°, dusty clay about 15°); the
-  user's decision spoke of spins. (The proving ground's 12° clay slope, reported stalled 2.7 m up, is climbed:
-  that stall and its flat sand's crawl were the PGS slip artefact of 17.6.)
+On 2026-10-07 the user decided what this section listed for approval, the strong dig-in's climb stalls and
+dust in depth (17.7). Still open:
 - The synthetic worlds' palettes are more saturated than the real ground as Autonomy drapes it: the sand
   sheet's (237, 176, 132) against Autonomy's draped sand sheet (230, 198, 158), CIE76 14.3; sand 14.7; silt flat
   9.1; clay crust 5.5 (§5.7's rule takes chroma from the Munsell colour, the drape from NAIP). From above the
   synthetic worlds read as orange blobs on beige (`realism_contact_sheet.jpg`). Ground photos (Q13) would settle
   which is right.
-- The slow-turn judder (17.4); dust in depth (Q11) against visible dust; no camera noise.
+- The slow-turn judder (17.4); no camera noise.
 - The rover high-centres on drops of 0.6 m and more (Delivery's 0.6 and 1.0 m ledges), with either drivetrain;
   the course goes round them.
 - `/model/rover/ground_truth`'s twist spikes (OdometryPublisher); ROS consumers should differentiate the pose.
@@ -1641,7 +1645,8 @@ findings; all were fixed on `main`, each with a regression test, unless noted.
 - The rover's dust rendered black: a particle material without a diffuse is black. The sprite now carries
   the dust's colour and opacity (gz-rendering 8 applies no colour range: `SetColorRange` is disabled, a colour
   range image changed nothing), so a particle no longer fades; with a white diffuse it shows tan, and the
-  depth image sees it (Q11, 17.1).
+  depth image sees it (Q11, 17.1). Since the user's decision of 2026-10-07 the rover has no dust unless it is
+  switched on (17.7).
 - The media cache key covers the generator's defaults, the sources of the package modules its module uses and
   the files its arguments name; the map's staleness ignores what only physics reads (collisions, the solver)
   and includes the light the media patch is filled with.
@@ -1659,4 +1664,21 @@ findings; all were fixed on `main`, each with a regression test, unless noted.
   over the ground under their line; an orthographic camera is drawn from 50 m above the highest ground it may
   fly over (terrain in its window above it was cut away; a near plane behind the camera in the custom
   projection changed nothing).
+
+### 17.7 The user's decisions (2026-10-07)
+
+The user answered what the build had left open (17.5):
+
+| Open item | Decision | Built as |
+|---|---|---|
+| Strong dig-in also stalls straight climbs in loose ground; the decision of 2026-10-06 (Q12) spoke of spins | Keep the strong preset as the default, straight-climb stalls included | No change. Loose sand stalls a straight climb at about 10–15° (the proving ground's 15° sand dune, 0.6 m up it, its wheels dug in to 2.0), dusty clay at about 15° (Delivery's clay flank, after 10 m). The proving ground's 12° clay slope is climbed (0.39 m/s, dig 1.26; its reported stall was the PGS artefact of 17.6). `terrains.DIG = "mild"` stays the switch to the mild preset |
+| Dust in depth (Q11) against visible dust | No visible dust: clean depth images and point clouds come before dust behind the wheels. Q11 is met by having no dust | One switch, `gen_model.DriveParams.dust`, default False. Off, the generated rover has no particle emitter in either drive mode, and the drivetrain plugin gets no `<dust_rate>`, `<dust>` groups or `<dust_rule>`, so it sends nothing on the emitter topics. On, the model is byte for byte the one before the switch (checked in both drive modes, with and without tyre compliance and dig-in). The emitter builder, the sprite (still written with the model), the rate rule of §6.5 and the plugin's dust code stay, and the worlds keep `gz-sim-particle-emitter-system` (idle without emitters), so the switch alone brings the dust back once gz-rendering honours `particle_scatter_ratio` (17.1, Q11). The ground's dust factor stays in the catalogue and `ground.json`. The drivetrain state (§9.3) never carried a dust rate, so no interface changed |
+| The design changes listed for the user's approval | All approved | No change: the Autonomy caprock rib (`EASY_ROUTE_RIB`); the 15° wash banks and soft-sand wash floors; dig-in stopping Delivery's clay flank and the proving ground's sand dune; zones that no longer level the ground; badland belts as round zones; recipe and NAIP shrubs instead of hand-placed ones; no zone decals (Autonomy's zones tint its drape, 17.6); the lander's collide bitmask (Q2); the sand sheet's mild dig-in under the strong preset |
+
+Tests for the switch: `test_gen_model.Dust` checks that the default rover (generated, tracked and the DiffDrive
+variant) has no emitter and no dust elements, and that the switch adds exactly those; `test_drivetrain.test_dust`
+runs the rate rule with the switch on and checks that the default rover sends nothing to either emitter topic;
+`test_render` builds the rover's emitter directly and keeps its dust tests as the record for the switch (dust in
+depth still an expected failure). `pixi run sim-test`: 468 tests OK in 750 s (8 opt-in skipped; 2 expected
+failures: the slow-turn judder and dust in depth); `ctest` 2 of 2.
 
