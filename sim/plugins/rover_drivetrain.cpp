@@ -28,6 +28,17 @@
 // cheaper): the contact force is minus the joint force, the wheel's weight and the hub force; its part along
 // the contact normal is the load, the rest the tangential force a sticking contact is aligned with.
 //
+// A wheel's slip compliance is set per contact from that contact's own load in the previous step, not from
+// the wheel's load over its contact count: a cylinder on the ground touches at both tread edges, and how the
+// two share the load is the solver's choice. DART's Dantzig splits it evenly; its PGS leaves nearly all of
+// it on the first contact it visits (measured 90 / 2 N), so with even shares the light contact's friction
+// was capped at mu x 2 N, the wheel kept one contact's compliance and slipped 1.85x the design in sand (0.37
+// instead of 0.20). The split comes from the same transmitted wrench: the contact forces' moment about the
+// wheel's heading axis is sum(y_i N_i) + rho F_axial (y_i: a contact's offset along the axle, rho: the
+// radius), which fixes the two edges' loads (more contacts: a linear pressure across the tread). The
+// wheels' ContactSensorData would give the same for +11 % CPU time per step (measured on rover_test and
+// Delivery).
+//
 // SDF: see gen_model.py (_add_drivetrain), which writes every element; units SI.
 
 #include <gz/msgs/odometry.pb.h>
@@ -95,6 +106,16 @@ double Child(const sdf::ElementConstPtr& parent, const char* group, const char* 
   return parent->FindElement(group)->Get<double>(key, fallback).first;
 }
 
+/// A wheel contact of the previous step and the load it carried, matched to this step's by position.
+struct PastContact {
+  Vector3d point;
+  double load = 0.0;  // [N] along the contact normal
+};
+
+/// The farthest a contact point moves between steps and still counts as the same contact: 1 m/s x 1 ms is
+/// 1 mm; the two tread edges of a wheel are its width (0.10 m) apart (A).
+constexpr double kContactMatch = 0.02;  // [m]
+
 /// The deepest contact of a wheel in one step.
 struct Contact {
   bool touched = false;
@@ -126,6 +147,8 @@ struct Wheel {
   Vector3d tangential;
   Vector3d hub_force;  // applied this step [N]
   Contact last, current;  // the previous step's contact, and the one the callback fills in this step
+  std::vector<Vector3d> points;  // this step's contact points (the callback)
+  std::vector<PastContact> past;  // the previous step's contacts with their loads (EdgeLoads)
   std::string dust_topic;
   gz::transport::Node::Publisher dust;
   bool emitting = false;
@@ -293,6 +316,7 @@ class RoverDrivetrain : public gz::sim::System,
     for (auto& w : wheels_) {
       w.last = w.current;
       w.current = Contact();
+      w.points.clear();
       if (const auto pose = w.link.WorldPose(ecm)) w.pose = *pose;
       w.axle = w.pose.Rot().RotateVector(Vector3d::UnitY);
       w.velocity = w.link.WorldLinearVelocity(ecm).value_or(Vector3d::Zero);
@@ -341,12 +365,17 @@ class RoverDrivetrain : public gz::sim::System,
       const auto wrench = ecm.Component<gz::sim::components::JointTransmittedWrench>(w.joint.Entity());
       if (!w.current.touched || !wrench) continue;
       const auto& f = wrench->Data().force();
+      const auto& m = wrench->Data().torque();
       const auto pose = w.link.WorldPose(ecm).value_or(w.pose);
-      const Vector3d joint = (pose.Rot() * w.joint_frame).RotateVector(Vector3d(f.x(), f.y(), f.z()));
+      const auto frame = pose.Rot() * w.joint_frame;
+      const Vector3d joint = frame.RotateVector(Vector3d(f.x(), f.y(), f.z()));
       const Vector3d contact = -(joint + gravity_ * w.mass + w.hub_force);
       const Vector3d& n = w.current.normal;
       w.load = std::max(0.0, contact.Dot(n));
       w.tangential = contact - n * contact.Dot(n);
+      // The contact forces' moment about the wheel's centre (the joint's origin): minus the joint's, as gravity
+      // and the hub force act at the centre and the motor's torque is about the axle.
+      EdgeLoads(w, -frame.RotateVector(Vector3d(m.x(), m.y(), m.z())), contact);
     }
   }
 
@@ -362,6 +391,8 @@ class RoverDrivetrain : public gz::sim::System,
       w.load = 0.0;
       w.tangential = w.hub_force = Vector3d::Zero;
       w.last = w.current = Contact();
+      w.points.clear();
+      w.past.clear();
     }
     odometry_ = gz::math::DiffDriveOdometry();
     odometry_.SetWheelParams(track_, radius_, radius_);
@@ -492,17 +523,67 @@ class RoverDrivetrain : public gz::sim::System,
     const double mu = drive::StribeckMu(ground, slip.Length(), contact_.v_stribeck) *
                       drive::NoiseFactor(point.X(), point.Y(), contact_.mu_noise, contact_.mu_noise_length);
     const Vector3d stick = drive::StickDirection(w.tangential, w.load, gravity_, w.axle.Cross(n), n);
-    const double share = w.load / std::max<size_t>(count, 1);
+    const double share = Share(w, point, count);
     const auto f = drive::Friction(contact_, ground, mu, slip, std::abs(w.spin * radius_), share, stick);
     params.firstFrictionalDirection = Eigen::Vector3d(f.direction.X(), f.direction.Y(), f.direction.Z());
     params.frictionCoeff = f.mu1;
     params.secondaryFrictionCoeff = f.mu2;
     params.slipCompliance = f.compliance;
     params.secondarySlipCompliance = f.compliance;
+    w.points.push_back(point);
     const double d = depth.value_or(0.0);
     if (!w.current.touched || d > w.current.depth) {
       w.current = Contact{true, d, &ground, point, n, slip.Length()};
     }
+  }
+
+  /// How this step's contacts of a wheel shared its load (the notes at the top): from the contact forces'
+  /// moment about the wheel's centre and their sum, a load linear in each contact's offset y along the axle,
+  /// N_i = N (alpha + beta y_i), with sum N_i = N and sum y_i N_i = moment . heading - rho F_axial; negative
+  /// shares are clipped. Kept in w.past for the next step's contacts.
+  void EdgeLoads(Wheel& w, const Vector3d& moment, const Vector3d& contact) const {
+    w.past.clear();
+    const size_t k = w.points.size();
+    if (!k || w.load <= 0) return;
+    const Vector3d& n = w.current.normal;
+    const Vector3d heading = w.axle.Cross(n).Normalized();
+    const Vector3d axle = n.Cross(heading);
+    std::vector<double> y(k);
+    double sy = 0.0, syy = 0.0, rho = 0.0;
+    for (size_t i = 0; i < k; ++i) {
+      y[i] = (w.points[i] - w.pose.Pos()).Dot(axle);
+      sy += y[i];
+      syy += y[i] * y[i];
+      rho += (w.pose.Pos() - w.points[i]).Dot(n) / k;
+    }
+    const double target = (moment.Dot(heading) - rho * contact.Dot(axle)) / w.load;  // sum y_i N_i / N
+    const double det = k * syy - sy * sy;
+    double alpha = 1.0 / k, beta = 0.0;
+    if (det > 1e-6) {
+      alpha = (syy - sy * target) / det;
+      beta = (k * target - sy) / det;
+    }
+    double total = 0.0;
+    std::vector<double> share(k);
+    for (size_t i = 0; i < k; ++i) total += share[i] = std::max(0.0, alpha + beta * y[i]);
+    for (size_t i = 0; i < k; ++i) {
+      w.past.push_back({w.points[i], total > 0 ? w.load * share[i] / total : w.load / k});
+    }
+  }
+
+  /// The load a wheel contact carries: its own in the previous step (EdgeLoads), else (a new contact) an
+  /// even share of the wheel's.
+  static double Share(const Wheel& w, const Vector3d& point, size_t count) {
+    const PastContact* nearest = nullptr;
+    double best = kContactMatch;
+    for (const auto& p : w.past) {
+      const double d = p.point.Distance(point);
+      if (d < best) {
+        best = d;
+        nearest = &p;
+      }
+    }
+    return nearest ? nearest->load : w.load / std::max<size_t>(count, 1);
   }
 
   void UpdateOdometry(const gz::sim::UpdateInfo& info) {

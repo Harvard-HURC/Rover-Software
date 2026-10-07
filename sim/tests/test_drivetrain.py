@@ -8,7 +8,13 @@ directories (simulate.physical) and mostly stands on synthetic ground maps
 (simulate.ground_world) whose traction rows are the design's section 5.6
 table. Each target's kind: physics (follows from the model's mechanics and
 could fail), plumbing (restates its input parameters), (A) (an assumed
-sub-model). Runs are headless TestFixture runs, a few seconds each."""
+sub-model). Runs are headless TestFixture runs, a few seconds each.
+
+The calibration rows run on both of DART's solvers (SOLVERS): the shipped
+worlds use PGS (Delivery, Astrobiology, Autonomy, the proving ground) and
+Dantzig (Equipment Servicing, rover_test). A wheel touches the ground at both
+tread edges, and the two solvers share its load between them differently
+(rover_drivetrain.cpp), which once made PGS slip 1.85x the design in sand."""
 import dataclasses
 import json
 import math
@@ -51,6 +57,7 @@ GROUND = {
     "test_mu095": (32, T.coulomb(0.95), 0.0),
     "test_mu100": (33, T.coulomb(1.0), 0.0),
     "slab": (40, T(mu_s=1.0, mu_k=0.8, crr=0.015, slip=0.05), 0.1),  # the judder target's "mu 0.8 slab"
+    "sand_peak": (41, dataclasses.replace(terrains.SAND.traction, mu_s=0.7), 0.8),  # sand with a static peak
 }
 ROWS = [ground_row(index, key, traction, dust) for key, (index, traction, dust) in GROUND.items()]
 OPTIONS = dict(terrain_default="rock", object_default="manmade")
@@ -59,6 +66,7 @@ WEIGHT = 9.81 * (P.chassis_mass + 2 * P.rocker_mass + 4 * P.wheel_mass + P.camer
 LOAD = WEIGHT / 4  # [N] a wheel's share on flat ground, 113 N
 WHEELS = ("fl", "rl", "fr", "rr")
 SPIN = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)]  # turn in place at 1 rad/s from 0.5 s
+SOLVERS = (None, "pgs")  # DART's default Dantzig and PGS: the calibration rows hold on both
 
 
 def kind(key):
@@ -105,15 +113,19 @@ def drive(seconds, cmd, ground="regolith", params=None, solver=None, hf=FLAT, ra
 
 class SpinInPlace(unittest.TestCase):
     """Turning in place on flat ground of each kind, fresh (no dig-in): the
-    yaw ratio is the closed-form root of design spec 5.6, +- 0.04 (physics)."""
+    yaw ratio is the closed-form root of design spec 5.6, +- 0.04 (physics),
+    on both solvers. (PGS gives each wheel mu times its own load, so the
+    diagonal a turn unloads grips less: on firm ground it turns 0.02-0.03
+    below the closed form, measured 2026-10-07: rock 0.411, regolith 0.345.)"""
 
     def test_ratio_per_ground(self):
-        for key in ("rock", "regolith", "sand", "wash_sand", "test_mu095"):
-            with self.subTest(ground=key):
-                run = drive(6.0, SPIN, key)
-                expected = spin_ratio(kind(key))
-                self.assertAlmostEqual(run.yaw_rate(3.0, 6.0), expected, delta=0.04)
-                self.assertEqual({s for row in run.states[-5:] for s in [row["wheels"]["fl"]["surface"]]}, {key})
+        for solver in SOLVERS:
+            for key in ("rock", "regolith", "sand", "wash_sand", "test_mu095"):
+                with self.subTest(ground=key, solver=solver):
+                    run = drive(6.0, SPIN, key, solver=solver)
+                    expected = spin_ratio(kind(key))
+                    self.assertAlmostEqual(run.yaw_rate(3.0, 6.0), expected, delta=0.04)
+                    self.assertEqual({row["wheels"]["fl"]["surface"] for row in run.states[-5:]}, {key})
 
     def test_wheel_torque_on_mu_lanes(self):
         """Mean wheel torque while spinning on Coulomb ground: mu N r x 0.748,
@@ -291,35 +303,50 @@ class SlowTurn(unittest.TestCase):
         self.assertTrue(0.5 <= peak <= 5.0, peak)
 
     def test_smooth_in_sand(self):
-        self.assertLess(self.judder("sand")[0], 0.5)
-        self.assertLess(self.judder("sand", tire_compliance=True)[0], 0.5)
+        """With tyre compliance, the only setting in which this rover sticks
+        at all (test_stick_slip_on_a_slab), the slow turn judders on ground
+        with a static peak and stays smooth in sand, whose mu_s = mu_k (design
+        D3): sand < 0.1, the same sand given a peak (mu_s 0.7) > 0.15, the
+        slab > 0.2 (measured 2026-10-07: 0.011, 0.27, 0.39). Without tyres
+        every ground turns smoothly (0.009-0.014), which shows nothing."""
+        self.assertLess(self.judder("sand", tire_compliance=True)[0], 0.1)
+        self.assertGreater(self.judder("sand_peak", tire_compliance=True)[0], 0.15)
+        self.assertGreater(self.judder("slab", tire_compliance=True)[0], 0.2)
 
 
 class LooseSand(unittest.TestCase):
     """Driving and digging in loose sand (design spec 6.5)."""
 
     def test_straight_slip_and_torque(self):
-        """Straight at 0.5 m/s: slip = slip x crr = 20 % +- 3 %, wheel torque =
-        crr N r = 3.4 N m +- 15 % (plumbing: restates the parameters)."""
-        run = drive(8.0, [(0.0, 0.0, 0.0), (0.5, 0.5, 0.0)], "sand", rover=(-6.0, 0.0, 0.0))
-        tr = run.window(3.0, 8.0)
-        speed = (tr[-1, 1] - tr[0, 1]) / (tr[-1, 0] - tr[0, 0])
-        surface = np.abs(run.wheel("w", 3.0, 8.0)).mean() * P.wheel_radius
-        sand = kind("sand")
-        self.assertAlmostEqual(1 - speed / surface, sand.slip * sand.crr, delta=0.03)
-        torque = np.abs(run.wheel("tau", 3.0, 8.0)).mean()
-        self.assertAlmostEqual(torque, sand.crr * LOAD * P.wheel_radius, delta=0.15 * sand.crr * LOAD * P.wheel_radius)
+        """Straight at 0.5 m/s: slip = slip x crr = 20 % +- 3 % in sand, 30 %
+        in wash sand, wheel torque = crr N r = 3.4 N m +- 15 % in sand
+        (plumbing: restates the parameters), on both solvers (PGS slipped
+        0.37 in sand while it set each tread edge's compliance from an even
+        share of the wheel's load, rover_drivetrain.cpp)."""
+        for solver in SOLVERS:
+            for key in ("sand", "wash_sand"):
+                with self.subTest(ground=key, solver=solver):
+                    run = drive(8.0, [(0.0, 0.0, 0.0), (0.5, 0.5, 0.0)], key, rover=(-6.0, 0.0, 0.0), solver=solver)
+                    tr = run.window(3.0, 8.0)
+                    speed = (tr[-1, 1] - tr[0, 1]) / (tr[-1, 0] - tr[0, 0])
+                    surface = np.abs(run.wheel("w", 3.0, 8.0)).mean() * P.wheel_radius
+                    ground = kind(key)
+                    self.assertAlmostEqual(1 - speed / surface, ground.slip * ground.crr, delta=0.03)
+                    if key == "sand":
+                        torque = np.abs(run.wheel("tau", 3.0, 8.0)).mean()
+                        expected = ground.crr * LOAD * P.wheel_radius
+                        self.assertAlmostEqual(torque, expected, delta=0.15 * expected)
 
     @staticmethod
-    def sandpit(seconds, cmd, dig):
+    def sandpit(seconds, cmd, dig, solver=None):
         """Sand within 3 m of the origin, rock around it; the rover at the origin. dig: the catalogue's dig-in
         preset the sand's row is written with (terrains.traction)."""
         X, Y = FLAT.grid()
         raster = np.where(np.hypot(X, Y) < 3.0, GROUND["sand"][0], GROUND["rock"][0]).astype(np.uint8)
         index, _, dust = GROUND["sand"]
         sand = ground_row(index, "sand", terrains.traction(terrains.SAND, dig), dust)
-        return drive(seconds, cmd, raster=raster, params=physical(), rows=[sand if r["key"] == "sand" else r
-                                                                             for r in ROWS])
+        return drive(seconds, cmd, raster=raster, params=physical(), solver=solver,
+                     rows=[sand if r["key"] == "sand" else r for r in ROWS])
 
     @staticmethod
     def spin_ratios(run):
@@ -330,8 +357,14 @@ class LooseSand(unittest.TestCase):
         """The default (strong preset, the user's choice): a sustained spin in
         loose sand digs in until the rover cannot turn; it then drives out
         straight at 0.3 m/s, and a metre of rolling heals the dig to D < 1.05.
-        Rock never digs. (A)"""
-        run = self.sandpit(32.0, [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (10.5, 0.0, 0.0), (11.0, 0.3, 0.0)], "strong")
+        Rock never digs. (A) On both solvers."""
+        for solver in SOLVERS:
+            with self.subTest(solver=solver):
+                self.dig_in_and_out(solver)
+
+    def dig_in_and_out(self, solver):
+        run = self.sandpit(32.0, [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (10.5, 0.0, 0.0), (11.0, 0.3, 0.0)], "strong",
+                           solver)
         ratios = self.spin_ratios(run)
         self.assertGreater(run.window(0.5, 1.5)[:, 7].max(), 0.8 * spin_ratio(kind("sand")))  # it did start turning
         self.assertLess(max(ratios[-3:]), 0.1 * spin_ratio(kind("sand")), ratios)
@@ -359,6 +392,30 @@ class LooseSand(unittest.TestCase):
     def test_no_dig_on_firm_ground(self):
         run = drive(5.0, SPIN, "regolith", params=physical())  # dig-in on
         self.assertEqual(run.wheel("dig", 0.0, 5.0).max(), 1.0)
+
+    @unittest.skipUnless((WORLDS / "proving_ground.sdf").exists(), "the proving ground is not generated")
+    def test_proving_ground_sand_pit(self):
+        """The shipped proving ground (PGS, the course for calibrating a
+        driver) gives the test worlds' numbers: west into the sand pit at 0.5
+        m/s, the rover crosses its 10 m flat at 0.37 +- 0.03 m/s with every
+        wheel's dig factor at the strong preset's equilibrium, 1.25 +- 0.05
+        (measured 2026-10-07: 0.371 and 1.26; the same world on Dantzig 0.375
+        and 1.25). With even load shares per tread edge it dug in to 2.0 and
+        crawled at 0.17 m/s."""
+        self.assertIn("<solver_type>pgs</solver_type>", (WORLDS / "proving_ground.sdf").read_text())
+        with world_copy("proving_ground", rover=(25.0, 0.0, math.pi), lift=0.05) as world:
+            s = simulate(30.0, world=world, cmd=[(0.0, 0.0, 0.0), (1.0, 0.5, 0.0)], params=physical(),
+                         trace_every=100, subscribe=[(gen_model.DRIVETRAIN_TOPIC, StringMsg)])
+        run = Run(s, [json.loads(m.data) for m in s.messages[gen_model.DRIVETRAIN_TOPIC]])
+        tr = run.window(0.0, 30.0)
+        flat = tr[(tr[:, 1] < 19.0) & (tr[:, 1] > 13.0)]  # every wheel on the flat sand (x 22 to 12)
+        self.assertGreater(len(flat), 10, "the rover did not reach the pit's flat")
+        speed = -(flat[-1, 1] - flat[0, 1]) / (flat[-1, 0] - flat[0, 0])
+        self.assertAlmostEqual(speed, 0.37, delta=0.03)
+        dig = run.wheel("dig", flat[0, 0], flat[-1, 0])
+        self.assertTrue(np.all(np.abs(dig - 1.25) < 0.05), (dig.min(), dig.max()))
+        self.assertEqual({w["surface"] for st in run.states if flat[0, 0] <= st["t"] < flat[-1, 0]
+                          for w in st["wheels"].values()} - {""}, {"sand"})
 
 
 class Washboard(unittest.TestCase):
@@ -441,13 +498,15 @@ class Slopes(unittest.TestCase):
         """3.5 m across 20 deg at 0.5 m/s: downhill drift = slip tan 20 deg x the
         wheels' rolled distance, 3.5 m / (1 - forward slip), +- 30 % (rock
         0.06 m, regolith 0.39 m, sand 1.59 m), and under 0.1 m on rock
-        (plumbing and direction). Design spec 6.9 multiplies by 3.5 m, but the
-        slip law scales with the wheel's speed, which is 25 % above the hub's
-        in sand. Sand's bulldozing takes 16 % of the side load; the rover also
-        yaws a little downhill (measured 0.16 rad), which adds about as much."""
-        for key in ("rock", "regolith", "sand"):
-            with self.subTest(ground=key):
-                run = drive(11.0, [(0.0, 0.0, 0.0), (1.0, 0.5, 0.0)], key, hf=slope(20.0), rover=(-3.0, 0.0, 0.0))
+        (plumbing and direction), on both solvers. Design spec 6.9 multiplies
+        by 3.5 m, but the slip law scales with the wheel's speed, which is 25 %
+        above the hub's in sand. Sand's bulldozing takes 16 % of the side load;
+        the rover also yaws a little downhill (measured 0.16 rad), which adds
+        about as much."""
+        for solver, key in ((solver, key) for solver in SOLVERS for key in ("rock", "regolith", "sand")):
+            with self.subTest(ground=key, solver=solver):
+                run = drive(11.0, [(0.0, 0.0, 0.0), (1.0, 0.5, 0.0)], key, hf=slope(20.0), rover=(-3.0, 0.0, 0.0),
+                            solver=solver)
                 tr = run.window(0.9, 11.0)
                 travelled = np.flatnonzero(tr[:, 1] - tr[0, 1] >= 3.5)
                 self.assertTrue(len(travelled), f"{key}: did not get 3.5 m across")
@@ -459,11 +518,11 @@ class Slopes(unittest.TestCase):
                     self.assertLess(drift, 0.1)
 
     def test_parked_rover_does_not_creep(self):
-        """cmd 0 for 60 s on 15 deg regolith and 20 deg sand: moves < 1 cm. A
-        stopped wheel has no slip compliance (D23)."""
-        for key, degrees in (("regolith", 15.0), ("sand", 20.0)):
-            with self.subTest(ground=key):
-                run = drive(61.0, (0.0, 0.0), key, hf=slope(degrees), trace_every=100)
+        """cmd 0 for 60 s on 15 deg regolith and 20 deg sand: moves < 1 cm, on
+        both solvers. A stopped wheel has no slip compliance (D23)."""
+        for solver, (key, degrees) in ((s, g) for s in SOLVERS for g in (("regolith", 15.0), ("sand", 20.0))):
+            with self.subTest(ground=key, solver=solver):
+                run = drive(61.0, (0.0, 0.0), key, hf=slope(degrees), trace_every=100, solver=solver)
                 start, end = run.window(1.0, 1.1)[0], run.window(60.9, 61.0)[-1]
                 self.assertLess(math.dist(start[1:4], end[1:4]), 0.01)
 
