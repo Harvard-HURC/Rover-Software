@@ -104,15 +104,26 @@ def _ramp(t, block, feather):
     return np.minimum(up, down)
 
 
+def _detrend(grid):
+    """A grid minus its least-squares plane."""
+    a = np.asarray(grid, float) - np.mean(grid)
+    rows, cols = a.shape
+    v, u = (np.arange(k) - (k - 1) / 2 for k in (rows, cols))  # centred, so the fit's terms are orthogonal
+    return a - np.outer(v, np.ones(cols)) * (v @ a.sum(axis=1)) / (cols * (v @ v)) \
+        - np.outer(np.ones(rows), u) * (u @ a.sum(axis=0)) / (rows * (u @ u))
+
+
 def swatch_field(windows, res_m, n, size, seed, block=SWATCH_BLOCK, feather=SWATCH_FEATHER):
     """A residual field on an n x n grid of `size` metres, tiled from swatch
     windows (float grids of spacing res_m, row 0 north): blocks of `block`
-    metres from random places of a random window, each turned by a random
-    multiple of 90 deg and mirrored at random, laid on a grid of random
-    offset and cosine-feathered over `feather` into their neighbours. Where
-    blocks overlap with weights w_i the field is sum(w_i s_i) /
-    sqrt(sum(w_i^2)): independent residuals added that way keep their RMS,
-    which plain feathering lowers by up to 1/sqrt(2) (design 5.4)."""
+    metres from random places of a random window, each less its own
+    least-squares plane (a block's mean and tilt are relief larger than the
+    tiling can carry, and would show as steps along its feathers), turned by
+    a random multiple of 90 deg and mirrored at random, laid on a grid of
+    random offset and cosine-feathered over `feather` into their
+    neighbours. Where blocks overlap with weights w_i the field is sum(w_i
+    s_i) / sqrt(sum(w_i^2)): independent residuals added that way keep their
+    RMS, which plain feathering lowers by up to 1/sqrt(2) (design 5.4)."""
     rng = np.random.default_rng(seed)
     span = block + feather  # a block's extent, its feathers included
     side = int(round(span / res_m))  # source pixels across a block
@@ -132,7 +143,7 @@ def swatch_field(windows, res_m, n, size, seed, block=SWATCH_BLOCK, feather=SWAT
                 continue
             window = windows[int(rng.integers(len(windows)))]
             r0, c0 = (int(rng.integers(0, s - side)) for s in window.shape)
-            patch = window[r0:r0 + side + 1, c0:c0 + side + 1]
+            patch = _detrend(window[r0:r0 + side + 1, c0:c0 + side + 1])
             patch = np.rot90(patch, int(rng.integers(4)))
             if rng.integers(2):
                 patch = patch[:, ::-1]
@@ -193,7 +204,8 @@ def rill_traces(z, res, mask, seed, recipe):
     rng = np.random.default_rng(seed)
     z = np.asarray(z, float)
     n_rows, n_cols = z.shape
-    g_row, g_col = np.gradient(blur(z, RILL_SMOOTH / res), res)
+    g_row, g_col = (blur(g, RILL_SMOOTH / res) for g in np.gradient(z, res))  # blurring the slope, not the
+    # surface, keeps a plane's slope right up to the edges
     mask = np.asarray(mask, np.float32)
     pitch = rng.uniform(*recipe.spacing_m) / res
     seeds = np.stack(np.meshgrid(np.arange(0.0, n_rows - 1, pitch), np.arange(0.0, n_cols - 1, pitch),
@@ -211,8 +223,9 @@ def rill_traces(z, res, mask, seed, recipe):
         inside = (q[:, 0] >= 0) & (q[:, 0] <= n_rows - 1) & (q[:, 1] >= 0) & (q[:, 1] <= n_cols - 1)
         return inside & (at(mask, q) > 0.5) & (np.hypot(gr, gc) > steep), gr, gc
 
-    active, _, _ = going(p)
-    p = p[active]
+    p = p[going(p)[0]] if len(p) else p
+    if not len(p):
+        return []
     path, alive = [p.copy()], [np.ones(len(p), bool)]
     step = RILL_STEP / res
     for _ in range(int(recipe.length_m / RILL_STEP)):

@@ -175,6 +175,43 @@ class LayoutHeightfield(unittest.TestCase):
         with self.assertRaises(ValueError):
             dem.to_heightfield(self.dem, self.origin, 4096.0, 33, center=(0.0, 0.0))
 
+    def test_to_grid_is_to_heightfield_on_any_rectangle(self):
+        """to_grid on the heightfield's own columns and rows gives its heights
+        exactly; on a rectangle, the DEM at those points."""
+        X, Y = self.hf.grid()
+        np.testing.assert_array_equal(dem.to_grid(self.dem, self.origin, X[0], Y[:, 0]), self.hf.z)
+        xs, ys = np.linspace(-300.0, 100.0, 41), np.linspace(400.0, 300.0, 11)
+        z = dem.to_grid(self.dem, self.origin, xs, ys)
+        self.assertEqual(z.shape, (11, 41))
+        for (row, col) in ((0, 0), (5, 20), (10, 40)):
+            self.assertAlmostEqual(z[row, col], self.dem_z(xs[col], ys[row]), delta=0.05)
+
+
+class Datums(unittest.TestCase):
+    def test_utm_to_wgs84_is_transverse_mercator(self):
+        """On the central meridian a UTM easting of 500 km is its longitude;
+        20 km east of it, 1 km of UTM grid is 1 km / k on the ground in either
+        direction (conformal, k = 0.9996 (1 + x^2 / 2R^2))."""
+        lat, lon = dem.utm_to_wgs84(500_000.0, 4_250_000.0, 12)
+        self.assertAlmostEqual(lon, -111.0, places=10)
+        self.assertAlmostEqual(lat, 38.40, delta=0.01)
+        k = dem.UTM_K0 * (1 + 20_000.0 ** 2 / (2 * 6_371_000.0 ** 2))
+        a = dem.utm_to_wgs84(520_000.0, 4_250_000.0, 12)
+        origin = geo.Origin(*a, 0.0)
+        for de, dn in ((0.0, 1000.0), (1000.0, 0.0)):
+            b = dem.utm_to_wgs84(520_000.0 + de, 4_250_000.0 + dn, 12)
+            x, y, _ = geo.wgs84_to_enu(origin, *b, 0.0)
+            self.assertAlmostEqual(math.hypot(x, y), 1000.0 / k, delta=0.01)
+
+    def test_site_altitude(self):
+        """A world origin's ellipsoidal altitude: the 3DEP DEM (NAVD88) plus
+        NAVD88_TO_WGS84; Delivery's origin is 1374.3 m NAVD88."""
+        for lat, lon, alt in EPQS:
+            self.assertAlmostEqual(dem.site_altitude(lat, lon), alt + dem.NAVD88_TO_WGS84, delta=0.1)
+        self.assertAlmostEqual(dem.site_altitude(38.4040, -110.7935), 1374.3 + dem.NAVD88_TO_WGS84, delta=0.1)
+        with self.assertRaises(ValueError):
+            dem.site_altitude(38.5, -110.7)
+
 
 class Routes(unittest.TestCase):
     """A 10 m mesa with near-vertical sides and one 14 deg ramp from the east."""

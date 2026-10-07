@@ -13,7 +13,7 @@ from PIL import Image
 import worldfiles  # noqa: F401  (puts sim/ on the path)
 
 import gen_worlds  # noqa: E402
-from urc import dem, geo, meshes, rules, terrain, textures  # noqa: E402
+from urc import dem, geo, meshes, rules, terrain, terrains, textures  # noqa: E402
 from urc.media import Media  # noqa: E402
 
 MDRS = geo.Origin(38.4064, -110.7919, 1350.0)
@@ -128,6 +128,46 @@ class Terrain(unittest.TestCase):
         self.assertAlmostEqual(hf.z[middle].max(), 0.04, delta=0.002)
         self.assertAlmostEqual(hf.z[middle].min(), -0.04, delta=0.002)
         self.assertEqual(np.abs(hf.z[(np.abs(Y) > 2.0) | (X < -8.0) | (X > 8.0)]).max(), 0.0)
+
+    def test_mesa_edge_is_where_the_top_ends(self):
+        """mesa_edge (what landscape.Hills paints by): inside the edge the
+        mesa is at its full height, a cliff width beyond it untouched."""
+        hf = terrain.Heightfield(128, 257).mesa(10.0, -5.0, 20.0, 6.0, 8.0, seed=4)
+        edge, r = hf.mesa_edge(10.0, -5.0, 20.0, seed=4)
+        np.testing.assert_allclose(hf.z[r <= edge], 6.0)
+        np.testing.assert_allclose(hf.z[r >= edge + 8.0], 0.0)
+        self.assertTrue(np.all((hf.z[(r > edge) & (r < edge + 8.0)] > 0) & (hf.z[(r > edge) & (r < edge + 8.0)] < 6)))
+
+    def test_relief_ops_chain_and_respect_their_mask(self):
+        """detail, haystacks and rills edit z only under their mask and return
+        the heightfield (terrain ops chain)."""
+        hf = self.plane(gx=0.3, gy=0.0, size=128, n=257)
+        before = hf.z.copy()
+        mask = np.zeros((257, 257))
+        mask[:, :128] = 1.0  # the west half
+
+        class Swatch:
+            windows = (np.random.default_rng(1).normal(0, 0.05, (200, 200)).astype(np.float32),)
+            res_m = 0.5
+
+        out = hf.detail(Swatch, mask, 1.0, seed=1).haystacks(mask, 2, terrains.Haystacks()).rills(mask, 3,
+                                                                                                  terrains.Rills())
+        self.assertIs(out, hf)
+        np.testing.assert_array_equal(hf.z[:, 129:], before[:, 129:])
+        self.assertGreater(np.abs(hf.z[:, :120] - before[:, :120]).max(), 1.0)  # knobs
+
+    def test_png_keeps_its_own_maximum(self):
+        """A heightmap normalised to its own maximum from z = 0, though its
+        lowest point lies above 0 (a carved world's visual surface): Gazebo
+        scales by the highest pixel and does not shift the lowest."""
+        hf = self.plane()
+        hf.z += 0.03 - hf.z.min()
+        with tempfile.TemporaryDirectory() as d:
+            _, top = hf.write_png(Path(d) / "h.png", 0.0)
+            img = np.asarray(Image.open(Path(d) / "h.png")).astype(float)
+        self.assertEqual(img.max(), 65535)
+        self.assertGreater(img.min(), 0)
+        np.testing.assert_allclose(img / 65535 * top, hf.z, atol=top / 65535)
 
     def test_png_round_trip(self):
         hf = self.plane()

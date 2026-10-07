@@ -111,8 +111,9 @@ def main():
             source.append({"window": name, "dem": str(path.relative_to(SIM_DIR.parent)),
                            "centre_lat_lon": [round(centre[0], 7), round(centre[1], 7)],
                            "size_m": list(size)})
-        arrays = {"z" if k == 0 else f"z_{k}": g.astype(np.float16) for k, g in enumerate(grids)}
-        table = rms_table(grids)
+        grids = [g.astype(np.float16) for g in grids]
+        arrays = {"z" if k == 0 else f"z_{k}": g for k, g in enumerate(grids)}
+        table = rms_table([g.astype(np.float32) for g in grids])
         save_npz(args.out / f"{key}.npz", {**arrays, "res_m": RES, "sigma_m": sigma, "source": json.dumps(source),
                                            "rms_cm": json.dumps(table)})
         shapes = ", ".join(f"{g.shape[1]} x {g.shape[0]}" for g in grids)

@@ -144,9 +144,9 @@ class Canvas:
         return out.astype(bool)
 
     def stroke(self, path, half_width):
-        """Samples within about half_width of a layout polyline."""
+        """Samples within half_width of a layout polyline (in whole samples, rounded down)."""
         out = np.zeros(self.raster.shape, np.uint8)
-        thickness = max(1, int(round(2 * half_width / self.hf.res)) + 1)
+        thickness = 2 * int(half_width / self.hf.res + 1e-9) + 1
         cv2.polylines(out, [np.round(self.pixels(path) * 16).astype(np.int32)], False, 1, thickness,
                       lineType=cv2.LINE_8, shift=4)
         return out.astype(bool)
@@ -605,8 +605,7 @@ def rise_traces(hf, where, recipe, rng):
     steeper than STEP_DEG (a face the DEM or the macro shape already has) is
     dropped."""
     n = hf.n
-    smooth = terrain.blur(hf.z, RISER_SMOOTH / hf.res)
-    g_row, g_col = np.gradient(smooth, hf.res)
+    g_row, g_col = (terrain.blur(g, RISER_SMOOTH / hf.res) for g in np.gradient(hf.z, hf.res))  # (rill_traces)
     steep = terrain.slope_map(hf.z, hf.res) > STEP_DEG
     pitch = rng.uniform(*recipe.spacing_m) / hf.res
     grid = np.stack(np.meshgrid(np.arange(0.0, n - 1, pitch), np.arange(0.0, n - 1, pitch), indexing="ij"),
