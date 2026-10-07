@@ -249,6 +249,22 @@ def top_view(x, y, span, ground, clearance=FLY.clearance, yaw=math.pi / 2):
     return View(x, y, float(ground(x, y)) + max(span / TOP_SPAN, clearance), yaw, math.pi / 2)
 
 
+def looks_down(view):
+    """Whether the camera looks straight down (top-down or orthographic)."""
+    return view.pitch > math.pi / 2 - 1e-3
+
+
+def pan_view(view, x, y, ground, ortho=False, clearance=FLY.clearance):
+    """`view` moved over (x, y), looking the same way: where a camera looking
+    straight down goes. It stays as high above the ground as it is now; an
+    orthographic one keeps its height, which with the height of the ground
+    where orthographic began sets the window (plugins/fly_camera.cpp), so the
+    scale holds. Never closer than clearance to the ground."""
+    there = float(ground(x, y))
+    z = view.z if ortho else there + view.z - float(ground(view.x, view.y))
+    return View(float(x), float(y), max(z, there + clearance), view.yaw, view.pitch)
+
+
 def pixel_ray(view, u, v, hfov, aspect, ortho=0.0):
     """(origin, unit direction) of the ray through the picture point (u, v)
     (0-1 from the left and from the top) of a camera at `view` with
@@ -286,15 +302,14 @@ def pixel_view(view, u, v, hfov, aspect, ground, ortho=0.0, clearance=FLY.cleara
     """Where a double-click on the picture point (u, v) flies the camera:
     PIXEL_STANDOFF short of where the ray meets the ground, looking along
     it. Looking straight down (top-down or orthographic) it moves over that
-    point instead, as high above the ground as now. None for the sky."""
+    point instead (pan_view). None for the sky."""
     origin, direction = pixel_ray(view, u, v, hfov, aspect, ortho)
     t = march(origin, direction, ground)
     if t is None:
         return None
-    x, y, _ = (float(c) for c in origin + t * direction)
-    if ortho > 0 or view.pitch > math.pi / 2 - 1e-3:
-        agl = view.z - float(ground(view.x, view.y))
-        return View(x, y, float(ground(x, y)) + max(agl, clearance), view.yaw, view.pitch)
+    x, y, _ = origin + t * direction
+    if ortho > 0 or looks_down(view):
+        return pan_view(view, x, y, ground, ortho > 0, clearance)
     x, y, z = (float(c) for c in origin + max(t - PIXEL_STANDOFF, 0.0) * direction)
     return View(x, y, max(z, float(ground(x, y)) + clearance), math.atan2(direction[1], direction[0]),
                 math.asin(-direction[2]))

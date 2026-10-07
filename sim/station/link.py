@@ -104,6 +104,7 @@ class GzLink:
         self._state = {}
         self._seen = {}  # key -> time.monotonic() of the latest message
         self._stations = {}  # id of another driver station -> (its announcement, time.monotonic())
+        self._yaw = (None, 0.0, 0.0)  # the latest ground truth: sim time [s], yaw, yaw rate [rad/s]
         sub = self.node.subscribe
         sub(Odometry, gen_model.GROUND_TRUTH_TOPIC, self._on_odometry)
         throttled = SubscribeOptions()
@@ -148,10 +149,20 @@ class GzLink:
             self._seen[key] = time.monotonic()
 
     def _on_odometry(self, msg):
-        p, q, v, w = msg.pose.position, msg.pose.orientation, msg.twist.linear, msg.twist.angular
+        p, q, v = msg.pose.position, msg.pose.orientation, msg.twist.linear
         roll, pitch, yaw = euler(q)
+        t = msg.header.stamp.sec + msg.header.stamp.nsec * 1e-9
+        # The turn rate from successive yaws: Gazebo's OdometryPublisher now and
+        # then reports a yaw rate off by a multiple of 2 pi / dt (measured: one
+        # message of -628 rad/s in 25 s of spinning at 0.8 rad/s).
+        last_t, last_yaw, rate = self._yaw
+        if last_t is not None and t > last_t:
+            rate = math.remainder(yaw - last_yaw, 2 * math.pi) / (t - last_t)
+        elif last_t is None or t < last_t:  # the first message, or the world was reset
+            rate = 0.0
+        self._yaw = (t, yaw, rate)
         self._put("pose", {"x": p.x, "y": p.y, "z": p.z, "roll": roll, "pitch": pitch, "yaw": yaw,
-                           "speed": v.x, "yaw_rate": w.z})
+                           "speed": v.x, "yaw_rate": rate})
 
     def _on_joints(self, msg):
         self._put("joints", {j.name: (j.axis1.position, j.axis1.velocity) for j in msg.joint})

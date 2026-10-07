@@ -41,6 +41,7 @@ from urc import terrain as terrains  # noqa: E402
 
 import gz.math7  # noqa: E402
 from gz.msgs10.image_pb2 import Image  # noqa: E402
+from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.vector3d_pb2 import Vector3d  # noqa: E402
@@ -305,6 +306,14 @@ class FlyGotos(unittest.TestCase):
                                    (20.0, 30.0, 2.0 + 100.0, math.pi / 2, math.pi / 2))  # north up
         # From span / 1.4 up, the picture is about as wide as the map was.
         self.assertAlmostEqual(2 * (top.z - 2.0) * math.tan(FLY.hfov / 2), 140.0, delta=0.03 * 140)
+
+    def test_pan_from_straight_above(self):
+        """Top-down it keeps its height above the ground; orthographic its
+        height, which keeps the window's scale (plugins/fly_camera.cpp)."""
+        down = drive.View(0.0, 0.0, 30.0, math.pi / 2, math.pi / 2)
+        self.assertEqual(drive.pan_view(down, 50.0, 7.0, ramp), drive.View(50.0, 7.0, 35.0, math.pi / 2, math.pi / 2))
+        self.assertEqual(drive.pan_view(down, 50.0, 7.0, ramp, ortho=True).z, 30.0)
+        self.assertEqual(drive.pan_view(down, 400.0, 7.0, ramp, ortho=True).z, 40.0 + FLY.clearance)  # not into a hill
 
     def test_ray_through_a_picture_point(self):
         view = drive.View(0.0, 0.0, 10.0, 0.0, 0.0)
@@ -620,6 +629,12 @@ class StationFly(unittest.TestCase):
         self.assertEqual(link.of("fly_goto")[-1][1],
                          drive.pixel_view(drive.View(0.0, 0.0, 40.0, 1.0, 0.6), 0.3, 0.7, FLY.hfov, ASPECT,
                                           self.hf.height))
+        for ortho in (0.0, 30.0):  # from straight above: over the point, as pan_view puts it
+            link.state["fly"] = fly_state(drive.View(0.0, 0.0, 40.0, 1.0, math.pi / 2), ortho=ortho)
+            s.handle({"t": "fly_goto", "kind": "point", "x": 5.0, "y": 6.0}, 0.0)
+            self.assertEqual(link.of("fly_goto")[-1][1],
+                             drive.pan_view(drive.View(0.0, 0.0, 40.0, 1.0, math.pi / 2), 5.0, 6.0, self.hf.height,
+                                            ortho > 0))
         count = len(link.of("fly_goto"))
         link.state["fly"] = fly_state(drive.View(0.0, 0.0, 40.0, 1.0, -0.5))  # looking up
         s.handle({"t": "fly_goto", "kind": "pixel", "u": 0.5, "v": 0.5}, 0.0)  # the sky: nowhere to go
@@ -691,6 +706,23 @@ class GzLinkState(unittest.TestCase):
         for key in ("chase", "score", "led"):
             link._seen[key] -= 5.0
         self.assertEqual(set(link.snapshot()), {"stats", "led"})
+
+    def test_turn_rate_from_the_yaws(self):
+        """Gazebo's OdometryPublisher now and then reports a yaw rate off by a
+        multiple of 2 pi / dt; the station takes it from successive yaws, also
+        across +-pi."""
+        link = self.link
+        link._put("stats", {})
+        rates = []
+        for t, yaw, reported in ((1.00, 3.10, 0.0), (1.02, 3.13, 1.5), (1.04, -3.13, -628.0), (1.06, -3.10, 1.5),
+                                 (0.5, 1.0, 1.5)):  # the last after a world reset
+            msg = Odometry()
+            msg.header.stamp.sec, msg.header.stamp.nsec = int(t), round((t % 1) * 1e9)
+            msg.pose.orientation.w, msg.pose.orientation.z = math.cos(yaw / 2), math.sin(yaw / 2)
+            msg.twist.angular.z = reported
+            link._on_odometry(msg)
+            rates.append(link.snapshot()["pose"]["yaw_rate"])
+        np.testing.assert_allclose(rates, [0.0, 1.5, (2 * math.pi - 6.26) / 0.02, 1.5, 0.0], atol=1e-5)
 
     def test_other_stations_from_their_announcements(self):
         link = self.link
@@ -1125,6 +1157,66 @@ class ChaseCameraFlight(unittest.TestCase):
         self.assertGreater(samples[11.0]["camera"][2], samples[11.0]["rover"][2] + c.look_height)
 
 
+class ChaseCameraFloor(unittest.TestCase):
+    """Behind a parked rover rises a hill (a visual heightmap: the rover
+    stands on the plane): the chase camera's sphere goes into it, and the
+    plugin lifts the camera to ChaseParams.clearance above it, still looking
+    at the rover; zoomed out further up the hill, it stays above it."""
+
+    def test_lifted_above_the_hill_behind(self):
+        c = viewers.ChaseParams()
+        hill = dict(size=64.0, samples=129, height=6.0, sigma=3.0, centre=(-8.0, 0.0))
+        node = Node()
+        cmd_pub = node.advertise(viewers.CHASE_CMD_TOPIC, Vector3d)
+        samples = {}
+        models = {}
+
+        def pre_update(info, ecm):
+            if not models:
+                world = World(world_entity(ecm))
+                models["rover"] = Model(world.model_by_name(ecm, "rover"))
+                models["camera"] = Model(world.model_by_name(ecm, viewers.CHASE_MODEL))
+            if info.iterations == 2000:
+                deadline = time.monotonic() + 10
+                while not cmd_pub.has_connections() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                msg = Vector3d()
+                msg.z = math.log(2.0)  # twice as far: 10 m
+                cmd_pub.publish(msg)
+                time.sleep(0.05)  # let the plugin's transport thread take it before the next step
+
+        def post_update(info, ecm):
+            t = round(info.iterations / 1000, 3)
+            if t in (1.5, 4.0):
+                samples[t] = {name: _pose(m, ecm) for name, m in models.items()}
+
+        with tempfile.TemporaryDirectory() as d:
+            path, hf = write_hill(d, **hill)
+            extra = (heightmap_model(path, hill["size"], hill["height"])
+                     + f"<include><uri>model://{viewers.CHASE_MODEL}</uri><name>{viewers.CHASE_MODEL}</name>"
+                     "<pose>-5 0 2 0 0 0</pose></include>")
+            with temp_sdf(world_sdf(extra)) as world:
+                fixture = TestFixture(world)
+                fixture.on_pre_update(pre_update)
+                fixture.on_post_update(post_update)
+                fixture.finalize()
+                fixture.server().run(True, 4000, False)
+        self.assertEqual(sorted(samples), [1.5, 4.0])
+        for t, distance in ((1.5, c.distance), (4.0, 2 * c.distance)):
+            rover, camera = samples[t]["rover"], samples[t]["camera"]
+            look = np.array(rover[:3]) + (0, 0, c.look_height)
+            sphere = look + distance * np.array((-math.cos(c.pitch), 0.0, math.sin(c.pitch)))  # behind, unlifted
+            ground = hf.height(camera[0], camera[1])
+            self.assertGreater(hf.height(sphere[0], sphere[1]) + c.clearance, sphere[2] + 1.0,
+                               f"{t} s: the hill would swallow the camera")
+            self.assertAlmostEqual(camera[2], ground + c.clearance, delta=0.01, msg=f"{t} s: lifted to the clearance")
+            np.testing.assert_allclose(camera[:2], sphere[:2], atol=0.02, err_msg=f"{t} s: only lifted")
+            _, pitch, yaw = camera[3:]
+            axis = np.array((math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), -math.sin(pitch)))
+            to_look = (look - camera[:3]) / np.linalg.norm(look - camera[:3])
+            self.assertGreater(axis @ to_look, math.cos(0.005), f"{t} s: still looks at the rover")
+
+
 class EyeCameraRide(unittest.TestCase):
     """The rover eye (the ChaseCamera plugin's eye mode) stays at the rover's
     camera pivot while the station drives the rover over a plank and round a
@@ -1220,6 +1312,53 @@ class EyeCameraRide(unittest.TestCase):
         self.assertGreater(abs(math.remainder(yaw1 - yaw0, 2 * math.pi)), 1.0)
 
 
+class DrivetrainReadout(unittest.TestCase):
+    """The physical drivetrain's state (design spec 9.3) as the station reports
+    it while it spins a physical rover in place on regolith (the plane's
+    default surface): motor currents and torques on every wheel, and the turn
+    the rover got against the turn asked. Station and GzLink run as in pixi
+    run drive, against a headless world."""
+
+    def test_spin_in_place(self):
+        station = server.Station(gz_link.GzLink("test", Node()), "test")
+        self.addCleanup(lambda node=station.link.node: [node.unsubscribe(t) for t in node.subscribed_topics()])
+        seen = {}
+
+        def pre_update(info, ecm):
+            if info.iterations % 50:
+                return
+            t = info.iterations / 1000
+            station.handle({"t": "input", "keys": ["KeyA"] if t >= 0.5 else []}, t)  # turn left from 0.5 s
+            station.tick(t)
+            time.sleep(0.002)  # let transport threads deliver before the next step
+
+        def post_update(info, ecm):
+            if info.iterations == 5000:
+                time.sleep(0.3)  # the latest drivetrain state (10 a second of wall time) and pose
+                seen.update(station.telemetry(time.monotonic()))
+
+        with simulate.world_file(params=simulate.physical()) as world:
+            fixture = TestFixture(world)
+            fixture.on_pre_update(pre_update)
+            fixture.on_post_update(post_update)
+            fixture.finalize()
+            fixture.server().run(True, 5000, False)
+        d = seen["drivetrain"]
+        self.assertIsNotNone(d, "no drivetrain state reached the station")
+        asked = drive.PRESETS[2][1]
+        self.assertAlmostEqual(d["cmd"][1], asked, places=6)
+        self.assertEqual(sorted(d["wheels"]), sorted(("fl", "fr", "rl", "rr")))
+        for name, w in d["wheels"].items():
+            self.assertGreater(abs(w["i"]), 1.0, name)
+            self.assertGreater(abs(w["tau"]), 1.0, name)
+            self.assertEqual(w["surface"], P.drive.default_surface, name)
+            self.assertFalse(w["sat"], name)
+            self.assertAlmostEqual(w["dig"], 1.0, places=3, msg=name)  # packed ground does not dig
+        # Skid-steer turning slips: about 0.38 of the asked rate on regolith (design spec 5.6).
+        ratio = seen["pose"]["yaw_rate"] / asked
+        self.assertTrue(0.25 < ratio < 0.5, ratio)
+
+
 class StationProcess(unittest.TestCase):
     """pixi run drive as a process, in a private transport partition: it
     stops the world it started however it is stopped (DiffDrive would keep
@@ -1285,6 +1424,79 @@ class StationProcess(unittest.TestCase):
         first.send_signal(signal.SIGHUP)
         self.assertEqual(first.wait(30), 0, "".join(first.output))  # stopped by the station, not by the signal
         self.assert_world_stops(path)
+
+    def test_fly_view_over_the_websocket(self):
+        """The Fly view as the page uses it, from a WebSocket client: entering
+        it spawns the fly camera behind the rover, W flies it forward, R
+        brings it back, O makes it orthographic and back; meanwhile the rover
+        holds still."""
+        path = self.world()
+        process = self.station(path)
+        self.wait_for(process, "driver station on", 90)
+        url = re.search(r"driver station on (\S+)", "".join(process.output)).group(1)
+        info, states = asyncio.run(self.fly_session(url))
+        self.wait_for(process, "fly_camera: spawned", 10)
+        self.assertEqual(info["hfov"]["fly"], FLY.hfov)
+        rover = drive.rover_view(states["spawned"]["pose"], drive.flat_ground)
+        spawned = states["spawned"]["fly"]
+        np.testing.assert_allclose((spawned["x"], spawned["y"], spawned["z"]), (rover.x, rover.y, rover.z), atol=0.1)
+        flown = states["flown"]["fly"]
+        forward = (flown["x"] - spawned["x"]) * math.cos(spawned["yaw"]) + (flown["y"] - spawned["y"]) * math.sin(
+            spawned["yaw"])
+        self.assertGreater(forward, 2.0, "W flies forward (cruise speed at least 2 m/s)")
+        back = states["back"]["fly"]
+        np.testing.assert_allclose((back["x"], back["y"], back["z"]), (rover.x, rover.y, rover.z), atol=0.1)
+        self.assertGreater(states["ortho"]["fly"]["ortho"], 0.0)
+        self.assertEqual(states["perspective"]["fly"]["ortho"], 0.0)
+        before, after = states["spawned"]["pose"], states["perspective"]["pose"]
+        self.assertLess(math.hypot(after["x"] - before["x"], after["y"] - before["y"]), 0.05, "the rover held still")
+        process.send_signal(signal.SIGTERM)
+        self.assertEqual(process.wait(30), 0, "".join(process.output))
+
+    async def fly_session(self, url):
+        """Drive the page's protocol: (the /api/info answer, {step: telemetry when the step was done})."""
+        states = {}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url + "api/info") as response:
+                info = await response.json()
+            async with session.ws_connect(url + "ws") as ws:
+                latest = {}
+
+                async def receive():
+                    async for msg in ws:
+                        data = json.loads(msg.data)
+                        if data["t"] == "telemetry":
+                            latest.clear()
+                            latest.update(data)
+
+                async def hold(seconds, keys=(), done=None):
+                    """Send what the page sends in the Fly view for `seconds`, or until done(telemetry)."""
+                    end = time.monotonic() + seconds
+                    while time.monotonic() < end:
+                        await ws.send_json({"t": "input", "keys": [], "axes": [0, 0]})
+                        await ws.send_json({"t": "fly", "keys": list(keys), "axes": [0, 0]})
+                        await asyncio.sleep(0.05)
+                        if done is not None and latest.get("fly") and done(latest):
+                            break
+                    return json.loads(json.dumps(latest))
+
+                reader = asyncio.create_task(receive())
+                await ws.send_json({"t": "view", "view": "fly"})
+                states["spawned"] = await hold(60, done=lambda m: m["pose"] is not None)
+                self.assertIsNotNone(states["spawned"].get("fly"), "the fly camera did not report within 60 s")
+                await hold(0.5)  # settled at its spawn pose
+                states["spawned"] = await hold(0.2)
+                await hold(1.5, ["KeyW"])
+                states["flown"] = await hold(0.6)  # the plugin's deadman and lag: it stops
+                await ws.send_json({"t": "fly_goto", "kind": "rover"})
+                states["back"] = await hold(3.0, done=lambda m: not m["fly"]["goto"] and abs(
+                    m["fly"]["x"] - states["spawned"]["fly"]["x"]) < 0.05)
+                await ws.send_json({"t": "fly_mode", "mode": "ortho"})
+                states["ortho"] = await hold(3.0, done=lambda m: m["fly"]["ortho"] > 0)
+                await ws.send_json({"t": "fly_mode", "mode": "perspective"})
+                states["perspective"] = await hold(3.0, done=lambda m: m["fly"]["ortho"] == 0)
+                reader.cancel()
+        return info, states
 
     def test_stopped_while_the_world_loads(self):
         path = self.world()

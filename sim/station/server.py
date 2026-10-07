@@ -195,9 +195,11 @@ class Station:
 
     def goto(self, msg):
         """The drive.View that a fly_goto message asks for: kind "rover"
-        (behind it), "point" or "top" (x, y and the map's span on screen [m]),
-        or "pixel" (u, v of the fly picture, 0-1 from its top left); None for
-        a pixel in the sky. ValueError while what it needs is not known."""
+        (behind it), "point" (looking at x, y; over it if the camera looks
+        straight down) or "top" (straight down over x, y), both with the map's
+        span on screen [m], or "pixel" (u, v of the fly picture, 0-1 from its
+        top left); None for a pixel in the sky. ValueError while what it needs
+        is not known."""
         s = self.link.snapshot()
         kind = msg.get("kind")
         if kind == "rover":
@@ -210,6 +212,9 @@ class Station:
                 raise ValueError(f"span {span} is not positive")
             if kind == "top":
                 return drive.top_view(x, y, span, self.ground)
+            if "fly" in s and (s["fly"]["ortho"] > 0 or drive.looks_down(drive.View.of(s["fly"]))):
+                # A view from straight above stays one, over the point.
+                return drive.pan_view(drive.View.of(s["fly"]), x, y, self.ground, s["fly"]["ortho"] > 0)
             yaw = s["fly"]["yaw"] if "fly" in s else s["pose"]["yaw"] if "pose" in s else math.pi / 2
             return drive.point_view(x, y, yaw, span, self.ground)
         if kind == "pixel":

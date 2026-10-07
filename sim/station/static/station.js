@@ -186,11 +186,11 @@ function updateViewName() {
   let name = VIEW_NAMES[state.view];
   const m = state.tm;
   if (state.view === "chase" && m && m.chase) name += m.chase.mode === "follow" ? ", following" : ", holding the view";
-  if (state.view === "fly" && m && m.fly) name += `, ${flyText(m.fly)}`;
   // The eye turns as commanded at once; the onboard camera as fast as its head does.
   const look = !m ? null : state.view === "eye" ? m.look : LOOK_VIEWS.has(state.view) ? m.head : null;
   if (look) name += `, ${lookText(look)}`;
   $("view-name").textContent = name;
+  $("view-detail").textContent = state.view === "fly" && m && m.fly ? flyText(m.fly) : "";
 }
 
 function lookText({pan, tilt}) {
@@ -200,11 +200,12 @@ function lookText({pan, tilt}) {
 }
 
 function flyText(f) {
-  const parts = [f.mode === "follow" ? "following the rover" : null,
+  const parts = [f.mode === "follow" ? "Following the rover" : null,
     f.ortho > 0 ? `orthographic ${Math.round(f.ortho)} m wide, no cast shadows`
       : f.pitch > Math.PI / 2 - 0.01 ? "straight down" : null,
     `${Math.round(f.agl)} m above the ground`, `speed ×${Number(f.speed.toFixed(2))}`];
-  return parts.filter(Boolean).join(", ");
+  const text = parts.filter(Boolean).join(", ");
+  return text[0].toUpperCase() + text.slice(1);
 }
 
 // Dragging in a look view turns it by the angle under the pointer (exact at
@@ -1102,7 +1103,7 @@ function paintMap(canvas, v, big) {
   }
   ctx.fillStyle = C.bone;
   ctx.font = `600 12px ${font}`;
-  ctx.fillText("N", w - 14, big ? 64 : 16);
+  ctx.fillText("N", w - 14, big ? 112 : 16);
   // Scale bar, bottom left.
   const step = niceStep(v.span);
   const y0 = h - (big ? 112 : 10);
