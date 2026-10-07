@@ -348,8 +348,11 @@ class Render(unittest.TestCase):
         depth image, and it renders black. Hence the user's decision of
         2026-10-07: the rover has no dust by default (DriveParams.dust off,
         test_gen_model.Dust), and Q11 is met by its absence. Kept as an
-        expected failure, the record for the opt-in switch: it starts passing
-        when a ratio is honoured, and then the dust can come back on."""
+        expected failure, the record for the opt-in switch: the emitter asks
+        for a scatter ratio near none (DriveParams.dust_scatter_ratio; with
+        none a gz-rendering that honours it would apply 0.65), so the test
+        starts passing when that ratio is honoured, and then the dust can
+        come back on."""
         plain, dusty = self.rgbd(), self.rgbd(self.dust())
         self.assertTrue(self.same_depth(plain[self.RGBD[0]], dusty[self.RGBD[0]]))
 

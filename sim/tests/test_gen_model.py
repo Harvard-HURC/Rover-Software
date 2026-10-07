@@ -177,6 +177,7 @@ class DiffDriveVariant(unittest.TestCase):
             self.assertEqual(ET.tostring(self.model.find(path)), ET.tostring(default.find(path)), path)
         self.assertEqual([link.get("name") for link in self.model.findall("link")],
                          [link.get("name") for link in default.findall("link")])
+
         def emitters(params):
             return [ET.tostring(e) for e in ET.fromstring(gen_model.build_sdf(params)).iter("particle_emitter")]
 
@@ -278,8 +279,9 @@ class Dust(unittest.TestCase):
     spec 6.5, D15). Off by default (the user's decision of 2026-10-07): in
     gz-rendering 8.2.2 the depth image and point cloud see any visible
     particle (tests/test_render.py), so Q11 (depth does not see dust) is met
-    by having no dust. On: the emitters and the drivetrain's dust elements as
-    they were, for when gz-rendering honours a scatter ratio."""
+    by having no dust. On: the emitters, asking for a scatter ratio near
+    none, and the drivetrain's dust elements, for when gz-rendering honours
+    that ratio."""
 
     @classmethod
     def setUpClass(cls):
@@ -323,15 +325,21 @@ class Dust(unittest.TestCase):
     def test_dust_emitters(self):
         """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
         until the drivetrain says so, an explicit topic; a white diffuse (without
-        one the particles render black) and no colour range or scatter ratio,
-        which gz-rendering 8 does not apply: the sprite carries the dust's
-        colour and opacity (DriveParams.dust_alpha). The sprite is written with
-        the model whether or not the switch is on."""
+        one the particles render black) and no colour range, which gz-rendering 8
+        does not apply: the sprite carries the dust's colour and opacity
+        (DriveParams.dust_alpha). A scatter ratio near none but above 0: without
+        one, or at 0, a gz-rendering that honours it applies 0.65 and depth sees
+        the dust (8.2.2 honours none, tests/test_render.py). The sprite is
+        written with the model whether or not the switch is on."""
         for side, s in (("left", "l"), ("right", "r")):
             emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
             self.assertEqual(emitter.findtext("emitting"), "false")
-            for dead in ("particle_scatter_ratio", "color_start", "color_end", "color_range_image"):
+            for dead in ("color_start", "color_end", "color_range_image"):
                 self.assertIsNone(emitter.find(dead), dead)
+            ratio = emitter.findtext("particle_scatter_ratio")
+            self.assertIsNotNone(ratio, "particle_scatter_ratio")  # without one: SDF's 0.65
+            self.assertEqual(float(ratio), P.drive.dust_scatter_ratio)
+            self.assertTrue(0 < float(ratio) <= 1e-3, ratio)
             self.assertEqual(vec(emitter.findtext("material/diffuse")), [1.0, 1.0, 1.0, 1.0])
             topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
             self.assertEqual(emitter.findtext("topic"), topic)

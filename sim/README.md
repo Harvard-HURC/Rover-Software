@@ -23,7 +23,7 @@ pixi run sim                    # build the plugins, regenerate rover and worlds
 pixi run drive urc_autonomy     # or drive from the browser: starts the world headless, opens the station page
 pixi run sim-bridge             # second terminal: ROS 2 <-> Gazebo topics
 pixi run ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}, angular: {z: 0.2}}'
-pixi run sim-test               # headless tests (~10 min)
+pixi run sim-test               # headless tests (~14 min with the build)
 pixi run sim-maps               # orthophoto maps for the station's Map view (GPU, ~1 min)
 pixi run sim-perf               # performance budgets (~25 min, wants an otherwise idle machine)
 pixi run sim-slow               # the mission routes driven by the physical rover (~40 min)
@@ -488,12 +488,14 @@ every wheel contact grips. Every 1 ms step:
   sink further than the static carve.
 - **Dust**: none by default (the user's decision of 2026-10-07): gz-rendering
   8.2.2's depth camera sees any visible particle (Gazebo lessons), and clean
-  depth images and point clouds come first. `DriveParams.dust = True` puts an
+  depth images and point clouds come first. `DriveParams(dust=True)` (or
+  `dust: bool = True` in `gen_model.py`, then `pixi run sim-model`) puts an
   emitter behind each rear wheel on the rocker links and gives the drivetrain
   their topics; the drivetrain sets their rate from speed, slip, dig factor
-  and the ground's dust factor (at most 40 /s, nothing below 0.05 m/s), and
-  the depth image and point cloud then see the dust. Off, the drivetrain
-  sends nothing on the emitter topics. Worlds load
+  and the ground's dust factor (at most 40 /s, nothing below 0.05 m/s). The
+  emitters ask for a scatter ratio near none (`dust_scatter_ratio`), which
+  8.2.2 does not apply, so the depth image and point cloud then see the
+  dust. Off, the drivetrain sends nothing on the emitter topics. Worlds load
   `gz-sim-particle-emitter-system`, idle without emitters, so the switch
   alone brings the dust back.
 - **Odometry and tf** as DiffDrive publishes them (`gz::math::DiffDriveOdometry`,

@@ -4,8 +4,9 @@ Date: 2026-10-06
 Status: **implemented** (2026-10-07), in waves 0–3 on git branches merged into `main` (WS-0; WS-D, WS-T1,
 WS-A, WS-F1; WS-T2 in phases T2a and T2b, WS-F2; WS-V). This document is revision 2 of the design as it was
 reviewed, kept as written, except §5.8 (updated by WS-0), §6.3's motor rows (the user's top speed, 2026-10-07),
-short *As built* notes that point to §17 where the design no longer describes the rover, and this status. What
-changed during implementation, and where each goal and calibration target stands, is in §17 (Changes during
+short *As built* notes that point to §17 where the goals, the open questions and the passages on dust, dig-in and
+camera noise no longer describe the rover, and this status. Elsewhere a passage can be out of date: what changed
+during implementation, and where each goal and calibration target stands, is in §17 (Changes during
 implementation; §17.6 lists the fixes after the adversarial review, §17.7 the user's decisions of 2026-10-07).
 The code is the reference; `sim/README.md` describes it as built.
 
@@ -100,7 +101,7 @@ After this work:
 | D12 | **A patched copy of gz-rendering's media**, made at build time from the pixi env plus a diff, and set via `GZ_RENDERING_RESOURCE_PATH`. It carries a Terra roughness fix, a procedural clear sky and distance haze. If the diff does not apply, it warns and the stock media are used; the build never fails. | (M) Stock Terra gives roughness 0 (a mirror) when a layer has no roughness map; the dark wavy "puddles" in today's worlds are sky reflections. (M/R [26]) gz-sim 8 never applies SDF `<fog>` or `<sky><cubemap_uri>`. Frame cost within noise. |
 | D13 | **Sun of the mission date**: 2027-05-28 10:30 MDT at 38.418 N, −110.777 → elevation 49.8°, azimuth 102°, direction (−0.630, 0.138, −0.764); intensity 1.4, colour (1.0, 0.95, 0.87); ambient (0.32, 0.34, 0.40). **NAIP is de-shaded before draping**, so slopes are not shaded twice. | (M) Computed with the NOAA algorithm in the render prototype; intensity honoured (mean ground 147 → 169 DN). Critique check: 49.9°, azimuth 102.5°. (M) NAIP 2024 has west-facing steep slopes 15 % darker: a baked morning sun. Draping it unchanged under a sim sun shades slopes twice and keeps NAIP's cast shadows under a different sun. De-shading method in §5.7. |
 | D14 | **A far-field ring per world** (visual GLB, 65 × 80 km on a 120 m grid, Earth curvature, a hole under the terrain) replaces the 8 km horizon plane. **Viewer cameras and the rover's RGB render to 80 km**; the depth image stays clipped at 40 m. A 2–8 km middle ring is phase 2. | (M) The Henry Mountains and Factory Butte appear in the right places; +260–300 MB; frame cost within noise, measured with far clip 80,000 m in every view. (R) Today's clip far is 2000 m (eye, chase), 6000 m (fly, rev1) and 40 m (rover RGB-D). gz-sensors 8 `RgbdCameraSensor` reads `<depth_camera><clip>` separately and clips the depth buffer, so RGB can reach 80 km while depth stays at 40 m. |
-| D15 | **Dust**: one particle emitter behind each rear wheel, on the rocker link. The drivetrain drives its rate from wheel speed, slip and the surface's dust factor. Emitters start with `<emitting>false</emitting>`, with an explicit `<topic>` and `<particle_scatter_ratio>` 0, so depth and lidar do not see dust (Q11). *As built (§17.1, §17.7): gz-rendering 8.2.2's depth shader ignores the scatter ratio and sees any visible particle, so the rover has no dust by default; `DriveParams.dust` brings it back.* | (M) Particle emitters render in camera sensors; tuned plume parameters in `render/manifest.json`; rate can be changed at runtime on the emitter's `cmd` topic. (R) `<emitting>` defaults to true, and gz-sim creates emitters from link SDF even without the system. `particle_scatter_ratio` defaults to 0.65, which makes depth and lidar see particles. |
+| D15 | **Dust**: one particle emitter behind each rear wheel, on the rocker link. The drivetrain drives its rate from wheel speed, slip and the surface's dust factor. Emitters start with `<emitting>false</emitting>`, with an explicit `<topic>` and `<particle_scatter_ratio>` 0, so depth and lidar do not see dust (Q11). *As built (§17.1, §17.7): gz-rendering 8.2.2's depth shader ignores the scatter ratio and sees any visible particle, so the rover has no dust by default; `DriveParams.dust` brings it back, its emitters asking for a ratio of 1e-6 (gz-rendering ignores one not above 0).* | (M) Particle emitters render in camera sensors; tuned plume parameters in `render/manifest.json`; rate can be changed at runtime on the emitter's `cmd` topic. (R) `<emitting>` defaults to true, and gz-sim creates emitters from link SDF even without the system. `particle_scatter_ratio` defaults to 0.65, which makes depth and lidar see particles. |
 | D16 | **FlyCamera is its own C++ system.** It integrates velocity commands every physics step, keeps clearance from the world's own heightmap, and switches to orthographic projection from an `events::SceneUpdate` hook, keeping no rendering pointer. Its deadman runs on wall time by default and on sim time in tests. | (M) Picture motion CV 0.46 % with plugin integration, vs 26–35 % with Python `set_pose`. Blocking Python service calls stall ~1 s under busy subscribers. PreRender/Render/PostRender hooks cost 35–45 % sim speed; SceneUpdate costs nothing. SDF orthographic settings are ignored. A stored CameraPtr crashes gz at shutdown. |
 | D17 | **The Map view uses an offline orthophoto rendered by Gazebo** for each world (`sim/tools/render_map.py`), with live markers. The hillshade stays as a fallback, with a fixed metres-per-colour scale. The map is stale when any input changes: world SDF, heightmap, colour map, GLBs, media patch. | (M) 4096 px orthophotos in 4.7–17.7 s per world; 2–3.3 MB JPEG; tile seams geometrically continuous. |
 | D18 | **Tyre compliance (hub links with radial and axial springs) is phase 2**, behind a `Params` flag. | (M) It turns 400–480 Hz contact chatter into a physical 12–16 Hz wheel hop, but adds 8 joints and changes the joint tree. Its RTF cost was not measured separately. |
@@ -365,6 +366,10 @@ Columns of the table below:
   (M, rev2, `table.py`).
 - **Dug**: the same ratio at D = D_max.
 - **Dig**: dig_rate (m of extra sinkage per m of slip) and D_max (total sinkage / static sinkage).
+  *As built: for sand, wash sand and dusty clay the Dig and Dug values below are the mild preset
+  (`terrains.MILD_DIG`). The default is the strong preset, dig_rate 0.05 and D_max 2.0, under which a sustained
+  spin in sand falls to 0.07× and the rover drives out (§17.3); the sand sheet keeps its mild values under both
+  (§17.1, §17.2, §17.7).*
 
 | Key | Ground (soil, landform) | μs | μk | Crr | Bulldoze | Net, climb | Hold | Slip | Sinkage | Dig | Spin (dug) | Dust | Basis |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -542,11 +547,13 @@ Other model changes:
 - The tyre collision's friction becomes isotropic μ 1.0 (no `fdir1`). The plugin overrides every wheel contact.
 - The dust emitters are declared with `<emitting>false</emitting>`, `<topic>` and `<particle_scatter_ratio>0`.
   *As built: the emitters, `<dust_rate>`, the `<dust>` groups and `<dust_rule>` only with `DriveParams.dust`,
-  off by default (§17.7).*
+  off by default (§17.7). Their ratio is 1e-6 (`DriveParams.dust_scatter_ratio`): gz-rendering ignores one not
+  above 0 and keeps 0.65, and in 8.2.2 none reaches the depth shader (§17.1, Q11).*
 - DiffDrive must be removed, not kept alongside (D22).
 
 In wave 1, all of these changes exist only in the `physical` variant. At the start of wave 2, WS-T2 makes the
-non-drivetrain parts unconditional: camera noise, RGB and depth clip (§7), dust emitters.
+non-drivetrain parts unconditional: camera noise, RGB and depth clip (§7), dust emitters. *As built: no camera
+noise (§17.2); dust emitters only with `DriveParams.dust`, off by default (§17.7).*
 
 ### 6.3 Motor, gearbox and controller (port of the prototype, per wheel, every 1 ms step)
 
@@ -662,7 +669,9 @@ under the wheel's deepest contact.
     (0.80, 0.70, 0.56) fading alpha 0.28 → 0; soft puff texture.
   - Emitters sit on the rocker links behind the rear wheels (a wheel link spins).
   - Worlds load `gz-sim-particle-emitter-system`.
-  - *As built: all of this only with `DriveParams.dust`, off by default; the rover has no dust (§17.7).*
+  - *As built: the emitters and their rate only with `DriveParams.dust`, off by default, so the rover has no
+    dust; the worlds still load the system, idle (§17.7). A particle keeps the sprite's colour and opacity for
+    its lifetime: gz-rendering 8 applies no colour range (§17.6).*
 
 ### 6.6 Solver
 
@@ -756,7 +765,7 @@ input parameters and checks they are wired. **(A)** means it tests an assumed su
 7. **Cameras**:
    - Clip far 80,000 m for the eye, chase and fly cameras and the rover's RGB.
    - The rover's depth stays 0.1–40 m via `<depth_camera><clip>`, which gz-sensors 8 `RgbdCameraSensor` honours.
-   - Rover RGB-D noise stddev 0.06 (~2 DN (M)).
+   - Rover RGB-D noise stddev 0.06 (~2 DN (M)). *As built: none (§17.2).*
    - Optional lens flare on the chase camera (scale 0.6, colour (1.0, 0.95, 0.9) (M)); G6 checks that LensFlare
      disconnects from PostRender.
    - Not used: `<distortion>`, `<fog>`, `<projector>` (§4).
@@ -1023,6 +1032,8 @@ average < 4; ratios are accepted on a loaded machine.
   - with `mode = "physical"`: no DiffDrive; RoverDrivetrain with `DriveParams` values; wheel effort 1000;
     joint velocity limit 16 rad/s; isotropic tyre; dust emitters on the rocker links with `emitting` false,
     explicit topic, scatter ratio 0; depth clip 40 m and RGB clip 80 km.
+  - *As built: the DiffDrive variant is not byte-identical to the wave-0 rover (§17.2); neither rover has dust
+    emitters unless `DriveParams.dust` is on, and then their scatter ratio is 1e-6 (§17.7).*
 - `viewers`: FlyParams model; eye, chase and fly clip far 80 km.
 - `drive.Fly`: key mapping, speed clamp, goto pose maths, ray–ground intersection.
 - Media tool: applies the diff to a copy and leaves stock media untouched; on a diff that does not apply, warns,
@@ -1057,6 +1068,7 @@ average < 4; ratios are accepted on a loaded machine.
 **Rendering, one render per subprocess** (`test_render.py` + the existing camera test):
 - ArUco 0 still decoded at 2.5 m with haze and camera noise;
 - depth image unchanged by the haze, and unchanged within its field of view while the dust emitters run at full rate;
+  *As built: no camera noise (§17.2); dust in depth is an expected failure, on the opt-in emitter (§17.7).*
 - orthographic object size equal at 40 m and 80 m (±2 %);
 - stock cumulus sky gone;
 - no specular glint on sunlit flat terrain (brightest 0.1 % of ground pixels ≤ p99 + 15 DN);
@@ -1189,7 +1201,7 @@ wave 2 if Q2 approves it.
 | R12 | NAIP is pale, hazy and shaded; colours are apparent, not reflectance; not checked against ground photos | De-shading with a measurable test; saturation boost re-tuned on NAIP 2024; ΔE tests split so they are not self-referential |
 | R13 | ~400 MB of data under `sim/data` in a repo that is not under git yet | Q3: delete the redundant NAIP 2021 route file (70 MB); optional fetch script from the provenance JSON |
 | R14 | Inference, not map: the grey pediment west of MDRS as Mancos Tununk (from soils and stratigraphy [1][2]); Mancos-Shale measurements transferred to Brushy Basin badlands (T) | Only colour, traction and relief recipes depend on it; they come from the soil survey and the local lidar, with literature values labelled (T) |
-| R15 | Dig-in is a positive feedback: once Crr·D·c + k_b·D²·a reaches μk·c, a spin stops entirely, a bifurcation like the old stall knife edge | Default D_max kept well below it (sand stops near D ≈ 1.7; default 1.25); the stuck behaviour only behind the strong preset (Q12); a monotonic-decay test |
+| R15 | Dig-in is a positive feedback: once Crr·D·c + k_b·D²·a reaches μk·c, a spin stops entirely, a bifurcation like the old stall knife edge | Default D_max kept well below it (sand stops near D ≈ 1.7; default 1.25); the stuck behaviour only behind the strong preset (Q12); a monotonic-decay test. *As built: the strong preset is the default (§17.1, §17.7)* |
 | R16 | A per-world solver makes per-wheel friction and diagonal stalls differ between worlds | Documented in the sheet; the stall and load-split targets run only in PGS worlds |
 | R17 | Parallel agents in one working tree corrupt builds and generated models | D25 isolation; no `sim-test` inside a wave |
 | R18 | Slip-compliance side drift on loose ground is large (1.3 m in 3.5 m across a 20° sand slope) and is set by an (A) parameter | Plumbing test exposes it; WS-V tunes slip within range; Q13 field data |
@@ -1360,7 +1372,7 @@ diagnosis and fix were taken. **Accepted, different fix** means the diagnosis wa
 | P16 | Swatch feathering lowers RMS by 10–20 % | Accepted | Variance-preserving blend, divided by sqrt(Σw²) (§5.4), with a test |
 | P17 | The diagonal load-split row mixes μ values | Accepted | Row split by μ (§6.9); the pivot-height note for the mechanical team is in §6.8 |
 | P18 | Citation gaps: Crr table, μ noise, NAIP drape, PGS noise | Accepted | (a) [6] replaced by Engineering ToolBox, verified rev2: values and their car-tyre caveat. (b) μ noise (A). (c) NAIP is de-shaded before draping, and the ΔE tests are no longer self-referential (§5.7, §11). (d) PGS noise is not counted as realism (D4, §6.6) |
-| P19 | Anveshak evidence does not match the failure mode the model produces | Accepted | A per-wheel dig-in state (D21, §6.5), supported by slip-sinkage data [35][36]. Defaults are mild; the stuck behaviour is a preset (Q12). The model reproduces wheels digging in and turns slowing or stopping. It does not reproduce a motor stall in sand at 20 A, which depended on Anveshak's unknown motors |
+| P19 | Anveshak evidence does not match the failure mode the model produces | Accepted | A per-wheel dig-in state (D21, §6.5), supported by slip-sinkage data [35][36]. Defaults are mild; the stuck behaviour is a preset (Q12). The model reproduces wheels digging in and turns slowing or stopping. It does not reproduce a motor stall in sand at 20 A, which depended on Anveshak's unknown motors. *As built: the strong preset is the default (§17.1, §17.7)* |
 | P-rec | Expose an effective-track multiplier; tell the mechanical team about pivot height | Accepted | D24, Q10, §6.8 |
 
 ### 16.2 Feasibility and engineering (E)
@@ -1375,7 +1387,7 @@ diagnosis and fix were taken. **Accepted, different fix** means the diagnosis wa
 | E6 | A rover-model change in wave 1 crosses ownership; the gate can deadlock; no DiffDrive for the cost regression; simulate.py lacks overrides | Accepted | `DriveParams.mode` with a byte-identical default in wave 1, flipped by WS-T2 in phase T2a (D22, §12); DiffDrive kept as a variant; simulate.py gains rover and Params overrides (WS-0); `Params.wheel_speed` and `wheel_radius` kept for the station |
 | E7 | Shared working tree with no git; generated outputs and the build dir are unowned | Accepted | D25: worktrees after `git init` (Q9) or private copies, with per-copy build dirs; generated outputs only in the owner's copy; no `sim-test` inside a wave (§12) |
 | E8 | Ownership gaps: media.py, TerrainType fields, NAIP reader, fly model in gen_model, WS-T2 load | Accepted; one fix rejected | media.py → WS-A; WS-0 freezes the dataclasses, adds `dem.read_raster` and splits `viewers.py` (owned by WS-F1, then WS-F2); props.py not edited in wave 1. **Rejected**: splitting WS-T2 into two agents, because both halves edit `world.py`. Instead, T2 runs as two serial phases with a checkpoint |
-| E9 | Dust emitters default to emitting; depth sees particles | Accepted | `<emitting>false</emitting>`, explicit `<topic>`, `particle_scatter_ratio` 0 (D15); depth-under-dust test; Q11. *As built: the ratio never reaches the depth shader, so the rover has no dust by default (§17.1, §17.7)* |
+| E9 | Dust emitters default to emitting; depth sees particles | Accepted | `<emitting>false</emitting>`, explicit `<topic>`, `particle_scatter_ratio` 0 (D15); depth-under-dust test; Q11. *As built: the ratio never reaches the depth shader, so the rover has no dust by default; the opt-in emitters ask for 1e-6, as gz-rendering ignores 0 (§17.1, §17.7)* |
 | E10 | `cmd_timeout` 0.5 s breaks GUI Teleop | Accepted | Default 0 (hold the last command, like DiffDrive); the station keeps its own deadman (§6.2); test |
 | E11 | G1 is low risk for collision; Delivery and Astrobiology at 2049² are not gated | Accepted | G1 idle result recorded (§10.2), with a driving run added; new gate G7 for 2049² |
 | E12 | The slab recipe cannot reach its own cover target | Accepted | As P10 |
@@ -1427,7 +1439,7 @@ tuned what the targets needed and wrote this section. Measurements are on the M4
 | Q8 | Wheel type unknown | Spec's assumption; tyre compliance off |
 | Q9 | git worktrees | One per workstream |
 | Q10 | Raw turn physics, `track_multiplier` 1.0; the station shows commanded vs achieved yaw rate | As decided (station Drivetrain panel and "got N %") |
-| Q11 | Depth and point cloud do not see dust. 2026-10-07: rather no dust than dust in depth (17.7) | **Met by having no dust**: the rover has no dust emitters unless `gen_model.DriveParams.dust` is on (off by default). Visible dust and Q11 do not go together in gz-rendering 8.2.2: its depth shader takes every particle pixel with any red for a return, at a fixed scatter ratio that neither `particle_scatter_ratio` (1e-6, 0.1, 1 alike) nor a ratio sent on the emitter's topic reaches. Only a particle material without a diffuse stays out of the depth image, and it renders black: the rover's dust did so until the review (17.6), then was visible and tan, and seen by depth. `test_render` keeps the target as an expected failure, on the rover's own emitter, as the record for the switch: when it passes, the dust can come back on |
+| Q11 | Depth and point cloud do not see dust. 2026-10-07: rather no dust than dust in depth (17.7) | **Met by having no dust**: the rover has no dust emitters unless `gen_model.DriveParams.dust` is on (off by default). Visible dust and Q11 do not go together in gz-rendering 8.2.2: its depth shader takes every particle pixel with any red for a return, at a fixed scatter ratio that neither `particle_scatter_ratio` (1e-6, 0.1, 1 alike) nor a ratio sent on the emitter's topic reaches. Only a particle material without a diffuse stays out of the depth image, and it renders black: the rover's dust did so until the review (17.6), then was visible and tan, and seen by depth. `test_render` keeps the target as an expected failure, on the rover's own emitter, as the record for the switch. That emitter asks for a scatter ratio of 1e-6 (`DriveParams.dust_scatter_ratio`): with none a gz-rendering that honours the ratio would apply SDF's 0.65, and it ignores 0. When the test passes, the dust can come back on |
 | Q12 | Strong dig-in by default, mild available. 2026-10-07: kept, straight-climb stalls in loose ground included (17.7) | Strong on loose sand, wash sand and dusty clay; mild under a switch (`terrains.DIG`). The crusted sand sheet keeps mild values under both (17.2) |
 | Q14 | Leebench as sand sheet + regolith with sparse gravel | As decided (`landscape.SSURGO_UNITS`) |
 
@@ -1672,13 +1684,14 @@ The user answered what the build had left open (17.5):
 | Open item | Decision | Built as |
 |---|---|---|
 | Strong dig-in also stalls straight climbs in loose ground; the decision of 2026-10-06 (Q12) spoke of spins | Keep the strong preset as the default, straight-climb stalls included | No change. Loose sand stalls a straight climb at about 10–15° (the proving ground's 15° sand dune, 0.6 m up it, its wheels dug in to 2.0), dusty clay at about 15° (Delivery's clay flank, after 10 m). The proving ground's 12° clay slope is climbed (0.39 m/s, dig 1.26; its reported stall was the PGS artefact of 17.6). `terrains.DIG = "mild"` stays the switch to the mild preset |
-| Dust in depth (Q11) against visible dust | No visible dust: clean depth images and point clouds come before dust behind the wheels. Q11 is met by having no dust | One switch, `gen_model.DriveParams.dust`, default False. Off, the generated rover has no particle emitter in either drive mode, and the drivetrain plugin gets no `<dust_rate>`, `<dust>` groups or `<dust_rule>`, so it sends nothing on the emitter topics. On, the model is byte for byte the one before the switch (checked in both drive modes, with and without tyre compliance and dig-in). The emitter builder, the sprite (still written with the model), the rate rule of §6.5 and the plugin's dust code stay, and the worlds keep `gz-sim-particle-emitter-system` (idle without emitters), so the switch alone brings the dust back once gz-rendering honours `particle_scatter_ratio` (17.1, Q11). The ground's dust factor stays in the catalogue and `ground.json`. The drivetrain state (§9.3) never carried a dust rate, so no interface changed |
+| Dust in depth (Q11) against visible dust | No visible dust: clean depth images and point clouds come before dust behind the wheels. Q11 is met by having no dust | One switch, `gen_model.DriveParams.dust`, default False. Off, the generated rover has no particle emitter in either drive mode, and the drivetrain plugin gets no `<dust_rate>`, `<dust>` groups or `<dust_rule>`, so it sends nothing on the emitter topics. On, the model is the one before the switch (checked byte for byte in both drive modes, with and without tyre compliance and dig-in), except that since the review of these decisions each emitter asks for a scatter ratio of 1e-6 (`DriveParams.dust_scatter_ratio`): the emitter before the switch set none, to which a gz-rendering that honours the ratio would apply SDF's 0.65, so depth would still see the dust (it ignores a ratio not above 0). The emitter builder, the sprite (still written with the model), the rate rule of §6.5 and the plugin's dust code stay, and the worlds keep `gz-sim-particle-emitter-system` (idle without emitters), so the switch alone brings the dust back once gz-rendering honours `particle_scatter_ratio` (17.1, Q11). The ground's dust factor stays in the catalogue and `ground.json`. The drivetrain state (§9.3) never carried a dust rate, so no interface changed |
 | The design changes listed for the user's approval | All approved | No change: the Autonomy caprock rib (`EASY_ROUTE_RIB`); the 15° wash banks and soft-sand wash floors; dig-in stopping Delivery's clay flank and the proving ground's sand dune; zones that no longer level the ground; badland belts as round zones; recipe and NAIP shrubs instead of hand-placed ones; no zone decals (Autonomy's zones tint its drape, 17.6); the lander's collide bitmask (Q2); the sand sheet's mild dig-in under the strong preset |
 
 Tests for the switch: `test_gen_model.Dust` checks that the default rover (generated, tracked and the DiffDrive
-variant) has no emitter and no dust elements, and that the switch adds exactly those; `test_drivetrain.test_dust`
-runs the rate rule with the switch on and checks that the default rover sends nothing to either emitter topic;
-`test_render` builds the rover's emitter directly and keeps its dust tests as the record for the switch (dust in
-depth still an expected failure). `pixi run sim-test`: 468 tests OK in 750 s (8 opt-in skipped; 2 expected
-failures: the slow-turn judder and dust in depth); `ctest` 2 of 2.
+variant) has no emitter and no dust elements, that the switch adds exactly those, and that the emitters ask for a
+scatter ratio above 0 and near none; `test_drivetrain.test_dust` runs the rate rule with the switch on and checks
+that the default rover sends nothing to either emitter topic; `test_render` builds the rover's emitter directly
+and keeps its dust tests as the record for the switch (dust in depth still an expected failure). `pixi run
+sim-test`: 468 tests OK in 750 s (8 opt-in skipped; 2 expected failures: the slow-turn judder and dust in depth);
+`ctest` 2 of 2.
 

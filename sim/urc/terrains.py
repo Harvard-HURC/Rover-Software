@@ -119,7 +119,8 @@ class Appearance:
     """How the ground looks: its colour-map palette, the shared detail
     texture of its surface (None: none; Terra weights detail layers by height
     only, so a world lays the same few over all its ground,
-    WorldBuilder.detail_layers) and the dust its wheels raise."""
+    WorldBuilder.detail_layers) and the dust its wheels raise when
+    gen_model.DriveParams.dust is on (off by default: no dust)."""
     palette: Palette
     detail: str = None  # key of textures.DETAILS
     dust: float = 0.0  # dust factor: scales the emitters' rate behind the wheels (0: none)

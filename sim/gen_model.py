@@ -121,8 +121,8 @@ class DriveParams:
     # clouds over visible dust). gz-rendering 8.2.2's depth shader takes any visible particle for a return, so
     # with dust on the depth image and point cloud see it (Q11 "depth does not see dust" not met,
     # tests/test_render.py); with none they cannot. On: an emitter behind each rear wheel in both drive modes,
-    # its rate set by the physical drivetrain (<dust>, <dust_rule>), for when gz-rendering honours
-    # <particle_scatter_ratio>.
+    # its rate set by the physical drivetrain (<dust>, <dust_rule>), for when gz-rendering honours the
+    # emitters' <particle_scatter_ratio> (dust_scatter_ratio).
     dust: bool = False
     # Particles per second = dust factor x (speed_gain x hub speed + slip_gain x slip speed) x dig factor, at
     # most dust_max (A gains).
@@ -142,6 +142,10 @@ class DriveParams:
     dust_speed: tuple[float, float] = (0.15, 0.5)  # [m/s]
     dust_alpha: float = 0.28
     dust_pitch: float = 0.6  # [rad] above the horizontal, backwards (A)
+    # The share of particle pixels depth and lidar take for a return (D15, Q11): as near none as gz-rendering
+    # takes. With no ratio it would apply 0.65, SDF's default too, and it ignores a ratio not above 0 (R:
+    # gz-rendering 8's BaseParticleEmitter). In 8.2.2 no ratio reaches the depth shader (M, tests/test_render.py).
+    dust_scatter_ratio: float = 1e-6
 
 
 @dataclass(frozen=True)
@@ -384,10 +388,12 @@ def _add_dust_emitter(link, p, name):
     DriveParams.dust, off by default (user decision 2026-10-07); tests/test_render.py builds one directly. It
     starts not emitting (SDF's default is to emit). Each particle is the soft puff sprite DUST_SPRITE, which
     carries the dust's colour and opacity (DriveParams.dust_alpha; gz-rendering 8 applies no colour range). The
-    material needs its white diffuse: particles without one render black (measured). The depth image and point
-    cloud see the dust (Q11 not met, tests/test_render.py): the depth shader takes every particle pixel with any
-    red for a return, at a fixed scatter ratio that neither <particle_scatter_ratio> nor the emitter's topic
-    reaches (measured); only black particles stay out of it. Hence the switch: Q11 is met by having no dust."""
+    material needs its white diffuse: particles without one render black (measured). It asks for a scatter ratio
+    near none (DriveParams.dust_scatter_ratio; with none gz-rendering would apply 0.65), but the depth image and
+    point cloud see the dust all the same (Q11 not met, tests/test_render.py): gz-rendering 8.2.2's depth shader
+    takes every particle pixel with any red for a return, at a fixed scatter ratio that neither
+    <particle_scatter_ratio> nor the emitter's topic reaches (measured); only black particles stay out of it.
+    Hence the switch: Q11 is met by having no dust."""
     d = p.drive
     emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
     behind = p.wheel_dx + p.wheel_radius + d.dust_box / 4
@@ -401,6 +407,7 @@ def _add_dust_emitter(link, p, name):
     sdf.sub(emitter, "max_velocity", d.dust_speed[1])
     sdf.sub(emitter, "scale_rate", 1.0)
     sdf.sub(emitter, "topic", DUST_TOPIC.format(link=link.get("name"), emitter=name))
+    sdf.sub(emitter, "particle_scatter_ratio", d.dust_scatter_ratio)
     material = sdf.sub(emitter, "material")
     sdf.sub(material, "diffuse", (1, 1, 1, 1))
     sdf.sub(sdf.sub(sdf.sub(material, "pbr"), "metal"), "albedo_map", sdf.model_uri(MODEL_DIR.name, DUST_SPRITE))
