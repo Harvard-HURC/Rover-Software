@@ -153,12 +153,16 @@ def collision(link_element, name, geometry, xyzrpy=(0, 0, 0), mu=None, mu2=None,
 
 
 def visual(link_element, name, geometry, xyzrpy=(0, 0, 0), color=WHITE, cast_shadows=True, **material_args):
+    """A visual; color None: no <material>, so that a mesh keeps its own
+    (a glTF with a material per primitive: an SDF material would replace
+    them all)."""
     element = sub(link_element, "visual", name=f"{name}_visual")
     pose(element, xyzrpy)
     geometry(sub(element, "geometry"))
     if not cast_shadows:
         sub(element, "cast_shadows", False)
-    material(element, color, **material_args)
+    if color is not None:
+        material(element, color, **material_args)
     return element
 
 

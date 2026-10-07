@@ -56,12 +56,6 @@ def path_distance(path, x, y, closed=False):
     return best, along
 
 
-def kinks(segments):
-    """Distances from the start of a profile [(length, grade_deg)] to where
-    its grade changes."""
-    return list(np.cumsum([length for length, _ in segments])[:-1])
-
-
 def fbm(n, size, feature, seed, octaves=4, persistence=0.5):
     """Fractal value noise on an n x n grid spanning size metres, roughly in
     [-1, 1]. feature is the wavelength of the first octave [m]."""
@@ -401,17 +395,6 @@ class Heightfield:
         self.z += height * self.path_mask(path, half_width, falloff)
         return self
 
-    def level(self, cx, cy, radius, falloff):
-        """Levels the ground within `radius` of (cx, cy) to its least-squares
-        plane, easing back over `falloff`: a sand or clay flat, a rock slab.
-        Planar ground takes few friction-zone tiles (terrains.py)."""
-        X, Y = self.grid()
-        r = np.hypot(X - cx, Y - cy)
-        near = r <= radius
-        A = np.stack([X[near] - cx, Y[near] - cy, np.ones(near.sum())], axis=1)
-        (gx, gy, c0), *_ = np.linalg.lstsq(A, self.z[near], rcond=None)
-        return self.blend(1 - smoothstep(radius, radius + falloff, r), c0 + gx * (X - cx) + gy * (Y - cy))
-
     # Engineered features: they edit only the samples near them, so a course
     # of many stays fast on a fine grid.
 
@@ -437,8 +420,7 @@ class Heightfield:
         terrain over `falloff` metres around it. Before its start the first
         height, beyond its end the last carries on. The surface is bilinear
         between samples, so the samples a cell diagonal outside the strip
-        follow it too: the ground is planar out to its very edges, where a
-        friction zone's tiles need it (terrains.fit_tiles)."""
+        follow it too: the ground is planar out to its very edges."""
         ends = np.concatenate([[0.0], np.cumsum([length for length, _ in segments])])
         rises = np.concatenate([[0.0], np.cumsum([length * math.tan(math.radians(grade)) for length, grade in segments])])
         z0 = self.height(*start) if z0 is None else z0

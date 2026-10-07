@@ -478,6 +478,18 @@ def keep_flat(hf, features=(), pads=(), paths=(), ease=KEEP_FLAT_EASE):
     return terrain.smoothstep(0.0, ease, distance)
 
 
+def only(hf, outlines, ease=KEEP_FLAT_EASE):
+    """keep_flat()'s opposite: a weight that confines relief to the layout
+    polygons `outlines` (the proving ground's natural strips), 1 inside
+    them more than `ease` metres from their edge, 0 outside."""
+    canvas = Canvas(hf, Legend())
+    inside = np.zeros((hf.n, hf.n), bool)
+    for outline in outlines:
+        inside |= canvas.polygon(outline)
+    distance = cv2.distanceTransform(inside.astype(np.uint8), cv2.DIST_L2, 5) * hf.res
+    return terrain.smoothstep(0.0, ease, distance)
+
+
 # --- Clutter -------------------------------------------------------------------------------
 
 class Placement(NamedTuple):

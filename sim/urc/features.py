@@ -212,7 +212,7 @@ class Lane:
     along `yaw`, `width` wide, its profile `segments` [(length [m], grade
     [deg])] climbing from the ground at the start (or z0), tilted `cross` deg
     across (left side up), blended into the terrain over `falloff`.
-    surfaces: zones laid along it, their decals creased at the profile's kinks."""
+    surfaces: zones laid along it."""
     key: str
     start: tuple
     yaw: float
@@ -255,9 +255,42 @@ class Lane:
     def dress(self, w):
         for surface in self.surfaces:
             length = surface.length or self.length
-            breaks = [k for k in terrain.kinks(self.segments) if k < length - 1e-6]
             w.zone_rect(surface.key, surface.kind, *self.at(length / 2, surface.offset), length, surface.width,
-                        self.yaw, breaks)
+                        self.yaw)
+
+
+@dataclass(frozen=True)
+class Natural:
+    """A strip of natural ground of `kind` (the proving ground's
+    calibration strips): planar from `start` along yaw, `length` long and
+    `width` wide, climbing at `grade` deg (terrain.Heightfield.strip),
+    blended into the terrain over `falloff`; not kept flat, so it takes its
+    type's micro-relief and clutter (landscape.relief, WorldBuilder.clutter)
+    like the same ground anywhere."""
+    key: str
+    kind: TerrainType
+    start: tuple
+    yaw: float
+    length: float
+    width: float
+    grade: float = 0.0
+    falloff: float = 3.0
+
+    def at(self, u, v=0.0):
+        return _axis_point(self.start, self.yaw, u, v)
+
+    def polygon(self):
+        """Its layout corners."""
+        return _rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)
+
+    def shape(self, hf):
+        hf.strip(self.start, self.yaw, self.width, ((self.length, self.grade),), self.falloff)
+
+    def footprints(self):
+        return [(self.polygon(), self.kind)]
+
+    def dress(self, w):
+        w.zone_rect(self.key, self.kind, *self.at(self.length / 2), self.length, self.width, self.yaw)
 
 
 @dataclass(frozen=True)

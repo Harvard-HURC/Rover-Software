@@ -22,16 +22,25 @@ soft sand flat in stage 1, a gravel plain on the way out, bentonite clay on
 the crate hill's flank, sand along the wash floor and a loose scree chute up
 the steep mesa are zones of their ground (urc/terrains.py, urc/features.py);
 two rough stony areas (rock gardens), the boulder field and the ledges.
+Around them the ground is painted (PAINT): packed regolith with patches of
+crusted sand sheet, wash sand on the wash floor, badland on ground steeper
+than 20 deg and round the steep mesa, its sandstone cap shedding a block
+field; badland belts (BADLANDS) lie in the rougher country away from the
+course. Every type carries its MDRS micro-relief (world.add_relief: real
+lidar residuals, haystack knobs and rills on the badland), kept off the
+pads, the ridge pass, the ledges and the chute, and its clutter: slabs on
+the badland and the block field, gravel near the course, shrubs on the sand
+sheet and the wash, pebbles round the start and the targets.
 """
 import math
 
-from .. import features, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder, site
+from .. import features, landscape, props, rules, terrain, terrains
+from ..world import WorldBuilder, add_relief, site
 
 KEY = "delivery"
 TITLE = "Delivery"
 SITE = (38.4040, -110.7935)  # lat, lon of C2 (altitude: world.site)
-SIZE, SAMPLES, CENTER = 1024.0, 1025, (430.0, 390.0)
+SIZE, SAMPLES, CENTER = 1024.0, 2049, (430.0, 390.0)  # 0.5 m samples (gate G7), the relief swatches' grid
 SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 1.29x real time)
 
 C2 = (0.0, 0.0, 0.0)
@@ -75,9 +84,23 @@ FEATURES = [
 ]
 STONY_GROUNDS = [(385.0, 330.0, 34.0, 20.0, 0.12),  # x, y, length, width, rock size: rough stony areas
                  (425.0, 250.0, 30.0, 14.0, 0.22)]  # on the way to the first-aid kit
-
-LAYERS = [Layer("regolith"), Layer("pavement", start=3.0, fade=1.0), Layer("mudstone", start=8.0, fade=1.5),
-          Layer("bentonite", start=14.0, fade=1.5)]
+# Badland belts (x, y, radius): haystack knobs and floors in the rough country off the course, at least 60 m
+# from every leg of it; with the ridge's flanks and the steep mesa about a ninth of the ground, which the
+# real square's rough tail needs (design 5.4: badland is 24 % there; a world's roughness p90 within 30 %).
+BADLANDS = [features.Patch(f"badlands_{k}", terrains.BADLAND_SLOPE, x, y, r, irregularity=0.4)
+            for k, (x, y, r) in enumerate(((100.0, 700.0, 90.0), (260.0, 830.0, 70.0), (660.0, 130.0, 80.0),
+                                           (-20.0, 420.0, 70.0), (870.0, 820.0, 80.0), (600.0, 820.0, 60.0),
+                                           (880.0, 560.0, 50.0)))]
+PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120.0, cover=0.3),
+         landscape.Along(tuple(WASH), "wash_sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
+         landscape.Hills((LANDFORMS[1],), slope="badland_slope", cap="caprock"),
+         landscape.Below("caprock", "block_field", reach_m=30.0)]
+PADS = [(*C2[:2], 30.0), (*GATE, 4.0), (*TOOLBOX, 5.0), (*ASTRONAUT_A, 4.0), (*ASTRONAUT_B, 4.0), (*WATER_JUG, 3.0),
+        (*SUPPLY_CRATE, 3.0), (*CRATE_HILL, 5.0), (*FIELD_SIGN, 3.0), (*INSTRUMENT_CASE, 3.0), (*FIRST_AID, 3.0),
+        (*ASTRONAUT_C, 4.0), (*SPECTROMETER, 3.0)]  # x, y, radius: kept flat (design 5.4)
+COURSE = [GATE, TOOLBOX, ASTRONAUT_A, WATER_JUG, ASTRONAUT_B, SUPPLY_CRATE, CRATE_HILL, FIELD_SIGN, INSTRUMENT_CASE,
+          FIRST_AID, RIDGE_PASS[0], RIDGE_PASS[1], ASTRONAUT_C, SPECTROMETER]  # the legs, in task order
+COURSE_GRAVEL = 15.0  # [m] gravel lies within this of the course (A: the clutter budget, design D10)
 
 
 def make_terrain():
@@ -85,8 +108,7 @@ def make_terrain():
     # Ground gets rougher with distance from the start (1.c.ii).
     rough = terrain.smoothstep(80.0, 650.0, hf.radial(0.0, 0.0))
     hf.z += (1.0 + 4.0 * rough) * terrain.fbm(SAMPLES, SIZE, 180.0, seed=41, octaves=3)
-    hf.z += (0.2 + 1.2 * rough) * terrain.fbm(SAMPLES, SIZE, 35.0, seed=42, octaves=3)
-    hf.noise(0.05, 4.0, seed=43, octaves=2)
+    hf.z += (0.1 + 0.6 * rough) * terrain.fbm(SAMPLES, SIZE, 35.0, seed=42, octaves=3)
     hf.z -= hf.height(0, 0)
     features.shape(hf, LANDFORMS)
     hf.ridge(RIDGE, 18.0, 16.0, 30.0)
@@ -96,7 +118,8 @@ def make_terrain():
     hf.flatten(*TOOLBOX, 4.0, 6.0)
     hf.flatten(*ASTRONAUT_A, 3.0, 4.0)
     hf.flatten(*ASTRONAUT_B, 3.0, 4.0)
-    return hf
+    # Below 4 m the ground is MDRS's own (the 35 m octave halved: with the relief, 16 m roughness is the real p50).
+    return add_relief(hf, PAINT, FEATURES + BADLANDS, PADS, [(tuple(RIDGE_PASS), 7.0)], seed=17)
 
 
 def sign_lines(w):
@@ -108,8 +131,9 @@ def build(models_dir, worlds_dir, media):
     hf = make_terrain()
     w = WorldBuilder(KEY, TITLE, "1.c", site(*SITE), hf, models_dir, worlds_dir, media, seed=17, solver=SOLVER)
     w.sheet["time_limit_s"] = list(rules.DELIVERY_TIME)
-    w.terrain(LAYERS)
-    features.dress(w, FEATURES)  # first: objects stand on the ground their zones sink
+    w.paint(PAINT)
+    w.terrain()
+    features.dress(w, FEATURES + BADLANDS)  # first: objects stand on the ground their zones sink
     w.c2(*C2)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE, math.radians(35))
     w.point("start_gate", *GATE)
@@ -176,7 +200,9 @@ def build(models_dir, worlds_dir, media):
                                           clearance=3.0))
     for k, (x, y, length, width, size) in enumerate(STONY_GROUNDS):
         w.rock_garden(f"stony_{k}", x, y, length, width, size, avoid=keep, clearance=3.0)
-    w.shrubs(w.scatter_points(45, (400.0, 350.0), 450.0, avoid=keep_pass, clearance=6.0))
+    w.clutter(avoid=w.keep_clear([COURSE], step=2.0), clearance=4.0, rock_sizes=(0.15, 0.3),
+              rocks_within=w.near(paths=[(COURSE, COURSE_GRAVEL)]))
+    w.pebbles([(*ROVER[:2], 35.0)] + [(x, y, 6.0) for x, y, _ in PADS[1:]])
     w.sheet["judges_only"] = {"ridge": [w.geo(x, y) for x, y in RIDGE], "ridge_pass": [w.geo(x, y) for x, y in RIDGE_PASS],
                               "wash": [w.geo(x, y) for x, y in WASH], "steep_mesa": w.geo(*STEEP_MESA),
                               "boulder_field": dict(w.geo(*BOULDER_FIELD[:2]), radius_m=BOULDER_FIELD[2]),

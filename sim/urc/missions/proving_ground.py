@@ -15,7 +15,11 @@ tests. West of the road, strips run west:
   (the strong dig-in, terrains.DIG: the rover stalls on the 15 deg sand dune
   and 2.7 m up the 12 deg clay slope as its slipping wheels dig in, measured;
   it crosses the slickrock's 25 deg);
-- side slopes of 10 and 20 deg across the direction of travel.
+- side slopes of 10 and 20 deg across the direction of travel;
+- three strips of natural ground, from the same recipes as the mission
+  worlds' (terrains.py): crusted sand sheet with its shrubs, a 12 deg badland
+  slope with haystack knobs and rills, and a block field of tabular slabs,
+  each with its MDRS micro-relief (the rest of the course stays as built).
 East of the road, stations run east:
 - rock gardens of 0.1 / 0.2 / 0.3 / 0.4 m rocks (the wheel radius is 0.15 m);
 - an articulation track: humps of 10 / 20 / 30 cm under one side, then the
@@ -30,9 +34,9 @@ import math
 
 import gen_model  # the rover's geometry; sim/ is on sys.path wherever urc is used
 
-from .. import features, props, terrain, terrains
-from ..features import Lane, Step, Surface
-from ..world import Layer, WorldBuilder, garden_spacing, site
+from .. import features, landscape, props, terrain, terrains
+from ..features import Lane, Natural, Step, Surface
+from ..world import WorldBuilder, add_relief, garden_spacing, site
 
 KEY = "proving_ground"
 TITLE = "Rover proving ground"
@@ -70,7 +74,11 @@ TWIST_DITCH = features.TwistDitch("twist_ditch", 32.0, 62.0, EAST, math.atan2(RO
 WASHBOARD = features.Washboard("washboard", (8.0, 74.0), EAST, 20.0, 4.0)
 STEPS = [Step(f"step_{round(top * 100)}cm", 16.0, y, EAST, 4.0, 3.0, top) for top, y in ((0.1, 84.0), (0.2, 90.0),
                                                                                           (0.3, 96.0))]
-FEATURES = [FRICTION_HILL, SAND_PIT, CLAY_PATCH, SLICKROCK_SLAB, *SIDE_SLOPES, BUMPS, TWIST_DITCH, WASHBOARD, *STEPS]
+NATURAL = [Natural("natural_sand_sheet", terrains.SAND_SHEET, (-8.0, 132.0), WEST, 40.0, 12.0),
+           Natural("natural_badland", terrains.BADLAND_SLOPE, (-8.0, 150.0), WEST, 40.0, 16.0, grade=12.0),
+           Natural("natural_block_field", terrains.BLOCK_FIELD, (-8.0, 170.0), WEST, 40.0, 14.0)]
+FEATURES = [FRICTION_HILL, SAND_PIT, CLAY_PATCH, SLICKROCK_SLAB, *SIDE_SLOPES, BUMPS, TWIST_DITCH, WASHBOARD, *STEPS,
+            *NATURAL]
 
 GARDENS = [(f"garden_{round(size * 100)}cm", 18.0, y, size) for size, y in ((0.1, 16.0), (0.2, 26.0), (0.3, 36.0),
                                                                               (0.4, 46.0))]
@@ -78,7 +86,6 @@ GARDEN_SIZE = (12.0, 6.0)  # [m] length (east), width
 BOULDER_FIELD = (28.0, 118.0, 14.0)  # x, y, radius
 BOULDERS = (70, (0.3, 1.0))  # count, size range [m]
 
-LAYERS = [Layer("regolith"), Layer("pavement", start=1.0, fade=1.0), Layer("caprock", start=4.0, fade=1.0)]
 
 
 def make_terrain():
@@ -86,7 +93,10 @@ def make_terrain():
     hf.noise(0.25, 60.0, seed=81, octaves=3).noise(0.015, 2.0, seed=82, octaves=2)
     hf.z -= hf.height(0, 0)
     hf.flatten(*ROVER[:2], 6.0, 6.0, z=0.0)
-    return features.shape(hf, FEATURES)
+    features.shape(hf, FEATURES)
+    # Micro-relief only on the natural strips: everything else is engineered.
+    return add_relief(hf, [landscape.Base(terrains.DEFAULT_GROUND)], NATURAL, seed=23,
+                      within=landscape.only(hf, [strip.polygon() for strip in NATURAL]))
 
 
 def lane_info(lane, v=0.0):
@@ -99,7 +109,7 @@ def build(models_dir, worlds_dir, media):
     hf = make_terrain()
     w = WorldBuilder(KEY, TITLE, None, site(*SITE), hf, models_dir, worlds_dir, media, seed=23, name=KEY,
                      solver=SOLVER)
-    w.terrain(LAYERS)
+    w.terrain()
     features.dress(w, FEATURES)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE, math.pi / 2)
     w.rover(*ROVER)
@@ -157,6 +167,19 @@ def build(models_dir, worlds_dir, media):
                   f"Drive east: a {step.top * 100:.0f} cm up-step, {step.length:.0f} m on top, a "
                   f"{step.top * 100:.0f} cm drop-off.", ["STEP", f"{step.top * 100:.0f} CM UP / DOWN"],
                   (east_sign + 2.0, step.y + 3.0), WEST, height_m=step.top, heading_deg=0.0)
+    for strip in NATURAL:
+        kind = strip.kind
+        traction = terrains.traction(kind)
+        title = kind.title
+        slope = f"a {strip.grade:.0f} deg slope" if strip.grade else "flat"
+        w.station(strip.key, *strip.start, f"Natural {title.lower()}",
+                  f"{strip.length:.0f} x {strip.width:.0f} m of {title.lower()}, {slope}, as the mission worlds have it: "
+                  f"its MDRS micro-relief and clutter (climbs up to {traction.climb_deg:.0f} deg).",
+                  ["NATURAL GROUND", title.upper()], (west_sign, strip.start[1] + strip.width / 2 + 1.5), EAST,
+                  ground=kind.key, grade_deg=strip.grade, length_m=strip.length, width_m=strip.width,
+                  heading_deg=round(math.degrees(strip.yaw) % 360, 1))
+    natural = landscape.only(hf, [strip.polygon() for strip in NATURAL], ease=0.5) > 0.5
+    w.clutter(within=natural, avoid=w.keep_clear(), clearance=2.0)
     (x, y, radius), (count, sizes) = BOULDER_FIELD, BOULDERS
     w.rock_field("boulder_field", w.scatter(count, (x, y), radius, sizes, avoid=w.keep_clear(), clearance=2.0))
     w.station("boulder_field", x - radius, y, "Boulder field",

@@ -20,22 +20,29 @@ unit's notes instead.
 The ground the rover crosses (urc/terrains.py, urc/features.py): soft sand
 along the wash floor, bentonite clay aprons at the feet of the banded hills,
 a loose scree chute up the east face of the small hill; talus on the hill
-slopes, two rock fields and the ledge's blocks.
+slopes, two rock fields and the ledge's blocks. Around them the ground is
+painted (PAINT): packed regolith with patches of crusted sand sheet, wash
+sand on the wash floor, the hills' badland slopes banded maroon, grey and
+white (STRATA) under sandstone caps that shed block fields, bare slickrock
+on the sandstone ledge; badland belts (BADLANDS) lie out towards the site's
+edge. Every type carries its MDRS micro-relief and clutter (world.add_relief,
+WorldBuilder.clutter), as in Delivery.
 """
 import math
 
-from .. import features, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder, site
+from .. import appearance, features, landscape, props, rules, terrain, terrains
+from ..world import WorldBuilder, add_relief, site
 
 KEY = "astrobiology"
 TITLE = "Astrobiology"
 SITE = (38.4010, -110.7960)  # lat, lon of C2 (altitude: world.site)
-SIZE, SAMPLES, CENTER = 1024.0, 1025, (0.0, 0.0)
+SIZE, SAMPLES, CENTER = 1024.0, 2049, (0.0, 0.0)  # 0.5 m samples (gate G7), the relief swatches' grid
 SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 3.7x real time)
 
 C2 = (0.0, 0.0, 0.0)
 ROVER = (8.0, 6.0, math.radians(30))
 BOUNDARY_RADIUS = 480.0
+STAKES = 12
 
 HILLS = [features.Mesa("hill_0", 170.0, 150.0, 30.0, 24.0, 22.0, seed=51, irregularity=0.25),
          features.Mesa("hill_1", 265.0, 55.0, 18.0, 14.0, 15.0, seed=52, irregularity=0.25),
@@ -60,9 +67,22 @@ FEATURES = [
     features.Patch("gypsum", terrains.GYPSUM, *GYPSUM_MOUND, 13.0),
 ]
 
-# Four layers is Gazebo's limit; bands by height give the Morrison look.
-LAYERS = [Layer("regolith"), Layer("bentonite", start=4.0, fade=0.8), Layer("mudstone", start=9.0, fade=0.7),
-          Layer("caprock", start=16.0, fade=1.0)]
+# Badland belts (x, y, radius) out towards the site's edge, clear of every unit and the wash: with the hills
+# about an eighth of the ground, which the real square's rough tail needs (design 5.4; Delivery's note).
+BADLANDS = [features.Patch(f"badlands_{k}", terrains.BADLAND_SLOPE, x, y, r, irregularity=0.4)
+            for k, (x, y, r) in enumerate(((-330.0, 380.0, 100.0), (380.0, 330.0, 110.0), (300.0, -360.0, 100.0),
+                                           (-380.0, -330.0, 90.0), (60.0, 400.0, 70.0), (-60.0, -400.0, 70.0),
+                                           (430.0, 60.0, 60.0), (-430.0, 40.0, 60.0)))]
+PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120.0, cover=0.3),
+         landscape.Along(tuple(WASH), "wash_sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
+         landscape.Hills(tuple(HILLS), slope="badland_slope", cap="caprock"),
+         landscape.Hills((LANDFORMS[-1],), slope="slickrock", cap="slickrock"),  # the sandstone ledge
+         landscape.Below("caprock", "block_field", reach_m=30.0)]
+# The Morrison look of the banded hills: grey-blue bentonite among the maroon and white bands (A: today's
+# bentonite and mudstone layers, NAIP grey shale).
+STRATA = {"badland_slope": appearance.Strata(bands=(terrains.NAIP["maroon"], terrains.NAIP["grey_shale"],
+                                                    (160, 138, 135), terrains.NAIP["white"]))}
+CAPROCK_Z = 16.0  # [m] above C2: the hills' sandstone caps, where slab joints show
 
 BIOCRUST_NOTES = "Cyanobacteria, lichens and mosses: the highest surface biomass on site."
 UNITS = [
@@ -82,26 +102,30 @@ UNITS = [
 
 def make_terrain():
     hf = terrain.Heightfield(SIZE, SAMPLES, center=CENTER)
-    hf.noise(3.0, 250.0, seed=61, octaves=3).noise(0.8, 40.0, seed=62, octaves=3).noise(0.05, 4.0, seed=63, octaves=2)
+    hf.noise(3.0, 250.0, seed=61, octaves=3).noise(0.8, 40.0, seed=62, octaves=3)
     hf.z -= hf.height(0, 0)
-    features.shape(hf, LANDFORMS + FEATURES)
+    features.shape(hf, LANDFORMS + FEATURES + BADLANDS)
     hf.flatten(*C2[:2], 15.0, 20.0, z=0.0)
-    return hf
+    stakes = [(BOUNDARY_RADIUS * math.cos(a), BOUNDARY_RADIUS * math.sin(a), 3.0)
+              for a in (2 * math.pi * k / STAKES for k in range(STAKES))]
+    # Below 4 m the ground is MDRS's own (world.add_relief).
+    return add_relief(hf, PAINT, FEATURES + BADLANDS, [(*C2[:2], 15.0)] + stakes, seed=19)
 
 
 def build(models_dir, worlds_dir, media):
     hf = make_terrain()
     w = WorldBuilder(KEY, TITLE, "1.b", site(*SITE), hf, models_dir, worlds_dir, media, seed=19, solver=SOLVER)
     w.sheet["time_limit_s"] = list(rules.ROVING_TIME)
-    w.terrain(LAYERS)
-    features.dress(w, FEATURES)
+    w.paint(PAINT)
+    w.terrain(strata=STRATA, cap=CAPROCK_Z)
+    features.dress(w, FEATURES + BADLANDS)
     w.c2(*C2)
     w.rover(*ROVER)
     w.sheet["site_radius_m"] = rules.SITE_RADIUS
 
     # Mission area stakes (the area is marked, the sample sites are not).
     stake = props.field_sign(models_dir, media, "boundary", ["URC", "SITE LIMIT"], height=0.9)
-    w.ring(stake, "boundary", C2[:2], BOUNDARY_RADIUS, 12)
+    w.ring(stake, "boundary", C2[:2], BOUNDARY_RADIUS, STAKES)
 
     for key, title, (x, y), radius, notes in UNITS:
         w.point(key, x, y, title=title, radius_m=radius, notes=notes,
@@ -124,5 +148,7 @@ def build(models_dir, worlds_dir, media):
         w.rock_garden(f"rock_field_{k}", x, y, length, width, size, avoid=keep, clearance=3.0)
     w.rock_field("lichen_boulders", w.scatter(14, LICHEN_BOULDERS[:2], LICHEN_BOULDERS[2], (0.4, 1.0), clearance=0),
                  palette="lichen")
-    w.shrubs(w.points_along(WASH, 25.0, jitter=8.0) + w.scatter_points(30, CENTER, 450.0, avoid=keep, clearance=10.0))
+    sites = [(x, y, radius + 10.0) for _, _, (x, y), radius, _ in UNITS]
+    w.clutter(avoid=keep, clearance=4.0, rock_sizes=(0.15, 0.3), rocks_within=w.near([(*C2[:2], 60.0)] + sites))
+    w.pebbles([(*ROVER[:2], 35.0)] + [(x, y, 6.0) for _, _, (x, y), _, _ in UNITS])
     return w.write()

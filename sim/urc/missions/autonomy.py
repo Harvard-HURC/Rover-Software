@@ -1,12 +1,19 @@
 """Autonomy Mission (rule 1.e): Astronaut Assistance + Autonomous Route-Finding,
 on the real terrain of the Utah state-owned square mile (1.e.xiii).
 
-Terrain: the USGS 3DEP 1 m DEM (sim/data/dem, fetched by sim/tools/fetch_dem.py),
-2048 m square around the square mile's centre. Layout metres x east, y north
-from the C2 station, which stands on the flat central rise 200 m north-east of
-that centre; z is the elevation above C2's. Altitudes (the origin, the sheet,
+Terrain: the USGS 3DEP 0.5 m lidar DEM (sim/data/dem/route_area_lidar_0p5m.tif,
+its provenance beside it), 2048 m square around the square mile's centre on a
+0.5 m grid (4097 samples: gate G1); its rills, ledge steps and cutbanks are
+the real ones, so no relief is added. Layout metres x east, y north from the
+C2 station, which stands on the flat central rise 200 m north-east of that
+centre; z is the elevation above C2's. Altitudes (the origin, the sheet,
 NavSat) are WGS84 ellipsoidal heights (world.site): the DEM's NAVD88
-elevations plus dem.NAVD88_TO_WGS84.
+elevations plus dem.NAVD88_TO_WGS84. The ground is the NRCS soil map's
+(landscape.Soils: each map unit by slope, design 5.3) under the mission's
+zones; it is draped with the NAIP 2024 orthophoto, de-shaded so the sim's
+sun does not shade its slopes twice (appearance.ortho_colour_map); NAIP's
+shrubs (dark spots with a local NDVI anomaly) stand as meshes where the
+rover works and stay in the photo elsewhere.
 
 - Route-Finding, north-west: START_POST (ArUco 0) on flat ground 412 m from
   C2, in radio line of sight (1.e.xii). POST1 (ArUco 1) on the crest of a
@@ -22,7 +29,8 @@ elevations plus dem.NAVD88_TO_WGS84.
   climb (0.3 m rocks stop the rover on the proving ground) and too close
   together to pass between, everywhere but where the easy route climbs onto
   the butte: that climb is the only way up (1.e.xv: not every approach is
-  navigable). POST2 (ArUco 2) on the plain 71 m north of Post 1, out of the
+  navigable); the soil map paints the faces steeper than 30 deg as rock, which
+  grips to 40 deg, so there the boulders, not the grade, stop the rover. POST2 (ArUco 2) on the plain 71 m north of Post 1, out of the
   C2 antenna's line of sight behind the butte (1.e.xvi). judges_only holds
   the easy route, the butte's rim and its approach grades.
 - Astronaut Assistance, south-east of C2 on gentle ground (< 6 deg), all in
@@ -48,15 +56,18 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import dem, features, geo, props, routes, rules, terrain, terrains
-from ..world import Layer, WorldBuilder, site
+from .. import appearance, dem, features, geo, landscape, props, routes, rules, terrain, terrains
+from ..world import WorldBuilder, site
 
 KEY = "autonomy"
 TITLE = "Autonomy"
-DEM_PATH = Path(__file__).resolve().parents[2] / "data" / "dem" / "route_area_3dep.tif"
+DATA = Path(__file__).resolve().parents[2] / "data"
+DEM_PATH = DATA / "dem" / "route_area_lidar_0p5m.tif"
+NAIP_PATH = DATA / "imagery" / "route_area_naip2024.tif"
+SOILS = DATA / "soils" / "ssurgo_polys.json"  # the soil map's provenance
 SQUARE_MILE_CENTER = tuple((a + b) / 2 for a, b in zip(*rules.ROUTE_AREA))  # (lat, lon)
 C2_FROM_CENTER = (160.0, 120.0)  # [m] east, north of the square mile's centre
-SIZE, SAMPLES = 2048.0, 2049  # 1 m samples
+SIZE, SAMPLES = 2048.0, 4097  # 0.5 m samples (gate G1: 4097^2 costs no step time against 2049^2)
 SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 3.4x real time)
 CENTER = (-C2_FROM_CENTER[0], -C2_FROM_CENTER[1])  # the terrain is centred on the square mile
 
@@ -129,12 +140,13 @@ BOULDER_APRONS = [(-85.0, 298.0, 10.0), (-42.0, 318.0, 10.0), (-28.0, 343.0, 9.0
                   (15.0, 362.0, 9.0), (45.0, 366.0, 9.0), (75.0, 374.0, 8.0),  # the foot of the butte's cliff
                   (84.0, -142.0, 10.0)]  # x, y, radius; the last below the knoll south-east of the astronaut
 
-# Elevation bands above C2's (the terrain spans 56 m below it to 30 m above;
-# the route-finding plain lies 6-10 m below, the butte's crest 8 m above):
-# packed regolith in the low ground, maroon mudstone, grey bentonite,
-# sandstone caprock on the heights.
-LAYERS = [Layer("regolith"), Layer("mudstone", start=-30.0, fade=3.0), Layer("bentonite", start=-14.0, fade=3.0),
-          Layer("caprock", start=3.0, fade=1.5)]
+# The terrain spans 56 m below C2 to 30 m above; the route-finding plain lies 6-10 m below, the butte's crest
+# 8 m above. Above CAPROCK_Z the sandstone caps show slab joints (a detail layer, design 5.7).
+CAPROCK_Z = 3.0  # [m] above C2
+# Where the rover works (design D10): clutter by the recipes (slabs below 1 m, design D9) and NAIP's shrubs as
+# meshes within these discs (x, y, radius); gravel within COURSE_GRAVEL of the drives.
+WORK_AREAS = [ROUTE_FIELD, ASTRONAUT_FIELD]
+COURSE_GRAVEL = 12.0  # [m] (A: the clutter budget)
 
 
 def make_site():
@@ -165,7 +177,11 @@ def build(models_dir, worlds_dir, media):
     easy_route, grade = routes.easy_route(hf, START_POST, POST1, EASY_ROUTE_MAX_SLOPE)
     w = WorldBuilder(KEY, TITLE, "1.e", origin, hf, models_dir, worlds_dir, media, seed=7, solver=SOLVER)
     w.sheet["time_limit_s"] = rules.AUTONOMY_TIME
-    w.terrain(LAYERS)
+    w.paint([landscape.Soils(origin)])
+    sources = {name: json.loads(path.with_suffix(".json").read_text()) | {"file": path.name}
+               for name, path in (("dem", DEM_PATH), ("imagery", NAIP_PATH))}
+    sources["soils"] = json.loads(SOILS.read_text())
+    w.terrain(orthophoto=NAIP_PATH, real=True, cap=CAPROCK_Z, sources=sources)
     features.dress(w, FEATURES + easy_route_rib(hf, easy_route))  # first: objects stand on the ground zones sink
     w.c2(*C2)
     w.rover(*ROVER)
@@ -228,7 +244,7 @@ def build(models_dir, worlds_dir, media):
                             "deg_by_bearing": {str(b): round(g, 1) for b, g in zip(APPROACH_BEARINGS, approach)}},
         "washes": {"north": [w.geo(x, y) for x, y in NORTH_WASH], "cliff": [w.geo(x, y) for x, y in CLIFF_WASH]},
         "terrain_source": dict(json.loads(DEM_PATH.with_suffix(".json").read_text()),
-                               edits="none: the DEM as it is, resampled to the world's 1 m grid",
+                               edits="none: the DEM as it is, resampled to the world's 0.5 m grid",
                                altitudes=f"WGS84 ellipsoidal: the DEM's NAVD88 elevations {dem.NAVD88_TO_WGS84:+.2f} m "
                                          "(GEOID18 and NAD83(2011) to WGS84(G2139) at epoch 2027.4, NOAA VDatum); "
                                          "the world's dem.tif holds them too")}
@@ -244,5 +260,12 @@ def build(models_dir, worlds_dir, media):
         w.rock_garden(f"rock_garden_{k}", *garden, **clear)
     rim_spots = [(x, y, RIM_JITTER) for x, y in terrain.resample(rim, RIM_STEP)]
     w.rock_field("rim_boulders", w.scatter_each(rim_spots, 1, RIM_SIZES, **clear))
-    w.shrubs(w.scatter_points(40, ROUTE_FIELD[:2], ROUTE_FIELD[2], **clear))
+    work = w.near(WORK_AREAS)
+    drives = [easy_route, [C2[:2], START_POST], FOLLOW_PATH + [STAY_TO], [START_POST, POST2]]
+    w.clutter(within=work, slab_sizes=(0.15, 1.0), rock_sizes=(0.15, 0.3), shrubs=False,
+              rocks_within=work & w.near(paths=[(path, COURSE_GRAVEL) for path in drives]), **clear)
+    surface = w.surface()
+    found = appearance.detect_shrubs(NAIP_PATH, w.origin, SIZE, slope=surface.slope_deg)
+    w.imaged_shrubs([(*w.to_layout(x, y), d) for x, y, d in found], work)
+    w.pebbles([(*ROVER[:2], 35.0)] + [(x, y, 6.0) for x, y in (START_POST, POST1, POST2, ASTRONAUT_WAIT, HAMMER)])
     return w.write()
