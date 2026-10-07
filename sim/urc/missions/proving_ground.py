@@ -11,7 +11,10 @@ tests. West of the road, strips run west:
   ramp, a landing, a 30 deg ramp to a plateau, which drops back to the plain
   on the far side at 12 deg. A rover holds or climbs a grade up to atan(mu)
   (11, 19, 27, 35, 44 deg);
-- sand, clay and slickrock: each a flat stretch, then a slope up and down;
+- sand, clay and slickrock: each a flat stretch, then a slope up and down
+  (the strong dig-in, terrains.DIG: the rover stalls on the 15 deg sand dune
+  and 2.7 m up the 12 deg clay slope as its slipping wheels dig in, measured;
+  it crosses the slickrock's 25 deg);
 - side slopes of 10 and 20 deg across the direction of travel.
 East of the road, stations run east:
 - rock gardens of 0.1 / 0.2 / 0.3 / 0.4 m rocks (the wheel radius is 0.15 m);
@@ -114,9 +117,11 @@ def build(models_dir, worlds_dir, media):
         kind = lane.surfaces[0].kind
         title = lane.key.replace("_", " ").capitalize()
         steepest = max(abs(grade) for _, grade in lane.segments)
-        climb, hold = round(kind.traction.climb_deg), round(kind.traction.hold_deg)
-        w.station(lane.key, *lane.start, title, f"{kind.title} (climbs up to {climb} deg, holds a parked rover "
-                  f"up to {hold} deg): {lane.describe()}.",
+        traction = terrains.traction(kind)
+        climb, hold = round(traction.climb_deg), round(traction.hold_deg)
+        digs = ", but slipping wheels dig in and stall well below that" if traction.dig_rate else ""
+        w.station(lane.key, *lane.start, title, f"{kind.title} (holds a parked rover up to {hold} deg, climbs up "
+                  f"to {climb} deg{digs}): {lane.describe()}.",
                   [title.upper(), f"CLIMBS {climb} DEG", f"{steepest:.0f} DEG SLOPES"],
                   (west_sign, lane.start[1] + 3.5), EAST, climb_deg=climb, hold_deg=hold, **lane_info(lane))
     for lane in SIDE_SLOPES:
