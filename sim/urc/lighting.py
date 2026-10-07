@@ -18,10 +18,13 @@ MISSION_DATE = datetime.date(2027, 5, 28)  # URC 2027 finals week (design spec D
 MISSION_TIME = datetime.time(10, 30, tzinfo=MDT)  # mid-morning run (A)
 MISSION_SITE = (38.418, -110.777)  # [deg] MDRS, the centre of the URC worlds
 
-# Tuned in the render prototype for this sun (M, sim/data/research/render/manifest.json): the
-# intensity is honoured (mean ground 147 -> 169 DN at 1.4), the colour is a warm high sun.
+# The colour is the render prototype's warm high sun (M, sim/data/research/render/manifest.json). The
+# intensity makes sunlit flat ground render at its colour map, which is NAIP's apparent colour (design 1:
+# rendered map against colour map within CIE76 5): at the prototype's 1.4 the ground came out at 0.77 of
+# it, CIE76 8.2; at 1.9 1.006, CIE76 2.1 (M, 2026-10-07, Equipment Servicing's orthophoto, patched media;
+# the ambient barely moves it: 0.32 -> 0.50 gave 0.83).
 SUN_COLOUR = (1.0, 0.95, 0.87)
-SUN_INTENSITY = 1.4
+SUN_INTENSITY = 1.9
 SUN_SPECULAR = (0.3, 0.3, 0.3)  # today's worlds' value, kept (A)
 AMBIENT = (0.32, 0.34, 0.40)  # blue sky fill (M, render prototype)
 BACKGROUND = (0.62, 0.74, 0.9)  # where nothing is drawn; the sky shader covers it (today's value)

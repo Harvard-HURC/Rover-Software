@@ -13,8 +13,8 @@ driver-viz = { cmd = "python driver/tools/viz.py", depends-on = ["driver-build"]
 sim-media = "python sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
 sim-build = { cmd = "cmake -S sim -B sim/build -DCMAKE_BUILD_TYPE=Release && cmake --build sim/build -j", depends-on = ["sim-media"] }
 sim-model = "python sim/gen_model.py"
-sim-relief = { cmd = "python sim/tools/make_relief_swatches.py", inputs = ["sim/tools/make_relief_swatches.py", "sim/urc/dem.py", "sim/data/dem/*_0p5m.tif"], outputs = ["sim/data/relief/*.npz"] }
-sim-worlds = { cmd = "python sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["sim/gen_worlds.py", "sim/gen_model.py", "sim/urc/**/*.py", "sim/data/dem/*", "sim/data/imagery/*_naip2024.*", "sim/data/relief/*", "sim/data/soils/*", "sim/data/research/terrain_targets.json"], outputs = ["sim/worlds/urc_*.sdf", "sim/worlds/urc_*.json", "sim/worlds/proving_ground.sdf", "sim/worlds/proving_ground.json", "sim/models/urc_*/**"] }
+sim-relief = { cmd = "python sim/tools/make_relief_swatches.py", inputs = ["sim/tools/make_relief_swatches.py", "sim/urc/dem.py", "sim/urc/landscape.py", "sim/urc/terrain.py", "sim/data/dem/*_0p5m*", "sim/data/research/mdrs_terrain_measurements.json"], outputs = ["sim/data/relief/*.npz"] }
+sim-worlds = { cmd = "python sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["sim/gen_worlds.py", "sim/gen_model.py", "sim/urc/**/*.py", "sim/data/dem/*", "sim/data/imagery/*_naip2024.*", "sim/data/imagery/naip2021_far_60km.*", "sim/data/relief/*", "sim/data/soils/*", "sim/data/research/terrain_targets.json"], outputs = ["sim/worlds/urc_*.sdf", "sim/worlds/urc_*.json", "sim/worlds/proving_ground.sdf", "sim/worlds/proving_ground.json", "sim/models/urc_*/**"] }
 # Orthophoto maps of the worlds for the station's Map view (needs the GPU, so not part of sim-test).
 sim-maps = { cmd = "python sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 sim = { cmd = "bash sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
@@ -22,8 +22,12 @@ drive = { cmd = "python sim/station/__main__.py", depends-on = ["sim-build", "si
 referee = "python sim/referee.py"
 sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=sim/bridge.yaml"
 sim-test = { cmd = "python -m unittest discover -s sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
-# The performance budgets (CPU time per step, start-up, memory): slow, so opt-in.
-sim-perf = { cmd = "python -m unittest discover -s sim/tests -p 'test_perf*.py' -v", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The performance budgets (physics speed, start-up, memory, the drivetrain's cost against DiffDrive): slow, so opt-in.
+sim-perf = { cmd = "python -m unittest -v test_perf test_drivetrain.Cost", cwd = "sim/tests", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The realism report (design spec section 11): sim/data/research/realism_report.json and its contact sheet.
+sim-realism = { cmd = "python sim/tools/realism_report.py", depends-on = ["sim-maps"] }
+# The mission routes driven by the physical rover (tens of minutes).
+sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 
 [dependencies]
 ros-jazzy-desktop = ">=0.11.0,<0.12"
