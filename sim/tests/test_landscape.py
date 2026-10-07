@@ -310,6 +310,22 @@ class Relief(unittest.TestCase):
         self.assertLess(np.percentile(terrain.slope_map(h, 0.5), 99.9), recipe.flank_deg + 3)
         self.assertLess(h.max(), math.tan(math.radians(recipe.flank_deg)) * recipe.diameter_m[1] / math.pi * 1.6)
 
+    def test_haystacks_stay_inside_their_belt(self):
+        """Where the mask falls off (a 16 m strip easing in over 2 m, as the
+        proving ground's natural strips; a belt fading over keep-flat's 5 m)
+        no knob is cut into a wall: the faded knobs' steepest flank stays
+        within the recipe's (it reached 60-77 deg)."""
+        recipe = terrains.Haystacks()
+        n, size = 513, 128.0
+        c = np.linspace(-size / 2, size / 2, n)
+        X, Y = np.meshgrid(c, c[::-1])
+        for half_width, ease in ((8.0, 2.0), (30.0, 5.0)):
+            with self.subTest(width=2 * half_width, ease=ease):
+                mask = terrain.smoothstep(0.0, ease, half_width - np.abs(Y))
+                h = mask * terrain.haystack_heights(n, size, mask, 5, recipe)
+                self.assertGreater(h.max(), 1.0)  # knobs there are
+                self.assertLess(terrain.slope_map(h, size / (n - 1)).max(), recipe.flank_deg + 3)
+
     def test_rills_run_downslope(self):
         """Rill traces descend the slope they are carved into (design 5.4: a
         transferred rill would point the wrong way), 5-20 cm deep."""

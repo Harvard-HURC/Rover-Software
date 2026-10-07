@@ -76,9 +76,11 @@ const state = {
   images: {photo: null, relief: null},
   mapView: null,  // the map view's {cx, cy, span [m]}
   mapClick: null,  // timer of a map click waiting for a double-click
-  trail: [],
+  trail: [],  // the rover's track: points 0.3 m apart, at most 4000 (1.2 km), cleared when the world restarts
+  lastSim: null,  // sim time of the last telemetry [s]: going back means a world reset or restart
+  flying: false,  // the last fly message held keys: the page releases them when it goes quiet
   rockers: [],
-  yaws: [],  // [asked, got] turn rates [rad/s]
+  yaws: [],  // [asked, got] turn rates [rad/s]; asked NaN when nothing is known
   viewSince: performance.now(),
 };
 
@@ -300,7 +302,9 @@ window.addEventListener("keydown", (event) => {
   const code = event.code;
   const toggle = (VIEW_TOGGLES[INSPECT.has(state.view) ? state.view : "drive"] || {})[code] || TOGGLES[code];
   if (heldKeys().has(code)) {
-    state.held.add(code);
+    // Not on auto-repeat: a key held through a view change (setView lets go
+    // of every key) would come back in the new view after the repeat delay.
+    if (!event.repeat) state.held.add(code);
     event.preventDefault();
   } else if (toggle) {
     event.preventDefault();
@@ -446,7 +450,11 @@ function tick() {
   const active = document.hasFocus() && !document.hidden;
   document.body.classList.toggle("unfocused", !active);
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN || !active) {
-    // Silence is the deadman: the station stops the rover after 0.5 s.
+    // Silence is the deadman: the station stops the rover after 0.5 s. A fly
+    // camera in flight is let go at once (else the station repeats its last
+    // command until its own 0.5 s deadman, and the plugin's 0.3 s follows).
+    if (state.flying) send({t: "fly", keys: [], axes: [0, 0]});
+    state.flying = false;
     state.held.clear();
     state.pending = NO_PENDING();
     return;
@@ -470,7 +478,9 @@ function tick() {
     tilt += hold("KeyK", "KeyI") * LOOK_RATE * dt;
   }
   if (state.view === "fly") {
-    send({t: "fly", keys: [...state.held].filter((k) => FLY_KEYS.has(k)), axes: pad.look});
+    const flyKeys = [...state.held].filter((k) => FLY_KEYS.has(k));
+    send({t: "fly", keys: flyKeys, axes: pad.look});
+    state.flying = flyKeys.length > 0 || pad.look.some((a) => a !== 0);
     const speed = p.flySpeed - zoomHeld() * ZOOM_RATE * dt;
     if (speed) send({t: "fly_speed", factor: Math.exp(speed)});
     if (p.flyYaw || p.flyPitch) send({t: "fly_look", yaw: p.flyYaw, pitch: p.flyPitch});
@@ -532,8 +542,9 @@ function compass(yaw) {
 }
 
 // The turn the rover is asked for: what the physical drivetrain applies (it
-// also sees autonomy's commands, and drops a stale one), else what the station sends.
-const askedTurn = (m) => (m.drivetrain ? m.drivetrain.cmd[1] : m.cmd[1]);
+// also sees autonomy's commands, and drops a stale one), else what the station
+// sends (null while released: autonomy's command is not known).
+const askedTurn = (m) => (m.drivetrain ? m.drivetrain.cmd[1] : m.cmd ? m.cmd[1] : null);
 
 function onTelemetry(m) {
   state.tm = m;
@@ -558,12 +569,14 @@ function onTelemetry(m) {
   for (const button of document.querySelectorAll(".preset")) {
     button.setAttribute("aria-pressed", String(Number(button.dataset.preset) === m.preset));
   }
-  const [vx, wz] = m.cmd;
-  $("cmd-speed").textContent = signed(vx, 2);
-  $("cmd-turn").textContent = signed(wz * DEG, 0);
+  $("cmd-speed").textContent = m.cmd ? signed(m.cmd[0], 2) : "–";
+  $("cmd-turn").textContent = m.cmd ? signed(m.cmd[1] * DEG, 0) : "–";
   const asked = askedTurn(m);
-  $("turn-ratio").textContent = pose && Math.abs(asked) > TURNING
+  $("turn-ratio").textContent = pose && asked != null && Math.abs(asked) > TURNING
     ? `got ${Math.round(100 * pose.yaw_rate / asked)} %` : "";
+  // A world reset or restart (sim time going back, or the world gone) starts a new track.
+  if (!stats || (state.lastSim != null && stats.sim_time < state.lastSim)) state.trail = [];
+  state.lastSim = stats ? stats.sim_time : null;
   if (pose) {
     $("speed").textContent = signed(pose.speed, 2);
     $("turn").textContent = signed(pose.yaw_rate * DEG, 0);
@@ -575,7 +588,7 @@ function onTelemetry(m) {
     setAngle($("pitch"), -pose.pitch, 20);
     setAngle($("roll"), pose.roll, 20);
     $("alt-z").textContent = `${pose.z.toFixed(2)} m`;
-    state.yaws.push([asked, pose.yaw_rate]);
+    state.yaws.push([asked == null ? NaN : asked, pose.yaw_rate]);
     if (state.yaws.length > HISTORY) state.yaws.shift();
   }
   const headingYaw = state.view === "fly" ? (m.fly ? m.fly.yaw : null) : pose ? pose.yaw : null;
@@ -617,9 +630,10 @@ function showDrivetrain(m) {
   const d = m.drivetrain;
   const asked = askedTurn(m);
   const got = m.pose ? m.pose.yaw_rate : null;
-  $("yaw-asked").textContent = `${signed(asked * DEG, 0)}°/s`;
+  $("yaw-asked").textContent = asked == null ? "–" : `${signed(asked * DEG, 0)}°/s`;
   $("yaw-got").textContent = got == null ? "–" : `${signed(got * DEG, 0)}°/s`;
-  $("yaw-ratio").textContent = got != null && Math.abs(asked) > TURNING ? `${Math.round(100 * got / asked)} %` : "–";
+  $("yaw-ratio").textContent = got != null && asked != null && Math.abs(asked) > TURNING
+    ? `${Math.round(100 * got / asked)} %` : "–";
   $("motor-table").hidden = !d;
   $("motors-figure").hidden = !d;
   $("drivetrain-note").textContent = d ? ""
@@ -736,6 +750,7 @@ function drawStick() {
     ctx.arc(x, y, 6, 0, 2 * Math.PI);
     ctx.stroke();
   }
+  if (!m.cmd) return;  // released: the station asks for nothing
   const [x, y] = point(m.cmd[0], m.cmd[1]);
   ctx.fillStyle = C.ochre;
   ctx.beginPath();
@@ -852,7 +867,7 @@ function drawRocker() {
 // scale grows with the values, from ±floor.
 function drawHistory(canvas, data, strokes, floor, unit) {
   const [ctx, w, h] = fit(canvas);
-  const peak = Math.max(floor, ...data.map(([a, b]) => Math.max(Math.abs(a), Math.abs(b)) * 1.2));
+  const peak = Math.max(floor, ...data.flat().filter(Number.isFinite).map((v) => Math.abs(v) * 1.2));
   const y = (value) => h / 2 - (value / peak) * (h / 2 - 6);
   ctx.strokeStyle = C.rule;
   ctx.lineWidth = 1;
@@ -869,7 +884,8 @@ function drawHistory(canvas, data, strokes, floor, unit) {
     ctx.beginPath();
     data.forEach((sample, i) => {
       const x = w - (data.length - 1 - i) * (w / (HISTORY - 1));
-      if (i) ctx.lineTo(x, y(sample[k])); else ctx.moveTo(x, y(sample[k]));
+      if (!Number.isFinite(sample[k])) return;  // not known then: a gap
+      if (i && Number.isFinite(data[i - 1][k])) ctx.lineTo(x, y(sample[k])); else ctx.moveTo(x, y(sample[k]));
     });
     ctx.stroke();
   });

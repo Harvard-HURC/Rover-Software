@@ -132,6 +132,31 @@ def luminance(lin):
     return np.asarray(lin, np.float32) @ np.array([0.2126, 0.7152, 0.0722], np.float32)
 
 
+SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
+D65 = np.array([0.95047, 1.0, 1.08883])  # reference white (XYZ)
+LAB_EPS = 6 / 29
+
+
+def srgb_to_lab(rgb):
+    """CIE L*a*b* (D65) of sRGB 0-255 colours (..., 3), float64."""
+    c = np.asarray(rgb, float) / 255.0
+    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    t = lin @ SRGB_TO_XYZ.T / D65
+    f = np.where(t > LAB_EPS ** 3, np.cbrt(t), t / (3 * LAB_EPS ** 2) + 4 / 29)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
+
+
+def lab_to_srgb(lab):
+    """sRGB 0-255 (uint8, clipped to the gamut) of CIE L*a*b* (D65) colours (..., 3)."""
+    lab = np.asarray(lab, float)
+    fy = (lab[..., 0] + 16) / 116
+    f = np.stack([fy + lab[..., 1] / 500, fy, fy - lab[..., 2] / 200], axis=-1)
+    t = np.where(f > LAB_EPS, f ** 3, 3 * LAB_EPS ** 2 * (f - 4 / 29)) * D65
+    lin = t @ np.linalg.inv(SRGB_TO_XYZ).T
+    c = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * np.clip(lin, 0, None) ** (1 / 2.4) - 0.055)
+    return np.clip(np.round(c * 255), 0, 255).astype(np.uint8)
+
+
 # --- Ground detail textures --------------------------------------------------------------
 # Tileable and procedural (no CC0 downloads, Q6), ported from the render
 # prototype (sim/data/research/render/prototype/detail_tex.py): noise is
@@ -380,15 +405,16 @@ def flat_normal(path, size=16):
     Image.fromarray(np.full((size, size, 3), (128, 128, 255), np.uint8)).save(path, format="PNG")
 
 
-def dust_puff(path, size=128, seed=7):
-    """The dust particle sprite (RGBA): a lumpy, soft-edged puff of pale
-    dust in the render prototype's tuned sprite colour (235, 215, 185) (M);
-    the emitter's colour range tints it."""
+def dust_puff(path, rgb, opacity, size=128, seed=7):
+    """The dust particle sprite (RGBA): a lumpy, soft-edged puff in `rgb`
+    [0-1 sRGB], its alpha (at most 0.72 at the core) times `opacity`: the
+    whole of the particle's colour and opacity, as gz-rendering 8 applies
+    no colour range (gen_model.DriveParams)."""
     c = (np.arange(size) + 0.5 - size / 2) / (size / 2)
     r = np.hypot(*np.meshgrid(c, c))
     lumps = 0.6 * tileable_noise(size, 4, seed) + 0.4 * tileable_noise(size, 8, seed + 1)
-    alpha = np.clip(1.6 * lumps * np.clip(1 - r, 0, 1) ** 1.2, 0, 1)
+    alpha = np.clip(1.6 * lumps * np.clip(1 - r, 0, 1) ** 1.2, 0, 1) * opacity
     rgba = np.zeros((size, size, 4), np.uint8)
-    rgba[..., :3] = (235, 215, 185)
+    rgba[..., :3] = np.round(np.asarray(rgb) * 255)
     rgba[..., 3] = np.round(alpha * 255)
     Image.fromarray(rgba, "RGBA").save(path, format="PNG")

@@ -120,7 +120,10 @@ class DriveParams:
     dust_max: float = 40.0  # [1/s]
     dust_min_speed: float = 0.05  # [m/s]
     # The emitter (M: tuned in the render research, design spec 6.5): a box at the ground behind each rear
-    # wheel blowing back and up; the colour is the catalogue's dust colour, fading out.
+    # wheel blowing back and up, each particle the catalogue's dust colour (terrains.DUST_RGB) at dust_alpha
+    # times the sprite's own alpha. gz-rendering 8 applies no colour range (SetColorRange is disabled, a
+    # <color_range_image> changed nothing, measured), so the tuned fade 0.28 -> 0 cannot be had: the sprite
+    # bakes in the plume's opacity at birth, and a particle keeps it for its lifetime.
     dust_box: float = 0.25  # [m]
     dust_particle: float = 0.2  # [m]
     dust_lifetime: float = 1.6  # [s]
@@ -365,10 +368,12 @@ def _add_rocker(model, p, side, sign):
 def _add_dust_emitter(link, p, name):
     """A particle emitter at the ground behind the rocker's rear wheel (on the rocker: a wheel link spins),
     idle until the physical drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not
-    emitting (SDF's default is to emit); scatter ratio 0 is meant to keep its particles out of the depth
-    image and point cloud (Q11), but gz-rendering 8 ignores it (measured: tests/test_render.py). Each particle
-    is the soft puff sprite DUST_SPRITE, tinted by the colours (M: the render research's tuned plume)."""
-    from urc import terrains  # here: the catalogue imports the texture generators
+    emitting (SDF's default is to emit). Each particle is the soft puff sprite DUST_SPRITE, which carries the
+    dust's colour and opacity (DriveParams.dust_alpha; gz-rendering 8 applies no colour range). The material
+    needs its white diffuse: particles without one render black (measured). The depth image and point cloud
+    see the dust (Q11 not met, tests/test_render.py): the depth shader takes every particle pixel with any red
+    for a return, at a fixed scatter ratio that neither <particle_scatter_ratio> nor the emitter's topic
+    reaches (measured); only black particles stay out of it."""
     d = p.drive
     emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
     behind = p.wheel_dx + p.wheel_radius + d.dust_box / 4
@@ -381,12 +386,10 @@ def _add_dust_emitter(link, p, name):
     sdf.sub(emitter, "min_velocity", d.dust_speed[0])
     sdf.sub(emitter, "max_velocity", d.dust_speed[1])
     sdf.sub(emitter, "scale_rate", 1.0)
-    sdf.sub(emitter, "color_start", (*terrains.DUST_RGB, d.dust_alpha))
-    sdf.sub(emitter, "color_end", (*terrains.DUST_RGB, 0.0))
     sdf.sub(emitter, "topic", DUST_TOPIC.format(link=link.get("name"), emitter=name))
-    sdf.sub(emitter, "particle_scatter_ratio", 0.0)
-    sdf.sub(sdf.sub(sdf.sub(sdf.sub(emitter, "material"), "pbr"), "metal"), "albedo_map",
-            sdf.model_uri(MODEL_DIR.name, DUST_SPRITE))
+    material = sdf.sub(emitter, "material")
+    sdf.sub(material, "diffuse", (1, 1, 1, 1))
+    sdf.sub(sdf.sub(sdf.sub(material, "pbr"), "metal"), "albedo_map", sdf.model_uri(MODEL_DIR.name, DUST_SPRITE))
 
 
 def _add_wheel(model, p, side, name, sign, ahead):
@@ -501,14 +504,20 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def write_dust_sprite(path, p=None):
+    """The rover's dust sprite (DUST_SPRITE): textures.dust_puff in the catalogue's dust colour at
+    DriveParams.dust_alpha."""
+    from urc import terrains, textures  # here: the catalogue imports the texture generators
+    textures.dust_puff(path, terrains.DUST_RGB, (p or Params()).drive.dust_alpha)
+
+
 def main():
-    from urc import textures  # here: only main writes files
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     out = MODEL_DIR / "model.sdf"
     out.write_text(build_sdf(Params()))
     sprite = MODEL_DIR / DUST_SPRITE
     sprite.parent.mkdir(parents=True, exist_ok=True)
-    textures.dust_puff(sprite)
+    write_dust_sprite(sprite)
     print(f"wrote {out} and {sprite.relative_to(MODEL_DIR)}")
     import viewers  # here, not at the top: viewers imports this module
     viewers.write_all(MODELS_DIR)

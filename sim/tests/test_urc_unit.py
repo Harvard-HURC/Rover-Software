@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for the URC scenario generator, sim/urc (no physics; pixi run sim-test)."""
 import math
+import sys
 import tempfile
 import threading
 import unittest
+import zlib
 from pathlib import Path
 
 import cv2
@@ -13,7 +15,8 @@ from PIL import Image
 import worldfiles  # noqa: F401  (puts sim/ on the path)
 
 import gen_worlds  # noqa: E402
-from urc import dem, geo, meshes, rules, terrain, terrains, textures  # noqa: E402
+from urc import dem, farfield, geo, meshes, rules, terrain, terrains, textures  # noqa: E402,F401
+from urc import media as media_module  # noqa: E402
 from urc.media import Media  # noqa: E402
 
 MDRS = geo.Origin(38.4064, -110.7919, 1350.0)
@@ -39,6 +42,20 @@ class Geo(unittest.TestCase):
             back = geo.wgs84_to_enu(MDRS, *geo.enu_to_wgs84(MDRS, x, y, z))
             for got, want in zip(back, (x, y, z)):
                 self.assertAlmostEqual(got, want, delta=1e-3)
+
+
+class LonLatFit(unittest.TestCase):
+    def test_fit_against_the_exact_transform(self):
+        """geo.lonlat_fit, the one lat/lon fit (colour maps, DEM resampling,
+        the far field): a quadratic over 2 km and a cubic over 80 km agree
+        with enu_to_wgs84 to 1e-9 and 1e-6 deg at random points."""
+        rng = np.random.default_rng(1)
+        for size, degree, tolerance in ((2048.0, 2, 1e-9), (80_000.0, 3, 1e-6)):
+            fit = geo.lonlat_fit(MDRS, size, (100.0, -50.0), degree, tolerance)
+            for x, y in rng.uniform(-size / 2, size / 2, (20, 2)) + (100.0, -50.0):
+                np.testing.assert_allclose(fit(x, y), geo.enu_to_wgs84(MDRS, x, y)[:2], atol=tolerance)
+        with self.assertRaises(ValueError):
+            geo.lonlat_fit(MDRS, 80_000.0)  # a quadratic is not enough over the far field
 
 
 class Rules(unittest.TestCase):
@@ -279,6 +296,36 @@ class Meshes(unittest.TestCase):
 def write_text(path, text):
     """A stand-in media generator (Media names a file by its generator and arguments)."""
     Path(path).write_text(text)
+
+
+def copy_file(path, source, upper=False):
+    """A stand-in generator that reads a file, as farfield.far_texture reads its raster."""
+    text = Path(source).read_text()
+    Path(path).write_text(text.upper() if upper else text)
+
+
+class MediaNames(unittest.TestCase):
+    """What a shared file's name covers (media._digest)."""
+
+    def test_files_defaults_and_sources_are_in_the_name(self):
+        """A file an argument names is part of the key (a re-fetched raster
+        makes a new texture), as are defaults left out of the call, and the
+        sources of the modules of this package the generator's module uses
+        (farfield's texture depends on appearance and textures)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            media = Media(Path(tmp) / "models")
+            source = Path(tmp) / "raster.txt"
+            source.write_text("one")
+            first = media.texture("copy", copy_file, source)
+            self.assertEqual(media.texture("copy", copy_file, source), first)  # current: made once
+            self.assertEqual(media.texture("copy", copy_file, source, upper=False), first)  # the default
+            source.write_text("two")
+            second = media.texture("copy", copy_file, source)
+            self.assertNotEqual(second, first)
+            self.assertEqual((media.path(second)).read_text(), "two")
+            self.assertNotEqual(media.texture("copy", copy_file, source, True), second)
+        self.assertNotEqual(media_module._source_crc("urc.farfield"),
+                            zlib.crc32(Path(sys.modules["urc.farfield"].__file__).read_bytes()))
 
 
 class Prune(unittest.TestCase):

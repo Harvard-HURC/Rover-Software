@@ -234,7 +234,7 @@ class Autonomy(unittest.TestCase):
                 self.assertLess(self.distance(easy, c["x"], c["y"]), 0.5, key)
                 self.assertGreater(slope, autonomy.EASY_ROUTE_RIB[2], key)
             elif zone["type"] == "slickrock":
-                self.assertGreater(c["z"] - c2_z, autonomy.CAPROCK_Z, key)
+                self.assertGreater(c["z"] - c2_z, 3.0, key)  # on the butte's caprock (the plain is 6-10 m below C2)
             else:
                 self.assertLess(slope, 10.0, key)
         bare = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg

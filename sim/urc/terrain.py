@@ -151,25 +151,34 @@ def swatch_field(windows, res_m, n, size, seed, block=SWATCH_BLOCK, feather=SWAT
     return num / np.sqrt(np.maximum(den, 1e-12))
 
 
+HAYSTACK_FULL = 0.98  # knobs stand only where the mask is at least this (haystack_heights)
+
+
 def haystack_heights(n, size, mask, seed, recipe):
     """Rounded badland knobs on an n x n grid of `size` metres where mask >
     0.5 (a terrains.Haystacks recipe, design 5.4): knobs of diameters in
     recipe.diameter_m, each a raised cosine h = H cos^2(pi r / 2R) whose
     steepest flank is drawn between recipe.min_flank_deg and flank_deg
     (H = tan(flank) 2R / pi), placed at random apart from each other until
-    they cover 1 - recipe.floor of the masked area."""
+    they cover 1 - recipe.floor of the masked area. A knob lies wholly
+    where the mask is HAYSTACK_FULL or more (its radius shrinks to fit,
+    down to the recipe's smallest): the caller fades it by the mask, and a
+    mask that falls over 2 m (the proving ground's strips) cut knobs into
+    3 m walls of 60 deg."""
     rng = np.random.default_rng(seed)
     res = size / (n - 1)
-    inside = np.flatnonzero(np.asarray(mask) > 0.5)
+    full = (np.asarray(mask) >= HAYSTACK_FULL).astype(np.uint8)
+    room = cv2.distanceTransform(np.pad(full, 1, constant_values=1), cv2.DIST_L2, 5)[1:-1, 1:-1] * res
+    inside = np.flatnonzero(room >= recipe.diameter_m[0] / 2)  # [m] to the nearest sample below FULL
     out = np.zeros((n, n))
-    target = (1 - recipe.floor) * len(inside) * res * res
+    target = (1 - recipe.floor) * np.count_nonzero(np.asarray(mask) > 0.5) * res * res
     knobs = np.zeros((max(1, int(target / (math.pi * (recipe.diameter_m[0] / 2) ** 2)) + 1), 3))  # x, y, radius
     count, cover, tries = 0, 0.0, 0
     while cover < target and tries < 50 * max(1, int(target / 100)) and len(inside) and count < len(knobs):
         tries += 1
         k = inside[int(rng.integers(len(inside)))]
         x, y = (k % n) * res, (k // n) * res  # metres east and south of the north-west corner
-        radius = rng.uniform(*recipe.diameter_m) / 2
+        radius = min(rng.uniform(*recipe.diameter_m) / 2, room.flat[k])
         a, b, r = knobs[:count].T
         if np.any(np.hypot(a - x, b - y) < 0.8 * (r + radius)):
             continue

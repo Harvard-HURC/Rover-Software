@@ -28,6 +28,7 @@ from simulate import gen_model, world_sdf
 from worldfiles import SIM_DIR, gz_check, temp_sdf
 
 import viewers  # noqa: E402  (worldfiles puts sim/ on the path)
+from urc import meshes  # noqa: E402
 from urc import terrain as terrains  # noqa: E402
 
 sys.path.insert(0, str(SIM_DIR / "tools"))
@@ -308,6 +309,57 @@ class Flight(unittest.TestCase):
                                msg="stops at max_altitude above the highest terrain")
         self.assertLessEqual(x.max(), edge + 1e-9)
 
+    def test_goto_arcs_over_a_hill(self):
+        """A goto whose straight line runs through a hill (30 m, the line 5 m
+        above the ground at both ends) arcs over it, clearance above the
+        ground all the way, and lands where it was sent (the straight line
+        pinned it to the 0.3 m hard floor, up the slope)."""
+        with tempfile.TemporaryDirectory() as d:
+            path, hf = write_hill(d, **HILL)
+            start, end = (-110.0, 0.0), (110.0, 0.0)
+            z0, z1 = hf.height(*start) + 5.0, hf.height(*end) + 5.0
+            world = bare_world(heightmap_model(path, HILL["size"], HILL["height"])
+                               + render_map.fly_model(FLY, (*start, z0, 0, 0.2, 0)))
+            r = fly(world, 3.0, events=[(0.5, viewers.FLY_GOTO_TOPIC, goto(*end, z1, 0.0, 0.2))])
+        x, y, z = r["camera"][:, 0], r["camera"][:, 1], r["camera"][:, 2]
+        self.assertGreater(x.max(), 100.0, "it flew")
+        self.assertGreaterEqual((z - hf.height(x, y)).min(), FLY.clearance - 0.05)
+        np.testing.assert_allclose(at(r, 2.5)[:3], (*end, z1), atol=1e-3)
+
+    def test_floor_takes_the_far_field_beyond_the_edge(self):
+        """Beyond the terrain's edge the floor is the far field drawn there
+        where it is higher than the edge (its apron.json, farfield.py): a
+        camera flown out low over a far field that rises 20 m past the edge
+        keeps clearance above it."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            path, hf = write_hill(d, **HILL)
+            far = d / "urc_farfield_test"
+            (far / "meshes").mkdir(parents=True)
+            meshes.write_glb(far / "meshes" / "farfield.glb", np.array([(0, 0, 0), (1, 0, 0), (0, 1, 0.0)]),
+                             np.array([(0, 1, 2)]), np.array([(0, 0, 1.0)] * 3), np.zeros((3, 2)))
+            spacing, edge = 40.0, HILL["size"] / 2
+            xs = np.arange(-edge - 400.0, edge + 400.0 + 1, spacing)
+            X, Y = np.meshgrid(xs, xs[::-1])
+            outside = np.maximum(np.abs(X), np.abs(Y)) - edge
+            Z = np.clip(outside / 3.0, -4.0, 20.0)  # rises 20 m within 60 m past the edge
+            (far / "apron.json").write_text(json.dumps({
+                "format": "rover-apron/1", "spacing": spacing, "x0": float(xs[0]), "y0": float(xs[-1]),
+                "rows": len(xs), "cols": len(xs), "z": Z.ravel().tolist()}))
+            model = (f'<model name="farfield"><static>true</static><link name="link"><visual name="farfield">'
+                     f'<geometry><mesh><uri>file://{far}/meshes/farfield.glb</uri></mesh></geometry></visual>'
+                     f'</link></model>')
+            start = (edge - 20.0, 0.0, hf.height(edge - 20.0, 0.0) + 2.0)
+            world = bare_world(heightmap_model(path, HILL["size"], HILL["height"]) + model
+                               + render_map.fly_model(FLY, (*start, 0, 0.2, 0)))
+            r = fly(world, 6.0, events=[(0.1, viewers.FLY_SPEED_TOPIC, double(4.0))],
+                    holds=[(0.2, 6.0, viewers.FLY_CMD_TOPIC, twist(FLY.fast))])
+        x, z = r["camera"][:, 0], r["camera"][:, 2]
+        beyond = x > edge + 70.0
+        self.assertTrue(beyond.any(), "it flew past the edge")
+        self.assertGreaterEqual(z[beyond].min(), 20.0 + FLY.clearance - 0.05)
+        self.assertAlmostEqual(x.max(), edge + FLY.margin, delta=1e-6)
+
     def test_follow_keeps_the_offset(self):
         world = world_sdf(render_map.fly_model(FLY, (-6, 0, 3, 0, 0.4, 0)))
         r = fly(world, 9.0, events=[(1.0, viewers.FLY_MODE_TOPIC, text("follow")),
@@ -357,7 +409,8 @@ class Flight(unittest.TestCase):
 
         self.assertAlmostEqual(state(7.7)["ortho"], 2 * 15 * TAN, delta=1e-3)
         self.assertAlmostEqual(at(r, 8.2)[4], math.pi / 2, delta=1e-6, msg="orthographic looks straight down")
-        self.assertAlmostEqual(at(r, 9.4)[2], 50 / (2 * TAN), delta=1e-3, msg="ortho <width> sets the height")
+        self.assertAlmostEqual(state(9.4)["z"], 50 / (2 * TAN), delta=1e-3, msg="ortho <width> sets the height")
+        self.assertGreaterEqual(at(r, 9.4)[2], 50 / (2 * TAN), "drawn from above all it may fly over")
         self.assertAlmostEqual(state(9.4)["ortho"], 50.0, delta=1e-3)
         self.assertEqual(state(9.7)["ortho"], 0.0)
         self.assertAlmostEqual(at(r, 10.5)[4], math.pi / 2 - 0.5, delta=1e-3, msg="perspective: the pitch is free")
@@ -553,6 +606,28 @@ class Rendering(unittest.TestCase):
         self.assertAlmostEqual(wide["z"], 120 / (2 * TAN), delta=1e-2)
         self.assertAlmostEqual(ortho_wide, 2 * 640 / 120, delta=1.5, msg="orthographic, 120 m wide")
         self.assertAlmostEqual(perspective_high, 2 * focal / (wide["z"] - 10), delta=1.5, msg="perspective again")
+
+    def test_orthographic_shows_what_rises_above_the_camera(self):
+        """An orthographic camera 6 m up over a 10 m pole still draws the
+        pole's top: it is drawn from above all it may fly over, its window
+        the one of its own height (the near plane 0.1 m under it cut away
+        whatever rose above it, terrain in the window included). 6 m up the
+        window is 2 x 6 tan(hfov / 2) wide: the 2 m pole fills 2 / that of
+        the picture."""
+        f = replace(FLY, size=(640, 480))
+        extra = (marker("pole", (0, 0, 5), (1, 0, 0), (2, 2, 10))
+                 + """<model name="ground"><static>true</static><link name="link"><visual name="visual">
+                   <geometry><plane><normal>0 0 1</normal><size>400 400</size></plane></geometry>
+                   <material><ambient>0.8 0.8 0.8 1</ambient><diffuse>0.8 0.8 0.8 1</diffuse></material>
+                   </visual></link></model>"""
+                 + render_map.fly_model(f, (0, 0, 40, 0, math.pi / 2, 0)))
+        with temp_sdf(LIT_WORLD.format(name="ortho_low", extra=extra)) as path, render_map.FlyServer(path) as server:
+            server.mode("ortho", lambda s: s["ortho"] > 0)
+            low = server.jump(0.0, 0.0, 6.0)
+            _, rgb = server.frame_after(low["t"] + 0.2)
+        columns = np.where(colour_mask(rgb, 0).any(axis=0))[0]
+        self.assertGreater(len(columns), 0, "the pole's top is drawn")
+        self.assertAlmostEqual(columns.max() - columns.min() + 1, 640 * 2 / (2 * 6 * TAN), delta=3)
 
     def test_map_of_a_hilly_world(self):
         size, height = 256.0, 20.0

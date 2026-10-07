@@ -160,22 +160,9 @@ def to_grid(dem, origin: geo.Origin, xs, ys):
 
 def _resample(dem, origin, size, center, X, Y):
     """The DEM at layout points (X, Y) inside the square of `size` around
-    `center`, minus origin.alt (to_heightfield's method)."""
-
-    def terms(x, y):
-        x, y = (np.asarray(x, float) - center[0]) / size, (np.asarray(y, float) - center[1]) / size
-        return np.stack([np.ones_like(x), x, y, x * x, x * y, y * y], axis=-1)
-
-    def exact(ticks):
-        xy = np.array([(center[0] + dx * size, center[1] + dy * size) for dx in ticks for dy in ticks])
-        return terms(xy[:, 0], xy[:, 1]), np.array([geo.enu_to_wgs84(origin, x, y)[:2] for x, y in xy])
-
-    coef, *_ = np.linalg.lstsq(*exact((-0.5, 0.0, 0.5)), rcond=None)
-    A, check = exact((-0.25, 0.25))
-    residual = np.abs(A @ coef - check).max()
-    if residual > 1e-9:  # 0.1 mm: the terrain is too large for the fit
-        raise ValueError(f"lat/lon fit is off by {residual:.2e} deg over {size} m")
-    lat, lon = np.moveaxis(terms(X, Y) @ coef, -1, 0)
+    `center`, minus origin.alt (to_heightfield's method: geo.lonlat_fit,
+    within 1e-9 deg, 0.1 mm)."""
+    lat, lon = geo.lonlat_fit(origin, size, center)(X, Y)
     row, col = dem.pixel(lat, lon)
     rows, cols = dem.z.shape
     if row.min() < 0 or col.min() < 0 or row.max() > rows - 1 or col.max() > cols - 1:

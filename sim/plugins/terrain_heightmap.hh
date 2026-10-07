@@ -8,13 +8,21 @@
 // (sim/data/research/flycam/prototype/flycam_proto.cpp), which matched urc_autonomy's sheet within
 // 6e-5 m; with the rows flipped it was 19 m off, without the max-pixel scaling up to 56 m.
 //
+// FindFarFieldApron() reads the far field's heights round the terrain (sim/urc/farfield.py's apron.json), so a
+// camera beyond the terrain's edge keeps clear of the landscape drawn there.
+//
 // Header-only: a plugin includes it and links gz-common5::geospatial (sim/CMakeLists.txt does).
 #pragma once
 
+#include <google/protobuf/struct.pb.h>
+#include <google/protobuf/util/json_util.h>
+
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -30,6 +38,7 @@
 #include <gz/sim/components/Visual.hh>
 #include <sdf/Geometry.hh>
 #include <sdf/Heightmap.hh>
+#include <sdf/Mesh.hh>
 
 namespace rover_sim {
 
@@ -123,6 +132,76 @@ inline std::optional<TerrainHeightmap> FindTerrainHeightmap(const gz::sim::Entit
         [&](const gz::sim::Entity& e, const gz::sim::components::Collision*,
             const gz::sim::components::Geometry* g) { return load(e, g); });
   }
+  return out;
+}
+
+/// The far field's surface round the terrain: its vertex heights on a regular grid (row 0 north, column 0
+/// west), each cell split from its south-west to its north-east corner as the mesh is (apron.json,
+/// "rover-apron/1", sim/urc/farfield.py).
+struct FarFieldApron {
+  double spacing = 0.0, x0 = 0.0, y0 = 0.0, z0 = 0.0;  // [m] grid step, world x, y of vertex (0, 0), model z
+  int rows = 0, cols = 0;
+  std::vector<double> z;  // [m] above z0, row-major
+
+  /// Height of the far-field surface at world (x, y); -infinity off the grid.
+  double Height(double x, double y) const {
+    const double fc = (x - x0) / spacing, fr = (y0 - y) / spacing;
+    if (rows < 2 || cols < 2 || !(fc >= 0 && fr >= 0 && fc <= cols - 1 && fr <= rows - 1)) {
+      return -std::numeric_limits<double>::infinity();
+    }
+    const int c = std::min(cols - 2, static_cast<int>(fc)), r = std::min(rows - 2, static_cast<int>(fr));
+    const double u = fc - c, v = fr - r;  // east and south within the cell
+    auto at = [&](int row, int col) { return z[static_cast<size_t>(row) * cols + col]; };
+    if (u + v <= 1) return z0 + at(r, c) + v * (at(r + 1, c) - at(r, c)) + u * (at(r, c + 1) - at(r, c));
+    return z0 + at(r + 1, c + 1) + (1 - v) * (at(r, c + 1) - at(r + 1, c + 1)) +
+           (1 - u) * (at(r + 1, c) - at(r + 1, c + 1));
+  }
+};
+
+/// The far field's apron.json beside the mesh of the world's far-field visual (a mesh named farfield.glb, in
+/// meshes/ of its model), placed by the visual's world pose; std::nullopt (no line) for a world without
+/// one, a gzerr line for one that does not parse.
+inline std::optional<FarFieldApron> FindFarFieldApron(const gz::sim::EntityComponentManager& ecm) {
+  std::optional<FarFieldApron> out;
+  ecm.Each<gz::sim::components::Visual, gz::sim::components::Geometry>(
+      [&](const gz::sim::Entity& entity, const gz::sim::components::Visual*,
+          const gz::sim::components::Geometry* geometry) {
+        const sdf::Mesh* mesh = geometry->Data().MeshShape();
+        const std::string suffix = "/farfield.glb";
+        if (geometry->Data().Type() != sdf::GeometryType::MESH || !mesh || mesh->Uri().size() < suffix.size() ||
+            mesh->Uri().compare(mesh->Uri().size() - suffix.size(), suffix.size(), suffix) != 0) {
+          return true;
+        }
+        const std::string glb = ResolveUri(mesh->Uri());
+        const std::string path = gz::common::joinPaths(gz::common::parentPath(gz::common::parentPath(glb)),
+                                                       "apron.json");
+        std::ifstream in(path);
+        if (glb.empty() || !in) return false;
+        std::stringstream text;
+        text << in.rdbuf();
+        google::protobuf::Struct doc;
+        const bool parsed = google::protobuf::util::JsonStringToMessage(text.str(), &doc).ok();
+        const auto& f = doc.fields();
+        if (!parsed || !f.count("format") || f.at("format").string_value() != "rover-apron/1" || !f.count("z")) {
+          gzerr << "far-field apron " << path << " is not a rover-apron/1 document; it is not used\n";
+          return false;
+        }
+        FarFieldApron apron;
+        const auto pose = gz::sim::worldPose(entity, ecm);
+        apron.spacing = f.at("spacing").number_value();
+        apron.x0 = f.at("x0").number_value() + pose.Pos().X();
+        apron.y0 = f.at("y0").number_value() + pose.Pos().Y();
+        apron.z0 = pose.Pos().Z();
+        apron.rows = static_cast<int>(f.at("rows").number_value());
+        apron.cols = static_cast<int>(f.at("cols").number_value());
+        for (const auto& v : f.at("z").list_value().values()) apron.z.push_back(v.number_value());
+        if (apron.spacing <= 0 || apron.z.size() != static_cast<size_t>(apron.rows) * apron.cols) {
+          gzerr << "far-field apron " << path << ": its grid does not match its size; it is not used\n";
+          return false;
+        }
+        out = std::move(apron);
+        return false;
+      });
   return out;
 }
 

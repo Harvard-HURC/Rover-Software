@@ -95,7 +95,8 @@ class Station:
         """Apply one message from the page (a dict, see static/station.js)."""
         kind = msg.get("t")
         if kind == "input":
-            self.drive.input(command(msg), now)
+            if self.control:  # released, the station sends no twist: nothing to drive
+                self.drive.input(command(msg), now)
         elif kind == "view" and msg.get("view") in VIEWS:
             self.view = msg["view"]
         elif kind == "fly":
@@ -139,7 +140,6 @@ class Station:
         flies it (released too: the operator may watch autonomy from the
         air), the look, the fly speed and the announcement now and then;
         while in control also the twist and the LED."""
-        twist = self.drive.step(now)
         fly = self.fly.step(now)
         if fly is not None:
             self.link.fly(*fly)
@@ -156,7 +156,7 @@ class Station:
             self._announced = now
         if not self.control:
             return
-        self.link.twist(*twist)
+        self.link.twist(*self.drive.step(now))
         if now - self._led_sent >= LED_PERIOD:
             self.link.led(rules.LED_TELEOP)
             self._led_sent = now
@@ -178,6 +178,8 @@ class Station:
         a Fly or Map view wants it, the world runs without it, and the last
         try was FLY_SPAWN_RETRY ago."""
         if self.view not in INSPECTION or now - self._fly_spawned < FLY_SPAWN_RETRY or not self.link.online():
+            return False
+        if self.link.paused():  # its plugin cannot report before the world runs
             return False
         if "fly" in self.link.snapshot():
             return False
@@ -272,7 +274,9 @@ class Station:
             "look": {"pan": self.look.pan, "tilt": self.look.tilt},
             "control": self.control, "deadman": self.drive.deadman, "preset": self.drive.preset,
             "others": [o["url"] or o["id"] for o in self.others],
-            "cmd": list(self.drive.twist), "cameras": {name: feed.fps(now) for name, feed in self.link.feeds.items()},
+            # The twist the station sends; null while released (autonomy's is the drivetrain's cmd).
+            "cmd": list(self.drive.twist) if self.control else None,
+            "cameras": {name: feed.fps(now) for name, feed in self.link.feeds.items()},
             # The fly camera's state (null until it is spawned) and the
             # physical drivetrain's (design spec 9.3; null for a DiffDrive rover).
             "fly": s.get("fly"), "fly_note": self.fly_note, "drivetrain": s.get("drivetrain"),

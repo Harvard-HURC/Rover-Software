@@ -401,11 +401,9 @@
         <min_velocity>0.15</min_velocity>
         <max_velocity>0.5</max_velocity>
         <scale_rate>1</scale_rate>
-        <color_start>0.8 0.7 0.56 0.28</color_start>
-        <color_end>0.8 0.7 0.56 0</color_end>
         <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
-        <particle_scatter_ratio>0</particle_scatter_ratio>
         <material>
+          <diffuse>1 1 1 1</diffuse>
           <pbr>
             <metal>
               <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>
@@ -608,11 +606,9 @@
         <min_velocity>0.15</min_velocity>
         <max_velocity>0.5</max_velocity>
         <scale_rate>1</scale_rate>
-        <color_start>0.8 0.7 0.56 0.28</color_start>
-        <color_end>0.8 0.7 0.56 0</color_end>
         <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
-        <particle_scatter_ratio>0</particle_scatter_ratio>
         <material>
+          <diffuse>1 1 1 1</diffuse>
           <pbr>
             <metal>
               <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>

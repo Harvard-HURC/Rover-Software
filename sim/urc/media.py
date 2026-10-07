@@ -1,8 +1,10 @@
 """Shared assets: the textures and meshes every model and world uses, in
 models_dir/urc_media (Media)."""
 import functools
+import inspect
 import os
 import sys
+import types
 import zlib
 from pathlib import Path
 
@@ -13,7 +15,9 @@ class Media:
     """Textures and meshes shared by every model and world: models_dir/urc_media.
 
     A file is named by its stem (what it is: type, variant) plus a hash of
-    what makes it: the generator, its arguments and its module's source. So
+    what makes it (_digest): the generator, its arguments with their
+    defaults, the source of its module and of every module of this package
+    that module uses, and the contents of the files its arguments name. So
     each file is made once and skipped while it is current, on later runs
     too, and any change makes a new file under a new name; gen_worlds.py
     prunes the files no model uses any more.
@@ -84,15 +88,46 @@ class Media:
     def flat_normal(self):
         return self.texture("flat_normal", textures.flat_normal)
 
-    def dust_puff(self):
-        return self.texture("dust_puff", textures.dust_puff)
+    def dust_puff(self, rgb, opacity):
+        return self.texture("dust_puff", textures.dust_puff, tuple(rgb), opacity)
 
 
 @functools.lru_cache(maxsize=None)
 def _source_crc(module):
-    return zlib.crc32(Path(sys.modules[module].__file__).read_bytes())
+    """CRC of a module's source and, in order, of every module of its own
+    package it imports, directly or through them (farfield's texture uses
+    appearance's Boost and textures' colour conversions)."""
+    package = module.rpartition(".")[0]
+    seen, todo = set(), [module]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        todo += [v.__name__ for v in vars(sys.modules[name]).values()
+                 if package and isinstance(v, types.ModuleType) and v.__name__.rpartition(".")[0] == package]
+    crc = 0
+    for name in sorted(seen):
+        crc = zlib.crc32(Path(sys.modules[name].__file__).read_bytes(), crc)
+    return crc
+
+
+@functools.lru_cache(maxsize=None)
+def _file_crc(path, size, mtime_ns):
+    """CRC of a file's contents (cached while its size and time stay)."""
+    return zlib.crc32(Path(path).read_bytes())
 
 
 def _digest(make, args, kwargs):
-    params = repr((make.__qualname__, args, sorted(kwargs.items())))
-    return f"{zlib.crc32(params.encode(), _source_crc(make.__module__)):08x}"
+    """Hash of a generator, its arguments (defaults included), its sources
+    (_source_crc) and the files its arguments name (a raster read by the
+    generator, say)."""
+    bound = inspect.signature(make).bind(None, *args, **kwargs)  # the first parameter is the output path
+    bound.apply_defaults()
+    values = list(bound.arguments.items())[1:]
+    crc = zlib.crc32(repr((make.__qualname__, values)).encode(), _source_crc(make.__module__))
+    for _, value in values:
+        if isinstance(value, (str, Path)) and os.path.isfile(value):
+            stat = os.stat(value)
+            crc = zlib.crc32(_file_crc(str(value), stat.st_size, stat.st_mtime_ns).to_bytes(4, "little"), crc)
+    return f"{crc:08x}"

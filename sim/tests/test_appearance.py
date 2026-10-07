@@ -25,6 +25,9 @@ import gzenv  # noqa: E402
 from urc import appearance as A  # noqa: E402
 from urc import dem, farfield, geo, lighting, meshes, sdf, terrain, terrains, textures  # noqa: E402
 from urc.media import Media  # noqa: E402
+from urc.missions import autonomy  # noqa: E402
+
+import viewers  # noqa: E402
 
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import gz_media  # noqa: E402
@@ -117,8 +120,12 @@ class Meshes(unittest.TestCase):
 
     def test_riser_faces_downhill(self):
         """Along +x the face looks to -y and the top reaches `depth` to +y,
-        `height` above the ground at the foot, buried `bury` deep."""
-        V, F = meshes.riser_strip([(0, 0, 1.0), (10, 0, 2.0)], 0.5, 2.0, seed=3, bury=0.3)
+        `height` above the ground at the foot, buried `bury` deep; the ground
+        rises 0.5 m per metre to +y, so the level top's back is in it."""
+        def ground(x, y):
+            return 1.0 + np.asarray(x) / 10 + 0.5 * np.asarray(y)
+
+        V, F = meshes.riser_strip([(0, 0, 1.0), (10, 0, 2.0)], 0.5, 2.0, ground, seed=3, bury=0.3)
         self.assertTrue(closed(V, F))
         self.assertGreater(signed_volume(V, F), 0)
         self.assertAlmostEqual(V[:, 1].max(), 2.0, places=6)
@@ -127,6 +134,21 @@ class Meshes(unittest.TestCase):
         above = V[:, 2] - (1.0 + V[:, 0] / 10)  # above the ground at the foot
         self.assertAlmostEqual(above.min(), -0.3, places=9)
         np.testing.assert_allclose(above[above > 0.3], 0.5, atol=0.5 * 0.05 + 1e-9)
+        back = V[np.abs(V[:, 1] - 2.0) < 1e-6]
+        self.assertTrue(np.all(back[:, 2] < ground(back[:, 0], back[:, 1])), "the slope buries the back")
+
+    def test_riser_on_level_ground_is_a_ledge(self):
+        """On level ground the top falls back into the ground (RISER_DIP at
+        most, reaching past `depth` when it must): no edge of the back stands
+        above the ground, unlike a level-topped block (a wall)."""
+        V, F = meshes.riser_strip([(0, 0), (10, 0)], 0.8, 1.0, lambda x, y: np.zeros(np.shape(x)), seed=4)
+        self.assertTrue(closed(V, F))
+        self.assertGreater(signed_volume(V, F), 0)
+        proud = V[V[:, 2] > 1e-9]  # the face's top edge only
+        self.assertLess(proud[:, 1].max(), 0.05)
+        reach = V[:, 1].max()
+        self.assertAlmostEqual(reach, 0.8 * 1.05 / math.tan(math.radians(meshes.RISER_DIP)), delta=0.2)
+        self.assertLessEqual(V[:, 2][np.abs(V[:, 1] - V[:, 1].max()) < 1e-6].max(), -meshes.RISER_BACK_BURY + 1e-9)
 
     def test_low_shrubs_and_pebbles(self):
         for variant in range(meshes.SHRUB_VARIANTS):
@@ -194,10 +216,12 @@ class MediaKinds(unittest.TestCase):
     def test_shared_textures(self):
         flat = np.asarray(Image.open(self.media.path(self.media.flat_normal())))
         self.assertTrue(np.all(flat == (128, 128, 255)))
-        puff = np.asarray(Image.open(self.media.path(self.media.dust_puff())))
+        puff = np.asarray(Image.open(self.media.path(self.media.dust_puff(terrains.DUST_RGB, 1.0))))
         self.assertEqual(puff.shape[2], 4)
         self.assertEqual(puff[0, 0, 3], 0)
         self.assertGreater(puff[54:74, 54:74, 3].mean(), 100)
+        faint = np.asarray(Image.open(self.media.path(self.media.dust_puff(terrains.DUST_RGB, 0.25))))
+        self.assertAlmostEqual(faint[..., 3].max(), 0.25 * puff[..., 3].max(), delta=1.0)
         with self.assertRaises(ValueError):
             self.media.path("model://urc_terrain_x/heightmap.png")
 
@@ -294,13 +318,15 @@ class ColourMap(unittest.TestCase):
             textures.luminance(textures.srgb_to_linear(flat[20:-20, 20:-20])).mean()
         self.assertAlmostEqual(ratio, 1 - A.SLOPE_DARKENING, delta=0.01)
 
-    def test_palette_rule(self):
-        """Munsell hue and saturation, NAIP lightness, saturation x1.25."""
-        rgb = A.palette_colour((194, 137, 95), (197, 186, 168), saturation=1.0)
-        lum = lambda c: float(textures.luminance(textures.srgb_to_linear(c)))  # noqa: E731
-        self.assertAlmostEqual(lum(rgb), lum((197, 186, 168)), delta=0.01)
-        boosted = np.array(A.palette_colour((194, 137, 95), (197, 186, 168)), float)
-        self.assertGreater(np.ptp(boosted), np.ptp(np.array(rgb, float)))
+    def test_lab(self):
+        """The package's one CIE Lab (textures): sRGB round trips, white is L
+        100, and CIE76 is the Lab distance (appearance.delta_e)."""
+        rgb = np.array([(120, 200, 40), (237, 176, 132), (0, 0, 0), (255, 255, 255)], np.uint8)
+        np.testing.assert_array_equal(textures.lab_to_srgb(textures.srgb_to_lab(rgb)), rgb)
+        np.testing.assert_allclose(textures.srgb_to_lab((255, 255, 255)), (100.0, 0.0, 0.0), atol=0.02)
+        self.assertAlmostEqual(float(A.delta_e((237, 176, 132), (230, 198, 158))),
+                               float(np.linalg.norm(textures.srgb_to_lab((237, 176, 132))
+                                                    - textures.srgb_to_lab((230, 198, 158)))))
 
 
 class TerraLayers(unittest.TestCase):
@@ -453,7 +479,10 @@ class FarField(unittest.TestCase):
         lat, lon = lighting.MISSION_SITE
         cls.origin = geo.Origin(lat, lon, cls.far.height(lat, lon) + dem.NAVD88_TO_WGS84)
         cls.size = 2048.0
-        farfield.build(cls.models, cls.media, "urc_far_a", cls.origin, cls.size)
+        # A world on the real DEM, as Autonomy: its terrain is the far DEM itself (NAVD88 + the geoid: ellipsoidal).
+        cls.terrain = dem.to_heightfield(cls.far, geo.Origin(lat, lon, cls.origin.alt - dem.NAVD88_TO_WGS84),
+                                         cls.size, 257, (0.0, 0.0))
+        farfield.build(cls.models, cls.media, "urc_far_a", cls.origin, cls.terrain)
         gltf, binary = read_glb(cls.models / "urc_far_a" / "meshes" / "farfield.glb")
         p = gltf["meshes"][0]["primitives"][0]
         cls.V = accessor(gltf, binary, p["attributes"]["POSITION"]).astype(float)
@@ -477,7 +506,8 @@ class FarField(unittest.TestCase):
 
     def test_heights_curvature_and_seam(self):
         """Vertex heights: the DEM (ellipsoidal) minus the origin's altitude,
-        minus the curvature drop (1 - k) r^2 / 2R; the seam sunk SINK."""
+        minus the curvature drop (1 - k) r^2 / 2R; the seam SINK below the
+        lowest terrain within a grid step, also on a real DEM."""
         r = np.hypot(self.V[:, 0], self.V[:, 1])
         drops = []
         for i in np.flatnonzero(r > 4 * self.size)[::997]:
@@ -488,18 +518,61 @@ class FarField(unittest.TestCase):
             self.assertAlmostEqual(z, expected - drops[-1], delta=2.0)  # remap's 1/32 px on mountain slopes
         self.assertGreater(max(drops), 40)  # some vertices are > 25 km away
         seam = np.flatnonzero(np.maximum(np.abs(self.V[:, 0]), np.abs(self.V[:, 1])) < self.size / 2)
+        X, Y = self.terrain.grid()
         for i in seam[::7]:
             x, y, z = self.V[i]
-            lat, lon, _ = geo.enu_to_wgs84(self.origin, x, y)
-            self.assertAlmostEqual(z, self.far.height(lat, lon) + dem.NAVD88_TO_WGS84 - self.origin.alt
-                                   - farfield.SINK, delta=0.3)
+            window = (np.abs(X - x) <= farfield.SPACING) & (np.abs(Y - y) <= farfield.SPACING)
+            self.assertLessEqual(z, self.terrain.z[window].min() - farfield.SINK + 0.01)
+
+    def test_never_above_the_terrain(self):
+        """Inside the square the far field's edge triangles (they reach a
+        grid step in) stay under the terrain: sampled every 4 m."""
+        half = self.size / 2
+        inside = self.F[np.any(np.maximum(np.abs(self.V[self.F, 0]), np.abs(self.V[self.F, 1])) < half, axis=1)]
+        self.assertGreater(len(inside), 100)
+        w = np.stack(np.meshgrid(np.linspace(0, 1, 31), np.linspace(0, 1, 31)), -1).reshape(-1, 2)
+        w = w[w.sum(axis=1) <= 1]  # barycentric samples of a triangle
+        a, b, c = (self.V[inside[:, k]][:, None, :] for k in range(3))
+        P = (a + w[None, :, :1] * (b - a) + w[None, :, 1:] * (c - a)).reshape(-1, 3)
+        P = P[np.maximum(np.abs(P[:, 0]), np.abs(P[:, 1])) < half]
+        self.assertGreater(len(P), 10_000)
+        self.assertLess(float((P[:, 2] - self.terrain.height(P[:, 0], P[:, 1])).max()), 0.0)
+
+    def test_apron_for_the_fly_camera(self):
+        """apron.json holds the mesh's own vertex heights round the terrain,
+        APRON_REACH beyond its edge and more, past the fly camera's margin."""
+        apron = json.loads((self.models / "urc_far_a" / farfield.APRON).read_text())
+        self.assertEqual(apron["format"], "rover-apron/1")
+        z = np.array(apron["z"]).reshape(apron["rows"], apron["cols"])
+        x = apron["x0"] + apron["spacing"] * np.arange(apron["cols"])
+        y = apron["y0"] - apron["spacing"] * np.arange(apron["rows"])
+        reach = self.size / 2 + farfield.APRON_REACH
+        self.assertTrue(x[0] <= -reach and x[-1] >= reach and y[-1] <= -reach and y[0] >= reach)
+        self.assertGreaterEqual(farfield.APRON_REACH, viewers.FlyParams().margin + farfield.SPACING)
+        for r, c in ((0, 0), (3, 5), (apron["rows"] - 1, apron["cols"] - 1)):
+            vertex = np.flatnonzero(np.hypot(self.V[:, 0] - x[c], self.V[:, 1] - y[r]) < 1e-3)
+            self.assertEqual(len(vertex), 1)
+            self.assertAlmostEqual(self.V[vertex[0], 2], z[r, c], delta=2e-3)
+
+    def test_overview_matches_the_near_imagery(self):
+        """The far texture is the NAIP 2021 overview brought to NAIP 2024's
+        colour: over the Autonomy square the two, boosted alike, differ by a
+        median colour of CIE76 < 3 (11.8 unscaled)."""
+        n = 64
+        origin = geo.Origin(*autonomy.SQUARE_MILE_CENTER, 0.0)
+        far = A.resample_raster(farfield.FAR_IMAGERY, origin, self.size, n)
+        near = A.resample_raster(autonomy.NAIP_PATH, origin, self.size, n)
+        lin = [np.moveaxis(textures.srgb_to_linear(r[:3]), 0, -1).reshape(-1, 3) for r in (far, near)]
+        lin[0] = lin[0] * np.asarray(farfield.OVERVIEW_TO_NAIP2024, np.float32)
+        far_median, near_median = (textures.linear_to_srgb(np.median(A.NAIP2024_BOOST.apply(v), axis=0)) for v in lin)
+        self.assertLess(float(A.delta_e(far_median, near_median)), 3.0)
 
     def test_shared_texture_and_a_synthetic_terrain(self):
         """A second world shares the texture; over a synthetic terrain the
         seam lies SINK below the lowest ground within a grid step."""
         hf = terrain.Heightfield(512.0, 513).noise(15.0, 100.0, 9)
         hf.z += 30.0
-        farfield.build(self.models, self.media, "urc_far_b", self.origin, 512.0, terrain=hf)
+        farfield.build(self.models, self.media, "urc_far_b", self.origin, hf)
         texts = [(self.models / name / "model.sdf").read_text() for name in ("urc_far_a", "urc_far_b")]
         maps = [t.split("<albedo_map>")[1].split("</albedo_map>")[0] for t in texts]
         self.assertEqual(maps[0], maps[1])

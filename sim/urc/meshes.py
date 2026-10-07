@@ -218,16 +218,27 @@ def _fan(ring, centre):
     return np.vstack([ring, centre]), np.array([(i, (i + 1) % k, k) for i in range(k)])
 
 
-def riser_strip(polyline, height, depth, seed=0, bury=0.3, step=0.5, roughness=0.05):
+RISER_DIP = 15.0  # [deg] steepest a riser's top falls back to the ground behind it (A: a cuesta's dip slope)
+RISER_BACK_BURY = 0.05  # [m] the top's back edge lies this far under the ground (A)
+
+
+def riser_strip(polyline, height, depth, ground, seed=0, bury=0.3, step=0.5, roughness=0.05):
     """A ledge (design spec 5.5): a step `height` tall standing on the ground
     along `polyline`, its face looking to the right of the polyline's
-    direction (downhill) and its flat top reaching `depth` metres to the left
-    (uphill, where the slope buries its back), its foot `bury` metres into
-    the ground. polyline: (n, 2) points, or (n, 3) points on the ground (z
-    default 0), resampled every `step` metres. The face wanders in and out
-    by `roughness` x height and its top edge up and down by as much (seeded,
-    A), so it does not read as a kerb. Face, top, back, bottom and ends have
-    their own vertices (sharp edges). Returns (V, F), a closed mesh."""
+    direction (downhill), its top reaching back at least `depth` metres to
+    the left (uphill) and ending RISER_BACK_BURY under the ground there
+    (ground(x, y): the ground's height), its foot `bury` metres into the
+    ground. Where the ground behind rises by `height` within `depth` the top
+    is level and its back buried by the slope; on gentler ground it falls
+    back to the ground, at most RISER_DIP steep, reaching further when it
+    must: a step up from below, a slope down from above, never a wall free
+    on both sides (on level benches a level top stood 0.4-0.5 m proud of
+    the ground behind it, measured). polyline: (n, 2) points, or (n, 3)
+    points on the ground (z default 0), resampled every `step` metres. The
+    face wanders in and out by `roughness` x height and its top edge up and
+    down by as much (seeded, A), so it does not read as a kerb. Face, top,
+    back, bottom and ends have their own vertices (sharp edges). Returns
+    (V, F), a closed mesh."""
     P = np.asarray(polyline, float)
     if P.shape[1] == 2:
         P = np.column_stack([P, np.zeros(len(P))])
@@ -243,11 +254,14 @@ def riser_strip(polyline, height, depth, seed=0, bury=0.3, step=0.5, roughness=0
         return np.interp(t, knots, rng.uniform(-1, 1, len(knots)))
 
     face = P[:, :2] + roughness * height * wobble()[:, None] * left
-    back = P[:, :2] + depth * left
     top_z = P[:, 2] + height * (1 + roughness * wobble())
+    reach = np.maximum(depth, (top_z - P[:, 2]) / math.tan(math.radians(RISER_DIP)))
+    back = P[:, :2] + reach[:, None] * left
+    back_z = np.minimum(top_z, ground(back[:, 0], back[:, 1]) - RISER_BACK_BURY)
     foot_z = P[:, 2] - bury
     A, B = np.column_stack([face, foot_z]), np.column_stack([face, top_z])  # the face: foot, top edge
-    C, D = np.column_stack([back, top_z]), np.column_stack([back, foot_z])  # the back: top, foot
+    C = np.column_stack([back, back_z])  # the top's back edge
+    D = np.column_stack([back, np.minimum(foot_z, back_z - bury)])  # the back's foot
     return combine([_strip(A, B), _strip(B, C), _strip(C, D), _strip(D, A),
                     _fan(np.array([A[0], B[0], C[0], D[0]]), (A[0] + C[0]) / 2),
                     _fan(np.array([A[-1], D[-1], C[-1], B[-1]]), (A[-1] + C[-1]) / 2)])

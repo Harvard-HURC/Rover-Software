@@ -50,7 +50,8 @@ from . import meshes, textures
 DIG = "strong"  # dig-in preset worlds are written with: "strong" (the catalogue's, the user's choice) or "mild"
 OUTLINE_STEP = 0.5  # [m] a round zone's outline spacing
 NORMAL_STRENGTH = 2.0  # bumpiness of the ground normal maps (Layer textures)
-DUST_RGB = (0.80, 0.70, 0.56)  # dust puff colour of the tuned particle emitter (design spec 6.5, M)
+DUST_RGB = (0.92, 0.84, 0.73)  # [0-1 sRGB] dust colour: the render prototype's tuned dust sprite (235, 215, 185) (M,
+# design spec 6.5; its emitter's colour range (0.80, 0.70, 0.56) was never drawn: gz-rendering 8 disables colour ranges)
 
 
 @dataclass(frozen=True)
@@ -100,35 +101,17 @@ class Palette:
         (design 5.7: NAIP is hazy and pale, the survey colour is the soil's
         own); spread: NAIP (p10, p50, p90) of a window of that ground, which
         moves p10 and p90 in lightness only. Without NAIP: the survey colour."""
-        _, a, b = _lab(munsell)
-        lightness = _lab(munsell if naip is None else naip)[0]
+        _, a, b = textures.srgb_to_lab(munsell)
+        lightness = textures.srgb_to_lab(munsell if naip is None else naip)[0]
         if spread is None:
             return cls(_srgb((lightness, a, b)))
-        p10, p50, p90 = (_lab(c)[0] for c in spread)
+        p10, p50, p90 = (textures.srgb_to_lab(c)[0] for c in spread)
         return cls(*(_srgb((lightness + d, a, b)) for d in (0.0, p10 - p50, p90 - p50)))
 
 
-SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
-D65 = np.array([0.95047, 1.0, 1.08883])  # reference white (XYZ)
-LAB_EPS = 6 / 29
-
-
-def _lab(rgb):
-    """CIE L*a*b* (D65) of an sRGB colour [0-255]."""
-    c = np.asarray(rgb, float) / 255.0
-    linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-    t = SRGB_TO_XYZ @ linear / D65
-    f = np.where(t > LAB_EPS ** 3, np.cbrt(t), t / (3 * LAB_EPS ** 2) + 4 / 29)
-    return np.array([116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2])])
-
-
 def _srgb(lab):
-    """The sRGB colour [0-255] of CIE L*a*b* (D65), clipped to the gamut."""
-    fy = (lab[0] + 16) / 116
-    f = np.array([fy + lab[1] / 500, fy, fy - lab[2] / 200])
-    linear = np.linalg.solve(SRGB_TO_XYZ, np.where(f > LAB_EPS, f ** 3, 3 * LAB_EPS ** 2 * (f - 4 / 29)) * D65)
-    c = np.where(linear <= 0.0031308, 12.92 * linear, 1.055 * np.clip(linear, 0, None) ** (1 / 2.4) - 0.055)
-    return tuple(int(v) for v in np.clip(np.round(c * 255), 0, 255))
+    """The sRGB colour [0-255] of CIE L*a*b* (D65) as a palette's tuple."""
+    return tuple(int(v) for v in textures.lab_to_srgb(lab))
 
 
 @dataclass(frozen=True)

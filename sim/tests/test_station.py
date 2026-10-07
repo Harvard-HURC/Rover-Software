@@ -40,6 +40,7 @@ import gz.math7  # noqa: E402
 from gz.msgs10.image_pb2 import Image  # noqa: E402
 from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
+from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.vector3d_pb2 import Vector3d  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
@@ -475,6 +476,9 @@ class FakeLink:
     def online(self):
         return "stats" in self.state
 
+    def paused(self):
+        return bool(self.state.get("stats", {}).get("paused"))
+
     def ensure_cameras(self):
         self.sent.append(("ensure_cameras",))
         return ["eye_camera: spawned", "chase_camera: spawned"]
@@ -511,6 +515,21 @@ class Telemetry(unittest.TestCase):
         self.assertEqual(t["head"], {"pan": 0.1, "tilt": 0.2})
         self.assertEqual(t["look"], {"pan": 0.0, "tilt": P.camera_pitch})  # what the station commands
         json.dumps(t)
+
+    def test_released_station_asks_for_nothing(self):
+        """Released to autonomy the station publishes no twist, so its
+        telemetry names none (the page then shows autonomy's command, the
+        drivetrain's, or nothing) and held keys do not wind one up for later."""
+        link = FakeLink()
+        s = server.Station(link, "test")
+        s.set_control(False)
+        for k in range(21):
+            s.handle({"t": "input", "keys": ["KeyA"], "axes": [0, 0]}, k * server.CONTROL_PERIOD)
+            s.tick(k * server.CONTROL_PERIOD)
+        self.assertIsNone(s.telemetry(1.0)["cmd"])
+        self.assertEqual(link.of("twist"), [("twist", 0.0, 0.0)])  # the hand-over only
+        s.set_control(True)
+        self.assertEqual(s.telemetry(1.0)["cmd"], [0.0, 0.0])
 
     def test_nothing_known_yet(self):
         t = server.Station(FakeLink(), "test").telemetry(0.0)
@@ -656,6 +675,9 @@ class StationFly(unittest.TestCase):
         self.assertFalse(s.fly_spawn_due(server.FLY_SPAWN_RETRY + 1), "it reports")
         del link.state["fly"]  # it does not report (any more)
         self.assertFalse(s.fly_spawn_due(server.FLY_SPAWN_RETRY))
+        link.state["stats"] = {"paused": True}  # a paused world: no camera reports, none is spawned
+        self.assertFalse(s.fly_spawn_due(server.FLY_SPAWN_RETRY + 0.3))
+        link.state["stats"] = {"paused": False}
         self.assertTrue(s.fly_spawn_due(server.FLY_SPAWN_RETRY + 0.3))
         link.ensure_fly = lambda view: "fly_camera: not spawned, the world has no /world/w/create (UserCommands system)"
         s.spawn_fly()
@@ -705,6 +727,34 @@ class GzLinkState(unittest.TestCase):
             link._seen[key] -= 5.0
         self.assertEqual(set(link.snapshot()), {"stats", "led"})
 
+    def test_paused_or_slow_world_keeps_the_plugin_states(self):
+        """The camera and drivetrain plugins publish on sim time and not at
+        all while paused: their states stay while sim time stands still (a
+        paused or slow world), and go once sim time has also run on past
+        their expiry; the referee's go on wall time."""
+        link = self.link
+        link._put("stats", {"sim_time": 10.0, "paused": True})
+        for key in ("fly", "drivetrain", "eye", "score"):
+            link._put(key, {"t": 10.0})
+            link._seen[key] -= 5.0  # 5 s of wall time without a message
+        self.assertEqual(set(link.snapshot()), {"stats", "fly", "drivetrain", "eye"})
+        link._put("stats", {"sim_time": 10.5, "paused": False})  # slow: half a second of sim time
+        self.assertIn("fly", link.snapshot())
+        link._put("stats", {"sim_time": 11.5, "paused": False})
+        self.assertEqual(set(link.snapshot()), {"stats"})
+
+    def test_states_from_before_a_restart_expire(self):
+        """Sim time going back (a reset, or the world started again): what was
+        seen counts from then, so a camera gone with the old world expires."""
+        link = self.link
+        link._put("stats", {"sim_time": 100.0, "paused": False})
+        link._put("fly", {"t": 100.0})
+        link._seen["fly"] -= 5.0
+        link._on_stats(_stats(0.5))
+        self.assertIn("fly", link.snapshot())
+        link._on_stats(_stats(1.6))
+        self.assertNotIn("fly", link.snapshot())
+
     def test_turn_rate_from_the_yaws(self):
         """Gazebo's OdometryPublisher now and then reports a yaw rate off by a
         multiple of 2 pi / dt; the station takes it from successive yaws, also
@@ -735,6 +785,12 @@ class GzLinkState(unittest.TestCase):
 def _string(text):
     msg = StringMsg()
     msg.data = text
+    return msg
+
+
+def _stats(sim_time):
+    msg = WorldStatistics()
+    msg.sim_time.sec, msg.sim_time.nsec = int(sim_time), round(sim_time % 1 * 1e9)
     return msg
 
 

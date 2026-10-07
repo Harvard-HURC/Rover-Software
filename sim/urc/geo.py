@@ -8,6 +8,8 @@ exact (through ECEF on the WGS84 ellipsoid), like Gazebo's.
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 A = 6378137.0  # WGS84 semi-major axis [m]
 F = 1 / 298.257223563
 E2 = F * (2 - F)  # first eccentricity squared
@@ -55,6 +57,31 @@ def enu_to_wgs84(o: Origin, x, y, z=0.0):
     e, n, u = _basis(o)
     p = [x0[i] + x * e[i] + y * n[i] + z * u[i] for i in range(3)]
     return _geodetic(*p)
+
+
+def lonlat_fit(o: Origin, size, center=(0.0, 0.0), degree=2, tolerance=1e-9):
+    """(x, y) world -> (lat, lon) [deg] over the square of `size` metres
+    around `center`, as one vectorised function: a polynomial fit of
+    enu_to_wgs84 of total `degree`, fitted on a (2 degree - 1)^2 grid and
+    checked between its points (ValueError beyond `tolerance` [deg]). A
+    quadratic is within 1e-9 deg over 2 km, where an affine map is 0.1 m off
+    at the corners (a degree of longitude shortens northwards); 60 km of far
+    field needs a cubic (its quartic terms are ~1 cm at 40 km)."""
+    def terms(x, y):
+        x, y = (np.asarray(x, float) - center[0]) / size, (np.asarray(y, float) - center[1]) / size
+        return np.stack([x ** i * y ** j for i in range(degree + 1) for j in range(degree + 1 - i)], axis=-1)
+
+    def exact(ticks):
+        xy = np.array([(center[0] + a * size, center[1] + b * size) for a in ticks for b in ticks])
+        return terms(xy[:, 0], xy[:, 1]), np.array([enu_to_wgs84(o, x, y)[:2] for x, y in xy])
+
+    ticks = np.linspace(-0.5, 0.5, 2 * degree - 1)
+    coef, *_ = np.linalg.lstsq(*exact(ticks), rcond=None)
+    A, check = exact((ticks[1:] + ticks[:-1]) / 2)
+    residual = np.abs(A @ coef - check).max()
+    if residual > tolerance:
+        raise ValueError(f"lat/lon fit is off by {residual:.2e} deg over {size} m")
+    return lambda x, y: np.moveaxis(terms(x, y) @ coef, -1, 0)
 
 
 def wgs84_to_enu(o: Origin, lat, lon, alt=None):

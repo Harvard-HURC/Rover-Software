@@ -20,7 +20,13 @@
 // measurements/smoothness_*.json).
 //
 // The ground is the world's visual heightmap (terrain_heightmap.hh, sampled as Gazebo draws it), clamped
-// at its edge outside it; a world without one has flat ground at z = 0 and bounds of +-kFlatHalfExtent.
+// at its edge outside it, and, where it is higher, the far field drawn round the terrain (its apron.json,
+// FindFarFieldApron): beyond the edge the far DEM rises up to 17 m above the edge's height within the 100 m
+// the camera may go (measured on Delivery), and the camera then sat inside it. A world without a heightmap
+// has flat ground at z = 0 and bounds of +-kFlatHalfExtent.
+//
+// A goto flies a smoothstep along the straight line, lifted over the ground under it (StartGoto: the line
+// through a hill pinned the camera to the 0.3 m hard floor, sliding up the slope at up to 50 m/s).
 //
 // Orthographic projection: SDF cannot ask for it (an orthographic <projection_type> or <lens> is ignored,
 // measured), so a hook on events::SceneUpdate, which the Sensors system emits on its rendering thread,
@@ -31,8 +37,13 @@
 // step, -35 to -45 % sim speed; SceneUpdate cost nothing measurable (render_hook_and_camera_cost.json).
 // The hook is connected once, in Configure (EventT::Connect is not thread-safe). While orthographic the
 // camera looks straight down and the window is w = 2 h tan(hfov / 2), h the height above the ground
-// where orthographic began, so switching does not jump and climbing zooms out. Orthographic views show
-// no cast shadows, and perspective ones none beyond ~500 m (measured).
+// where orthographic began, so switching does not jump and climbing zooms out. The camera is drawn from
+// above everything it may fly over (ortho_ceiling_), whatever its height: a parallel projection's picture
+// does not depend on it, and the window spans ground far from the point under the camera, which rose
+// above the near plane just under it and was cut away (65 % of map clicks over Autonomy's relief; a pole
+// above the camera vanished, measured; a near plane behind the camera in the projection changed nothing).
+// Height, ground and window in the state are the camera's own. Orthographic views show no cast shadows,
+// and perspective ones none beyond ~500 m (measured).
 //
 // The model should have one link without gravity or collisions carrying the camera: nothing then
 // changes its velocity, and only the pose commands move it (sim/viewers.py writes it).
@@ -117,8 +128,14 @@ constexpr double kMinPitch = -1.5;           // [rad] nearly straight up (protot
 constexpr double kMaxPitch = GZ_PI / 2;      // [rad] straight down (top-down and orthographic views)
 constexpr double kGotoSpeed = 50.0;          // [m/s] a goto takes distance / kGotoSpeed ...
 constexpr double kGotoMin = 0.4, kGotoMax = 1.5;     // ... clamped to [s]
+constexpr int kGotoSamples = 512;            // ground samples along a goto's line, at most (one per heightmap
+                                             // sample, at least kGotoMinSamples)
+constexpr int kGotoMinSamples = 16;
 constexpr double kStatePeriod = 0.1;         // [s] of sim time between state messages
 constexpr double kFlatHalfExtent = 10000.0;  // [m] bounds of a world without a heightmap
+constexpr double kOrthoAbove = 50.0;         // [m] an orthographic camera is drawn this far above the highest
+                                             // ground it may fly over, above what stands on it (A; no higher:
+                                             // the patched media's haze grows with distance, 0.2 % per 50 m)
 
 double Wrap(double angle) { return std::remainder(angle, 2 * GZ_PI); }
 
@@ -305,7 +322,11 @@ class FlyCamera : public gz::sim::System,
 
     // 8. Pose, every step: sent only on change, a pose after idle steps took effect 5 steps
     // late (measured), and skipping it saved nothing measurable.
-    model_.SetWorldPoseCmd(ecm, gz::math::Pose3d(position_, gz::math::Quaterniond(0, pitch_, yaw_)));
+    gz::math::Vector3d shown = position_;
+    if (ortho_) {
+      shown.Z(std::max(shown.Z(), ortho_ceiling_));
+    }
+    model_.SetWorldPoseCmd(ecm, gz::math::Pose3d(shown, gz::math::Quaterniond(0, pitch_, yaw_)));
     speed_ = dt > 0 ? (position_ - before - carried).Length() / dt : 0.0;
     PublishState(now);
   }
@@ -337,12 +358,14 @@ class FlyCamera : public gz::sim::System,
     world_read_ = true;
     const auto t0 = std::chrono::steady_clock::now();
     terrain_ = FindTerrainHeightmap(ecm, HeightmapGeometry::kVisual);
+    apron_ = FindFarFieldApron(ecm);
     if (terrain_) {
       const auto top = *std::max_element(terrain_->heights.begin(), terrain_->heights.end());
       const auto half = gz::math::Vector3d(terrain_->size.X() / 2 + margin_, terrain_->size.Y() / 2 + margin_, 0);
       low_ = terrain_->origin - half;
       high_ = terrain_->origin + half;
       high_.Z(terrain_->origin.Z() + top + max_altitude_);
+      ortho_ceiling_ = terrain_->origin.Z() + top + kOrthoAbove;
       // Read in the simulation thread: the world stalls this long when a fly camera is spawned.
       gzmsg << "FlyCamera: ground from " << terrain_->path << " (" << terrain_->samples << "^2 samples), read in "
             << std::lround(1000 * Seconds(std::chrono::steady_clock::now() - t0)) << " ms.\n";
@@ -350,6 +373,19 @@ class FlyCamera : public gz::sim::System,
       gzmsg << "FlyCamera: no terrain heightmap; the ground is flat at z = 0.\n";
       low_ = gz::math::Vector3d(-kFlatHalfExtent, -kFlatHalfExtent, 0);
       high_ = gz::math::Vector3d(kFlatHalfExtent, kFlatHalfExtent, max_altitude_);
+      ortho_ceiling_ = kOrthoAbove;
+    }
+    if (apron_) {
+      gzmsg << "FlyCamera: the far field's apron, " << apron_->rows << " x " << apron_->cols << " vertices.\n";
+      for (int r = 0; r < apron_->rows; ++r) {
+        for (int c = 0; c < apron_->cols; ++c) {
+          const double x = apron_->x0 + c * apron_->spacing, y = apron_->y0 - r * apron_->spacing;
+          if (x >= low_.X() - apron_->spacing && x <= high_.X() + apron_->spacing && y >= low_.Y() - apron_->spacing &&
+              y <= high_.Y() + apron_->spacing) {
+            ortho_ceiling_ = std::max(ortho_ceiling_, apron_->z0 + apron_->z[r * apron_->cols + c] + kOrthoAbove);
+          }
+        }
+      }
     }
     ecm.Each<gz::sim::components::Camera, gz::sim::components::ParentEntity>(
         [&](const gz::sim::Entity&, const gz::sim::components::Camera* camera,
@@ -365,14 +401,16 @@ class FlyCamera : public gz::sim::System,
     }
   }
 
-  /// Ground height at (x, y): the heightmap, clamped at its edge outside it; 0 without one.
+  /// Ground height at (x, y): the heightmap, clamped at its edge outside it, or the far field where that is
+  /// higher; 0 without a heightmap.
   double Ground(double x, double y) const {
     if (!terrain_) {
       return 0.0;
     }
     const double hx = terrain_->size.X() / 2 * (1 - 1e-9), hy = terrain_->size.Y() / 2 * (1 - 1e-9);
-    return terrain_->Height(std::clamp(x, terrain_->origin.X() - hx, terrain_->origin.X() + hx),
-                            std::clamp(y, terrain_->origin.Y() - hy, terrain_->origin.Y() + hy));
+    const double ground = terrain_->Height(std::clamp(x, terrain_->origin.X() - hx, terrain_->origin.X() + hx),
+                                           std::clamp(y, terrain_->origin.Y() - hy, terrain_->origin.Y() + hy));
+    return apron_ ? std::max(ground, apron_->Height(x, y)) : ground;
   }
 
   /// The camera's height after rising this step towards the floor, ground + clearance, under it and
@@ -481,15 +519,41 @@ class FlyCamera : public gz::sim::System,
       return;
     }
     const double duration = std::clamp(to.Distance(position_) / kGotoSpeed, kGotoMin, kGotoMax);
-    flight_ = Flight{position_, to, yaw_, yaw, pitch_, pitch, duration, 0.0};
+    flight_ = Flight{position_, to, yaw_, yaw, pitch_, pitch, duration, 0.0, Lift(position_, to)};
   }
 
-  /// One step of a goto: smoothstep in position and view.
+  /// The lift over the straight line from `from` to `to` that keeps a goto clearance_ above the ground: at
+  /// each of n + 1 points along it, the most any ground sample s between the ends asks for, need(s) =
+  /// ground + clearance - the line's height, spread as a tent from s to both ends (need(s) u / s, need(s)
+  /// (1 - u) / (1 - s)), so the flight arcs over a hill from the start and lands where it was sent.
+  std::vector<double> Lift(const gz::math::Vector3d& from, const gz::math::Vector3d& to) const {
+    const double length = std::hypot(to.X() - from.X(), to.Y() - from.Y());
+    const double spacing = terrain_ ? terrain_->size.X() / (terrain_->samples - 1) : length;
+    const int n = std::clamp(static_cast<int>(std::ceil(length / spacing)), kGotoMinSamples, kGotoSamples);
+    std::vector<double> need(n + 1, 0.0), lift(n + 1, 0.0);
+    for (int i = 1; i < n; ++i) {
+      const auto p = from + (static_cast<double>(i) / n) * (to - from);
+      need[i] = std::max(0.0, Ground(p.X(), p.Y()) + clearance_ - p.Z());
+    }
+    for (int i = 1; i < n; ++i) {
+      if (need[i] <= 0) continue;
+      for (int j = 1; j < n; ++j) {
+        lift[j] = std::max(lift[j], need[i] * (j <= i ? double(j) / i : double(n - j) / (n - i)));
+      }
+    }
+    return lift;
+  }
+
+  /// One step of a goto: smoothstep in position and view, the position lifted over the ground (Lift).
   void Fly(double dt) {
     flight_->elapsed += dt;
     const double u = std::min(1.0, flight_->elapsed / flight_->duration);
     const double k = u * u * (3 - 2 * u);
+    const auto& lift = flight_->lift;
+    const double at = k * (lift.size() - 1);
+    const size_t i = std::min(lift.size() - 2, static_cast<size_t>(at));
     position_ = flight_->from + k * (flight_->to - flight_->from);
+    position_.Z(position_.Z() + lift[i] + (at - i) * (lift[i + 1] - lift[i]));
     yaw_ = look_yaw_ = flight_->yaw0 + k * (flight_->yaw1 - flight_->yaw0);
     pitch_ = look_pitch_ = flight_->pitch0 + k * (flight_->pitch1 - flight_->pitch0);
     if (u >= 1) {
@@ -611,6 +675,7 @@ class FlyCamera : public gz::sim::System,
     gz::math::Vector3d from, to;
     double yaw0, yaw1, pitch0, pitch1;
     double duration, elapsed;  // [s]
+    std::vector<double> lift;  // [m] over the line at n + 1 points along it (Lift)
   };
 
   // Configuration.
@@ -633,8 +698,10 @@ class FlyCamera : public gz::sim::System,
   // The world, read once.
   bool world_read_ = false;
   std::optional<TerrainHeightmap> terrain_;
+  std::optional<FarFieldApron> apron_;
   gz::math::Vector3d low_, high_;  // bounds (low_.Z() unused: the floor bounds from below)
   double hfov_ = 0.0;              // [rad] of the model's camera; 0 without one
+  double ortho_ceiling_ = 0.0;     // [m] an orthographic camera is drawn from at least this high
 
   // Flight state (sim thread; Restart also runs from Reset on the sim thread).
   bool started_ = false;

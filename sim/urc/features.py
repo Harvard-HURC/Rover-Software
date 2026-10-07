@@ -39,6 +39,7 @@ LEDGE_APRON = 4.0  # [m] level ground in front of a ledge's drop, to land on
 # Steepest bank of a wash channel: the rover drives into and out of a wash anywhere (the default ground climbs
 # 23 deg, terrains.py, and the terrain's own slope adds to the bank) (A).
 WASH_BANK = 15.0  # [deg]
+WASH_MARGIN = 6.0  # [m] the shrub band beside the floor of a wash the DEM already has (A: its banks are the lidar's)
 
 
 def shape(hf, features):
@@ -116,7 +117,9 @@ class Wash:
     sand: on the strong dig-in preset a rover whose wheels dug in climbs no
     more than 1 deg of wash sand (atan(mu_k - crr dig_max)), so every wash
     floor would trap it (measured: Delivery's course stalled on a 4 deg wash
-    floor)."""
+    floor). Its margins (margin(): the banks, or WASH_MARGIN beside the
+    floor of a wash the DEM has) grow the tall wash-margin shrubs
+    (terrains.WASH_SHRUBS, design 5.5), whatever ground is painted there."""
     key: str
     path: tuple
     depth: float = 0.0
@@ -153,8 +156,14 @@ class Wash:
     def footprints(self):
         return [f for patch in self.patches for f in patch.footprints()]
 
+    def margin(self):
+        """(path, inner, outer): the bands beside its floor where shrubs grow, inner to outer metres from
+        the path."""
+        return tuple(self.path), self.half_width, self.half_width + (self.falloff if self.depth else WASH_MARGIN)
+
     def dress(self, w):
         dress(w, self.patches)
+        w.wash_margin(*self.margin(), terrains.WASH_SHRUBS)
 
 
 @dataclass(frozen=True)

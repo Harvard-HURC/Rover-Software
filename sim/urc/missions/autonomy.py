@@ -56,8 +56,6 @@ import json
 import math
 from pathlib import Path
 
-import numpy as np
-
 from .. import appearance, dem, features, geo, landscape, props, routes, rules, terrain, terrains
 from ..world import WorldBuilder, site
 
@@ -144,8 +142,10 @@ BOULDER_APRONS = [(-85.0, 298.0, 10.0), (-42.0, 318.0, 10.0), (-28.0, 343.0, 9.0
                   (84.0, -142.0, 10.0)]  # x, y, radius; the last below the knoll south-east of the astronaut
 
 # The terrain spans 56 m below C2 to 30 m above; the route-finding plain lies 6-10 m below, the butte's crest
-# 8 m above. Above CAPROCK_Z the sandstone caps show slab joints (a detail layer, design 5.7).
-CAPROCK_Z = 3.0  # [m] above C2
+# 8 m above. No slab-joint detail layer (design 5.7): Terra weights it by height only, and the highest ground
+# here is the sand-sheet plain in the north-east, not the butte's caps; above a cap 3 m over C2 it drew joints
+# on 7 % of the terrain, 88 % of it sand sheet, and next to none on the butte (measured 2026-10-07). The NAIP
+# drape shows the real rock.
 # Where the rover works (design D10): clutter by the recipes (slabs below 1 m, design D9) and NAIP's shrubs as
 # meshes within these discs (x, y, radius); gravel within COURSE_GRAVEL of the drives.
 WORK_AREAS = [ROUTE_FIELD, ASTRONAUT_FIELD]
@@ -184,7 +184,7 @@ def build(models_dir, worlds_dir, media):
     sources = {name: json.loads(path.with_suffix(".json").read_text()) | {"file": path.name}
                for name, path in (("dem", DEM_PATH), ("imagery", NAIP_PATH))}
     sources["soils"] = json.loads(SOILS.read_text())
-    w.terrain(orthophoto=NAIP_PATH, real=True, cap=CAPROCK_Z, sources=sources)
+    w.terrain(orthophoto=NAIP_PATH, sources=sources)
     features.dress(w, FEATURES + easy_route_rib(hf, easy_route))  # first: objects stand on the ground zones sink
     w.c2(*C2)
     w.rover(*ROVER)

@@ -56,6 +56,11 @@ SIM_TIMEOUT = 3.0  # [s] world statistics come at 10 Hz (paused too); without th
 # drivetrain's state (none from a DiffDrive rover), and the camera states,
 # which say the camera model is in the world.
 EXPIRY = {"score": 3.0, "radio": 3.0, "eye": 1.0, "chase": 1.0, "fly": 1.0, "drivetrain": 1.0}
+# The plugins publish these on sim time and not at all while the world is
+# paused: such a key expires only once both wall and sim time have run on
+# EXPIRY past it (on wall time alone a paused or slow world lost its fly
+# camera and drivetrain, and the station spawned the fly camera again).
+SIM_TIME_KEYS = frozenset({"eye", "chase", "fly", "drivetrain"})
 STATION_TIMEOUT = 2.0  # [s] another driver station counts as attached this long after it announced itself
 SPAWN_TIMEOUT = 5.0  # [s] for a spawned camera's plugin to report
 # The binding keeps the GIL while a request waits, so gz-transport's thread
@@ -103,6 +108,7 @@ class GzLink:
         self._lock = threading.Lock()
         self._state = {}
         self._seen = {}  # key -> time.monotonic() of the latest message
+        self._seen_sim = {}  # key -> the world's sim time [s] (its statistics) when the latest message came
         self._stations = {}  # id of another driver station -> (its announcement, time.monotonic())
         self._yaw = (None, 0.0, 0.0)  # the latest ground truth: sim time [s], yaw, yaw rate [rad/s]
         sub = self.node.subscribe
@@ -147,6 +153,9 @@ class GzLink:
         with self._lock:
             self._state[key] = value
             self._seen[key] = time.monotonic()
+            sim_time = self._sim_time()
+            if sim_time is not None:
+                self._seen_sim[key] = sim_time
 
     def _on_odometry(self, msg):
         p, q, v = msg.pose.position, msg.pose.orientation, msg.twist.linear
@@ -172,6 +181,9 @@ class GzLink:
 
     def _on_stats(self, msg):
         t = msg.sim_time.sec + msg.sim_time.nsec * 1e-9
+        with self._lock:
+            # Sim time went back (a reset, or a world started again): what was seen counts from now.
+            self._seen_sim = {key: min(seen, t) for key, seen in self._seen_sim.items()}
         self._put("stats", {"sim_time": t, "rtf": msg.real_time_factor, "paused": msg.paused})
 
     def _on_station(self, msg):
@@ -189,6 +201,25 @@ class GzLink:
     def _age(self, key, now):
         return now - self._seen.get(key, -math.inf)
 
+    def _sim_time(self):
+        """The world's sim time [s] from its latest statistics, or None; under the lock."""
+        return self._state.get("stats", {}).get("sim_time")
+
+    def _fresh(self, key, now):
+        """Whether key still counts (EXPIRY, SIM_TIME_KEYS); under the lock."""
+        limit = EXPIRY.get(key, math.inf)
+        if self._age(key, now) <= limit:
+            return True
+        sim_time = self._sim_time()
+        if key not in SIM_TIME_KEYS or key not in self._seen_sim or sim_time is None:
+            return False
+        return sim_time - self._seen_sim[key] <= limit
+
+    def paused(self):
+        """Whether the world's statistics say it is paused."""
+        with self._lock:
+            return bool(self._state.get("stats", {}).get("paused"))
+
     def online(self):
         """Whether the world's statistics keep coming: the simulation runs (paused or not)."""
         now = time.monotonic()
@@ -202,7 +233,7 @@ class GzLink:
         with self._lock:
             if self._age("stats", now) > SIM_TIMEOUT:
                 return {}
-            return {k: v for k, v in self._state.items() if self._age(k, now) <= EXPIRY.get(k, math.inf)}
+            return {k: v for k, v in self._state.items() if self._fresh(k, now)}
 
     def other_stations(self, wait=0.0):
         """Announcements of the other driver stations attached to the world.
@@ -304,7 +335,7 @@ class GzLink:
         while True:
             now = time.monotonic()
             with self._lock:
-                if self._age(key, now) <= EXPIRY[key]:
+                if self._fresh(key, now):
                     return True
             if now >= deadline:
                 return False
@@ -326,6 +357,8 @@ class GzLink:
         if view is not None:
             _pose(view, req.pose)
         ok, reply = self.node.request(service, req, EntityFactory, Boolean, request_timeout)
+        if self.paused():  # its plugin starts reporting once the world runs
+            return f"{model}: spawn requested; the world is paused, the camera reports once it runs"
         if self._reports(key, SPAWN_TIMEOUT):
             return f"{model}: spawned"
         if ok and not reply.data:

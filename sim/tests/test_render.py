@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import cv2
@@ -22,7 +23,8 @@ import numpy as np
 
 from worldfiles import SIM_DIR
 
-import gzenv  # noqa: E402  (worldfiles puts sim/ on the path)
+import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import gzenv  # noqa: E402
 from urc import appearance as A  # noqa: E402
 from urc import dem, farfield, geo, lighting, meshes, props, sdf, terrain  # noqa: E402
 from urc.media import Media  # noqa: E402
@@ -294,16 +296,17 @@ class Render(unittest.TestCase):
         cam = camera("d", (0, 0, 0.6), 0.0, 0.05, (320, 240), 1.2, kind="rgbd_camera")
         return self.r.take(world(self.boxes() + cam + extra, particles=True), self.RGBD, patched)
 
-    def dust(self, ratio):
-        """A dust emitter at full rate 1.3-2.7 m in front of the camera."""
-        return f"""<model name="dust"><static>true</static><pose>2 0 0.3 0 0 0</pose><link name="link">
-          <particle_emitter name="e" type="box"><emitting>true</emitting><size>1.5 1.5 0.4</size>
-            <particle_size>0.3 0.3 0.3</particle_size><lifetime>2</lifetime><rate>400</rate>
-            <min_velocity>0.1</min_velocity><max_velocity>0.3</max_velocity>
-            <color_start>0.8 0.7 0.56 0.6</color_start><color_end>0.85 0.75 0.6 0.3</color_end>
-            <particle_scatter_ratio>{ratio}</particle_scatter_ratio><topic>/dust_cmd</topic>
-            <material><diffuse>1 1 1 1</diffuse><pbr><metal><albedo_map>{self.r.media.dust_puff()}</albedo_map></metal>
-            </pbr></material></particle_emitter></link></model>"""
+    @staticmethod
+    def dust():
+        """The rover's own dust emitter (gen_model, its sprite from sim/models/rover) emitting at 400 /s, ten
+        times the drivetrain's most, 2 m in front of the camera."""
+        link = ET.Element("link", name="link")
+        gen_model._add_dust_emitter(link, gen_model.Params(), "e")
+        emitter = link.find("particle_emitter")
+        emitter.find("emitting").text, emitter.find("rate").text = "true", "400"
+        emitter.find("pose").text = "0 0 0 0 0 0"
+        return (f'<model name="dust"><static>true</static><pose>2 0 0.3 0 0 0</pose>'
+                f'{ET.tostring(link, encoding="unicode")}</model>')
 
     @staticmethod
     def same_depth(a, b):
@@ -317,21 +320,30 @@ class Render(unittest.TestCase):
         self.assertGreater(np.abs(stock[self.RGBD[1]].astype(int) - patched[self.RGBD[1]].astype(int)).max(), 5)
 
     def test_dust_is_drawn(self):
-        """A dust emitter in view shows in the colour image."""
-        plain, dusty = self.rgbd(), self.rgbd(self.dust(1e-6))
-        self.assertGreater(np.abs(dusty[self.RGBD[1]].astype(int) - plain[self.RGBD[1]].astype(int)).mean(), 5.0)
+        """The rover's dust shows in the colour image as dust: pale tan, its
+        sprite's colour (terrains.DUST_RGB), not black (an emitter material
+        without a diffuse draws black smoke, measured)."""
+        plain, dusty = self.rgbd(), self.rgbd(self.dust())
+        before, after = plain[self.RGBD[1]].astype(int), dusty[self.RGBD[1]].astype(int)
+        changed = np.abs(after - before).max(axis=-1) > 8
+        self.assertGreater(changed.mean(), 0.02)
+        r, g, b = after[changed].mean(axis=0)
+        self.assertGreater(r, before[changed].mean() + 20, (r, g, b))  # lighter than the dark boxes behind it
+        self.assertGreater(r, b + 10, (r, g, b))  # tan
 
     @unittest.expectedFailure
     def test_depth_unchanged_by_dust(self):
         """Design spec D15/Q11 (depth does not see dust): the depth image
-        with a dust emitter at full rate in view is the one without it.
-        Fails in gz-sim 8.10 / gz-rendering 8.2.2 (M): RGB-D and depth
-        cameras show the particles at any <particle_scatter_ratio> (1e-6,
-        0.65 and 1 give the same ~9,700 changed pixels of 76,800), and
-        SetParticleScatterRatio ignores 0 ("only set if _ratio > 0",
-        ParticleEmitter.hh). Kept as an expected failure: it starts passing
-        when a ratio is honoured."""
-        plain, dusty = self.rgbd(), self.rgbd(self.dust(1e-6))
+        with the rover's dust emitter at full rate in view is the one without
+        it. Fails in gz-sim 8.10 / gz-rendering 8.2.2 (M, 2026-10-07): the
+        depth shader (depth_camera_fs.metal) takes every pixel of a particle
+        with any red (particle.x > 0) for a return at a fixed scatter ratio:
+        <particle_scatter_ratio> 1e-6, 0.1 and 1 changed 8,710, 8,640 and
+        8,601 of 76,800 pixels, and so did ratios sent on the emitter's
+        topic. Only a particle material without a diffuse stays out of the
+        depth image, and it renders black. Kept as an expected failure: it
+        starts passing when a ratio is honoured."""
+        plain, dusty = self.rgbd(), self.rgbd(self.dust())
         self.assertTrue(self.same_depth(plain[self.RGBD[0]], dusty[self.RGBD[0]]))
 
     def test_glb_clutter_stands_z_up(self):
@@ -360,7 +372,7 @@ class Render(unittest.TestCase):
         far = dem.read_geotiff(farfield.FAR_DEM)
         lat, lon = lighting.MISSION_SITE
         origin = geo.Origin(lat, lon, far.height(lat, lon) + dem.NAVD88_TO_WGS84)
-        farfield.build(self.r.models, self.r.media, "urc_far_render", origin, 64.0)
+        farfield.build(self.r.models, self.r.media, "urc_far_render", origin, terrain.Heightfield(64.0, 65))
         eye = 2.0
         cams, aims = "", {}
         peaks = (("ellen", ((38.09, 38.13), (-110.84, -110.79))), ("butte", ((38.46, 38.48), (-110.91, -110.88))))

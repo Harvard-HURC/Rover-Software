@@ -592,11 +592,7 @@ def place(hf, raster, kind, rng, avoid=(), clearance=0.0, legend=None, within=No
         else:
             raise ValueError(f"clutter kind {kind!r}")
         count = int(rng.poisson(expected)) if len(cells) else 0
-        picked = cells[rng.integers(0, len(cells), count)] if count else np.zeros(0, int)
-        rows, cols = np.divmod(picked, hf.n)
-        x = hf.center[0] - hf.size / 2 + (cols + rng.uniform(-0.5, 0.5, count)) * hf.res
-        y = hf.center[1] + hf.size / 2 - (rows + rng.uniform(-0.5, 0.5, count)) * hf.res
-        yaw = rng.uniform(0, 2 * math.pi, count)
+        x, y, yaw = _scatter(hf, cells, count, rng)
         if kind == "slabs":
             d = slab_sizes(recipe, rng.uniform(0, 1, count), low, high)
             tilt = np.radians(rng.uniform(0, recipe.max_tilt_deg, count))
@@ -606,11 +602,36 @@ def place(hf, raster, kind, rng, avoid=(), clearance=0.0, legend=None, within=No
             size = np.exp(rng.uniform(math.log(low), math.log(high), count)) / 2
             tilt, height = np.zeros(count), np.zeros(count)
         else:
-            size = rng.uniform(*recipe.diameter_m, count)
-            height = rng.uniform(*recipe.height_m, count)
-            tilt = np.zeros(count)
+            out += _shrubs(x, y, yaw, recipe, rng)
+            continue
         out += [Placement(*map(float, p)) for p in zip(x, y, size, yaw, tilt, height)]
     return out
+
+
+def place_shrubs(hf, where, recipe, rng):
+    """A Shrubs recipe's shrubs where the boolean grid `where` holds, at its
+    density (place()'s way, for ground that is not a type: wash margins,
+    WorldBuilder.wash_margin)."""
+    cells = np.flatnonzero(where)
+    count = int(rng.poisson(recipe.per_ha * len(cells) * hf.res * hf.res / 1e4)) if len(cells) else 0
+    return _shrubs(*_scatter(hf, cells, count, rng), recipe, rng)
+
+
+def _scatter(hf, cells, count, rng):
+    """Layout (x, y) of `count` points in random cells (flat sample indices,
+    jittered within each) and a random yaw for each."""
+    picked = cells[rng.integers(0, len(cells), count)] if count else np.zeros(0, int)
+    rows, cols = np.divmod(picked, hf.n)
+    x = hf.center[0] - hf.size / 2 + (cols + rng.uniform(-0.5, 0.5, count)) * hf.res
+    y = hf.center[1] + hf.size / 2 - (rows + rng.uniform(-0.5, 0.5, count)) * hf.res
+    return x, y, rng.uniform(0, 2 * math.pi, count)
+
+
+def _shrubs(x, y, yaw, recipe, rng):
+    """Shrub Placements at (x, y, yaw): diameter and height uniform in the recipe's ranges."""
+    size = rng.uniform(*recipe.diameter_m, len(x))
+    height = rng.uniform(*recipe.height_m, len(x))
+    return [Placement(*map(float, p)) for p in zip(x, y, size, yaw, np.zeros(len(x)), height)]
 
 
 def rise_traces(hf, where, recipe, rng):

@@ -125,8 +125,9 @@ def slab_pools(worlds=tuple(SYNTHETIC)):
 
 
 def shrub_densities(world):
-    """{type: (count, expected)}: recipe shrubs against the recipe's density over the type's ground."""
-    return {key: (entry["count"], terrains.TYPES[key].clutter.shrubs.per_ha * entry["area_m2"] / 1e4)
+    """{type: (count, expected)}: recipe shrubs against the recipe's density over the type's ground (and over
+    the wash margins, "wash_margin")."""
+    return {key: (entry["count"], entry["recipe_per_ha"] * entry["area_m2"] / 1e4)
             for key, entry in sheet(world)["shrub_density"].items()}
 
 

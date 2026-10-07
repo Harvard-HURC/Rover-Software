@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Unit tests for sim/gen_model.py (no physics; pixi run sim-test)."""
 import dataclasses
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest import mock
+
+import numpy as np
+from PIL import Image
 
 from worldfiles import MODELS, gz_check, temp_sdf, vec
 
@@ -115,11 +120,16 @@ class Structure(unittest.TestCase):
 
     def test_dust_emitters(self):
         """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
-        until the drivetrain says so, an explicit topic, scatter ratio 0 (Q11)."""
+        until the drivetrain says so, an explicit topic; a white diffuse (without
+        one the particles render black) and no colour range or scatter ratio,
+        which gz-rendering 8 does not apply: the sprite carries the dust's
+        colour and opacity (DriveParams.dust_alpha)."""
         for side, s in (("left", "l"), ("right", "r")):
             emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
             self.assertEqual(emitter.findtext("emitting"), "false")
-            self.assertEqual(emitter.findtext("particle_scatter_ratio"), "0")
+            for dead in ("particle_scatter_ratio", "color_start", "color_end", "color_range_image"):
+                self.assertIsNone(emitter.find(dead), dead)
+            self.assertEqual(vec(emitter.findtext("material/diffuse")), [1.0, 1.0, 1.0, 1.0])
             topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
             self.assertEqual(emitter.findtext("topic"), topic)
             x, _, z = vec(emitter.findtext("pose"))[:3]
@@ -128,6 +138,12 @@ class Structure(unittest.TestCase):
             sprite = emitter.findtext("material/pbr/metal/albedo_map")  # the soft puff, tracked with the model
             self.assertEqual(sprite, f"model://rover/{gen_model.DUST_SPRITE}")
             self.assertTrue((MODELS / "rover" / gen_model.DUST_SPRITE).is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            gen_model.write_dust_sprite(Path(tmp) / "puff.png")
+            written = np.asarray(Image.open(Path(tmp) / "puff.png"))
+        np.testing.assert_array_equal(np.asarray(Image.open(MODELS / "rover" / gen_model.DUST_SPRITE)), written)
+        self.assertAlmostEqual(written[..., 3].max() / 255, 0.72 * P.drive.dust_alpha, delta=0.02)
+        np.testing.assert_array_equal(written[64, 64, :3], np.round(np.array(terrains.DUST_RGB) * 255))
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:

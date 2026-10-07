@@ -31,6 +31,7 @@ from urc import appearance, dem, features, geo, landscape, lighting, meshes, ter
 from urc import sheet as sheets  # noqa: E402
 from urc.media import Media  # noqa: E402
 from urc.missions import COURSES, MISSIONS, delivery, proving_ground  # noqa: E402
+from urc import world as world_module  # noqa: E402
 from urc.world import COLLIDING, MAX_SINKAGE, ROCK_BURY, SLAB_BURY, Layer, WorldBuilder, add_relief, site  # noqa: E402
 
 TARGETS = Path(landscape.RELIEF_DIR).parent / "research" / "terrain_targets.json"
@@ -202,13 +203,11 @@ class Catalogue(unittest.TestCase):
         median, p10 and p90 darker and lighter (design 5.7)."""
         p = terrains.Palette.survey(terrains.MUNSELL["sheppard"], terrains.NAIP["sheppard"],
                                     terrains.WINDOWS["sand_sheet_D"])
-        base, munsell, naip = (terrains._lab(c)
+        base, munsell, naip = (textures.srgb_to_lab(c)
                                for c in (p.base, terrains.MUNSELL["sheppard"], terrains.NAIP["sheppard"]))
         self.assertAlmostEqual(base[0], naip[0], delta=1.0)
         self.assertAlmostEqual(math.atan2(base[2], base[1]), math.atan2(munsell[2], munsell[1]), delta=0.05)
-        self.assertTrue(terrains._lab(p.p10)[0] < base[0] < terrains._lab(p.p90)[0])
-        rgb = (120, 200, 40)
-        self.assertEqual(terrains._srgb(terrains._lab(rgb)), rgb)
+        self.assertTrue(textures.srgb_to_lab(p.p10)[0] < base[0] < textures.srgb_to_lab(p.p90)[0])
         for kind in terrains.TYPES.values():
             self.assertEqual(len(kind.appearance.palette.base), 3, kind.key)
 
@@ -485,10 +484,12 @@ class GroundWorld(unittest.TestCase):
 
 class LookedWorld(unittest.TestCase):
     """A small world built as the missions are: paint rules and relief, a
-    colour map with detail layers, the far field, the mission sun, and the
-    ground's own clutter by the recipes (slabs, risers, gravel, shrubs) and
-    pebbles."""
+    colour map with detail layers, the far field, the mission sun, a wash,
+    and the ground's own clutter by the recipes (slabs, risers, gravel,
+    shrubs, the wash's margin shrubs) and pebbles."""
     MESA = features.Mesa("mesa", 20.0, 20.0, 9.0, 6.0, 8.0, seed=2)
+    WASH = features.Wash("wash", ((-64.0, -45.0), (-30.0, -38.0), (0.0, -55.0), (40.0, -60.0)), depth=1.0,
+                         half_width=3.0, sand_step=20.0, sand_radius=2.5)
     PAINT = [landscape.Base("regolith"), landscape.Hills((MESA,), slope="badland_slope", cap="caprock"),
              landscape.Below("caprock", "block_field", reach_m=15.0)]
     TEXELS = 256
@@ -501,16 +502,18 @@ class LookedWorld(unittest.TestCase):
         X, _ = hf.grid()
         hf.z = 0.05 * X
         cls.MESA.shape(hf)
-        add_relief(hf, cls.PAINT, pads=[(0.0, 0.0, 5.0)], seed=1)
+        cls.WASH.shape(hf)
+        add_relief(hf, cls.PAINT, (cls.WASH,), pads=[(0.0, 0.0, 5.0)], seed=1)
         w = WorldBuilder("looked", "Looked", None, geo.Origin(38.4, -110.79, 1350.0), hf, d / "models",
                          d / "worlds", Media(d / "models"), seed=1, name="looked", solver="pgs")
         w.paint(cls.PAINT)
         w.terrain(texels=cls.TEXELS, cap=5.0)
         w.zone("sand", terrains.SAND_SHEET, -25.0, -25.0, 12.0)
+        features.dress(w, [cls.WASH])
         w.rover(0.0, 0.0, 0.0)
         w.clutter(within=w.near([(0.0, 0.0, 60.0)]), avoid=w.keep_clear(), clearance=2.0, rock_sizes=(0.15, 0.3),
-                  shrubs_3d=w.near([(-25.0, -25.0, 6.0)]))
-        w.pebbles([(0.0, 0.0, 8.0)], budget=500)
+                  shrubs_3d=w.near([(-25.0, -25.0, 6.0), (0.0, -55.0, 12.0)]))
+        w.pebbles([(0.0, 0.0, 8.0), (-25.0, -25.0, 4.0)], budget=500)
         cls.w = w
         cls.world_path, sheet_path = w.write()
         cls.sheet = json.loads(sheet_path.read_text())
@@ -594,18 +597,72 @@ class LookedWorld(unittest.TestCase):
             self.assertTrue(any(name.startswith(prefix) for prefix in info["prefixes"]), name)
 
     def test_slabs_lie_in_the_ground(self):
-        """Each slab stands on the ground under it, part of it sunk (its base
-        SLAB_BURY of its thickness below the ground at its lowest corner),
-        its top above it; the sheet keeps the size-frequency per type."""
+        """Each slab stands on the ground under it, part of it sunk (no edge
+        of its base above the ground, the whole SLAB_BURY of its thickness
+        lower), its top above it: a tilt buries the far edge, and is capped
+        before that takes the top under (world.slab_tilt; at a 30 deg tilt
+        37-40 % of the slabs' tops went partly under). The sheet keeps the
+        size-frequency per type."""
         shift = np.array(self.w.shift)
         slabs = self.w._pieces["slabs"]
         self.assertGreater(len(slabs), 10)
+        tops = []
         for piece in slabs:
             V = piece.V + shift
             depth = self.w.height(V[:, 0], V[:, 1]) - V[:, 2]
             self.assertGreater(depth.max(), 0.0)  # sunk
             self.assertLess(depth.min(), 0.0)  # and standing out
+            T = V[piece.visual]
+            normal = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+            up = normal[:, 2] / np.linalg.norm(normal, axis=1) > 0.9  # the top face
+            top = T[up].reshape(-1, 3)
+            tops.append(np.mean(top[:, 2] < self.w.height(top[:, 0], top[:, 1]) - 0.01))
+        self.assertLess(np.mean(np.array(tops) > 0), 0.05, "slabs with part of their top under the ground")
         self.assertIn("block_field", self.sheet["slabs"]["slabs"]["by_type"])
+        self.assertEqual(world_module.slab_tilt(0.5, 1.0, 0.4), math.atan2(0.4, 1.0) - math.asin(
+            (SLAB_BURY + world_module.SLAB_EXPOSED) * 0.4 / math.hypot(0.4, 1.0)))
+        self.assertEqual(world_module.slab_tilt(0.05, 1.0, 0.4), 0.05)
+
+    def test_pebbles_stand_on_the_drawn_ground(self):
+        """Pebbles are visual only and stand on the visual surface, sunk
+        PEBBLE_SINK of their height into it: on the sand sheet (1.5 cm of
+        sinkage carve) as on regolith, nearly every one shows (on the carved
+        surface 87-94 % lay under the drawn sand)."""
+        shift = np.array(self.w.shift)
+        pebbles = self.w._pieces["pebbles"]
+        sand = self.w.legend.index("sand_sheet")
+        shows, on_sand = [], 0
+        for piece in pebbles:
+            V = piece.V + shift
+            x, y = V[:, :2].mean(axis=0)
+            on_sand += self.w.ground_map()[self.w._samples([(x, y)])][0] == sand
+            shows.append((V[:, 2] > self.w.height(V[:, 0], V[:, 1])).any())
+        self.assertGreater(on_sand, 20)
+        self.assertGreater(np.mean(shows), 0.95)
+
+    def test_wash_margin_shrubs(self):
+        """The wash's banks grow the tall wash-margin shrubs (terrains.
+        WASH_SHRUBS, 0.5-2.5 m, design 5.5) at their density, whatever ground
+        is painted there; meshes where asked, dots elsewhere."""
+        entry = self.sheet["shrub_density"]["wash_margin"]
+        expected = terrains.WASH_SHRUBS.per_ha * entry["area_m2"] / 1e4
+        self.assertGreater(expected, 20)
+        self.assertLess(abs(entry["count"] - expected), 4 * math.sqrt(expected) + 1)
+        path, inner, outer = self.WASH.margin()
+        tall = []
+        for piece in self.w._pieces["shrubs"]:
+            V = piece.V + np.array(self.w.shift)
+            x, y = V[:, :2].mean(axis=0)
+            if np.ptp(V[:, 2]) > 0.45:
+                tall.append(terrain.path_distance(path, x, y)[0])
+        self.assertTrue(tall, "no tall shrub mesh")
+        self.assertTrue(all(inner - 1.5 <= d <= outer + 1.5 for d in tall), tall)
+
+    def test_sheet_names_every_ground_type(self):
+        """terrain_types holds the traction of every type on the ground map,
+        painted or zone, so the sheet answers for any point."""
+        self.assertLessEqual(set(self.sheet["terrain"]["ground_share"]), set(self.sheet["terrain_types"]))
+        self.assertIn("regolith", self.sheet["terrain_types"])
 
     def test_shrubs_as_meshes_or_dots(self):
         """Recipe shrubs on the sand sheet: meshes where asked, the rest dots
@@ -625,6 +682,32 @@ class LookedWorld(unittest.TestCase):
         relief = self.sheet["terrain"]["sources"]["relief"]
         self.assertIn("badland", relief)
         self.assertTrue(all(isinstance(v, list) for v in relief.values()))
+
+
+class Risers(unittest.TestCase):
+    def test_ledges_not_walls(self):
+        """Risers on level and on gently sloping slickrock are buried behind
+        their face: only the face's top edge stands proud of the ground (a
+        quarter of a strip's vertices), never the back too, as a
+        free-standing wall's would (on level benches the back stood 0.4-0.5 m
+        proud, measured in Delivery and Astrobiology)."""
+        for grade in (0.0, 0.05):
+            with self.subTest(grade=grade), tempfile.TemporaryDirectory() as d:
+                d = Path(d)
+                hf = terrain.Heightfield(128.0, 257)
+                _, Y = hf.grid()
+                hf.z = grade * (Y + 64.0)
+                w = WorldBuilder("risers", "Risers", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
+                                 d / "worlds", Media(d / "models"), seed=3, name="risers")
+                w.paint([landscape.Base("slickrock")])
+                w.terrain([Layer("slickrock")])
+                w.clutter(shrubs=False)
+                risers = w._pieces["risers"]
+                self.assertGreater(len(risers), 5)
+                for piece in risers:
+                    V = piece.V + np.array(w.shift)
+                    proud = V[:, 2] - w.height(V[:, 0], V[:, 1]) > 0.05
+                    self.assertLess(proud.mean(), 0.3)
 
 
 class SinkagePhysics(unittest.TestCase):

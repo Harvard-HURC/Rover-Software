@@ -70,6 +70,8 @@ SYSTEMS = (
 CHUNK = 128.0  # [m] clutter is merged into one mesh per square this size and kind
 ROCK_BURY = 0.08  # rocks sink this fraction of their size below the ground under their base
 SLAB_BURY = 0.15  # slabs sink this fraction of their height (design 5.5)
+SLAB_EXPOSED = 0.2  # a tilted slab's top stays this fraction of its thickness above the ground at its buried
+# edge (A): tilted further, the buried edge took the top face under the ground (37-40 % of slabs did)
 SLAB_COLLIDE = 0.15  # [m] slabs this wide and wider collide (design 5.5)
 SHRUB_SINK = 0.05  # [m] a shrub's origin below the ground
 PEBBLE_SINK = 0.35  # pebbles sink this fraction of their height (M: render prototype)
@@ -97,6 +99,16 @@ def site(lat, lon, paths=dem.SITE_DEMS):
     WGS84 height that NavSat and a receiver report), so that every world's
     altitudes are ellipsoidal alike. paths: the DEMs to read."""
     return geo.Origin(lat, lon, dem.site_altitude(lat, lon, paths))
+
+
+def slab_tilt(tilt, span, height):
+    """The tilt [rad] a slab of `span` [m] across its tilt axis and `height`
+    keeps: at most `tilt`, and no more than leaves its top SLAB_EXPOSED of
+    its height above flat ground at the edge _lay buries (that edge sinks
+    span sin t, the slab SLAB_BURY more: span sin t + (SLAB_BURY +
+    SLAB_EXPOSED) h <= h cos t)."""
+    limit = math.atan2(height, span) - math.asin((SLAB_BURY + SLAB_EXPOSED) * height / math.hypot(height, span))
+    return min(tilt, max(limit, 0.0))
 
 
 def garden_spacing(size):
@@ -192,6 +204,7 @@ class WorldBuilder:
         self._raster = None  # the ground raster, painted when first needed (ground_map)
         self._carved = None  # the collision surface with sinkage, a layout Heightfield
         self._dips = np.zeros_like(hf.z)  # [m] the collision heightmap under surface meshes (surface_mesh)
+        self._margins = []  # (polyline, inner, outer, terrains.Shrubs): where wash-margin shrubs grow
         self._setup()
 
     # --- Coordinates -----------------------------------------------------------------
@@ -270,7 +283,7 @@ class WorldBuilder:
 
     # --- Terrain ---------------------------------------------------------------------
 
-    def terrain(self, layers=None, details=None, cap=None, strata=None, orthophoto=None, real=False, sources=None,
+    def terrain(self, layers=None, details=None, cap=None, strata=None, orthophoto=None, sources=None,
                 texels=COLOUR_TEXELS):
         """The terrain model (heightmap, GeoTIFF DEM, ground map, colour map,
         far field) at the world origin; write() writes its files.
@@ -282,9 +295,8 @@ class WorldBuilder:
         orthophoto (a NAIP GeoTIFF), draped from the imagery, de-shaded
         (appearance.ortho_colour_map). Over it at most three shared detail
         layers: `details` (appearance.DetailLayer), default detail_layers(cap).
-        real: the terrain is the DEM itself (Autonomy), which the far
-        field continues as it is; synthetic terrain gets its seam sunk under
-        it (farfield.build). sources: provenance for the sheet.
+        The far field's seam sinks under the terrain's edge (farfield.build).
+        sources: provenance for the sheet.
 
         layers: height-banded textures instead of a colour map (Layer, at most
         four: Ogre-Next Terra has four detail maps and drops the rest), the
@@ -319,7 +331,7 @@ class WorldBuilder:
         self._terrain = (name, root, link)
         self._heightmaps = (collision, visual)
         self._look = None if layers else dict(details=details, cap=cap, strata=strata, orthophoto=orthophoto,
-                                              real=real, texels=texels)
+                                              texels=texels)
         self._sources = sources
         self.include(name, "terrain", (0, 0, 0), world=True)
 
@@ -392,10 +404,11 @@ class WorldBuilder:
             discs = [(*self.to_world(x, y, 0.0)[:2], d) for x, y, d in self._shrub_discs]
             ortho = appearance.ortho_colour_map(look["orthophoto"], self.origin, self.hf.size, n, dem_hf=surface,
                                                 units=units, inpaint_mask=appearance.disc_mask(discs, self.hf.size, n))
-            colour = ortho.rgb
+            colour = appearance.tint_zones(ortho.rgb, self._zone_texels(n), self.legend.types, self.hf.size)
             self.sheet["terrain"]["orthophoto"] = {
                 "source": os.path.relpath(look["orthophoto"], self.worlds_dir),
                 "inpainted_share": round(float(ortho.inpainted.mean()), 4),
+                "zone_tint": appearance.ZONE_TINT,
                 "fitted_sun": {"elevation_deg": round(ortho.sun.elevation_deg, 2),
                                "azimuth_deg": round(ortho.sun.azimuth_deg, 2)}}
         else:
@@ -414,6 +427,14 @@ class WorldBuilder:
                                                          else {})) for d in details],
             colour_clipped=round(layers.clipped, 4))
 
+    def _zone_texels(self, n):
+        """The ground type index of every texel of an n x n colour map where a
+        zone changed the paint rules' ground (nearest sample), -1 elsewhere."""
+        painted = landscape.paint(self.hf, self.paint_rules, (), self.legend)
+        index = np.clip(np.floor((np.arange(n) + 0.5) / n * (self.hf.n - 1) + 0.5).astype(int), 0, self.hf.n - 1)
+        ground, base = (r[np.ix_(index, index)] for r in (self.ground_map(), painted))
+        return np.where(ground != base, ground.astype(np.int32), -1)
+
     def _soil_units(self, n):
         """SSURGO map unit of every texel of an n x n colour map (deshade
         fits NAIP's shading per unit), from the soil map the paint rules
@@ -428,8 +449,7 @@ class WorldBuilder:
     def _write_farfield(self):
         """The far field (farfield.build, design D14): the real landscape
         out to 40 km, its seam sunk under the terrain's edge."""
-        name = farfield.build(self.models_dir, self.media, f"urc_farfield_{self.key}", self.origin, self.hf.size,
-                              terrain=None if self._look["real"] else self.surface())
+        name = farfield.build(self.models_dir, self.media, f"urc_farfield_{self.key}", self.origin, self.surface())
         self.include(name, "farfield", (0, 0, 0), world=True)
 
     # --- Ground ------------------------------------------------------------------------
@@ -484,6 +504,8 @@ class WorldBuilder:
                                      ground_legend=os.path.relpath(directory / "ground.json", self.worlds_dir),
                                      ground_share={self.legend[i].key: round(float(s), 4)
                                                    for i, s in enumerate(share) if s > 0})
+        for i in np.flatnonzero(share):  # the painted types too, not only the zones'
+            self._type_entry(self.legend[int(i)])
 
     # --- Zones -------------------------------------------------------------------------
 
@@ -522,7 +544,8 @@ class WorldBuilder:
         return zone
 
     def _type_entry(self, kind):
-        """The sheet's terrain_types entry of a ground type: its traction (under terrains.DIG) and notes."""
+        """The sheet's terrain_types entry of a ground type: its traction (under terrains.DIG) and notes. Every
+        type a zone declares or the ground map holds has one."""
         traction = terrains.traction(kind)
         self.sheet.setdefault("terrain_types", {})[kind.key] = dict(
             title=kind.title, mu_s=traction.mu_s, mu_k=traction.mu_k, climb_deg=round(traction.climb_deg, 1),
@@ -633,6 +656,20 @@ class WorldBuilder:
 
     # --- Clutter: rocks, slabs, risers, shrubs, pebbles --------------------------------------
 
+    def wash_margin(self, path, inner, outer, recipe):
+        """The margins of a wash (features.Wash): the bands from `inner` to
+        `outer` metres either side of the layout polyline `path`, where the
+        Shrubs `recipe` grows (design 5.5, D10: 0.5-2.5 m tall on the
+        lidar's cutbanks), not a ground type of their own: clutter() places
+        them, imaged_shrubs() sizes the shrubs found there by it."""
+        self._margins.append((tuple(map(tuple, path)), inner, outer, recipe))
+
+    def _in_margins(self):
+        """[(boolean grid of a wash margin's band, its Shrubs recipe)] on the heightmap's samples."""
+        canvas = landscape.Canvas(self.hf, self.legend)
+        return [(canvas.stroke(path, outer) & ~canvas.stroke(path, inner), recipe)
+                for path, inner, outer, recipe in self._margins]
+
     def near(self, spots=(), paths=()):
         """A boolean grid on the heightmap's samples: within radius of the
         layout points spots [(x, y, radius)] or half_width of the polylines
@@ -663,7 +700,8 @@ class WorldBuilder:
         ranges (rocks: the clutter budget; slabs: real-DEM worlds take
         0.15-1 m, design D9). Groups "slabs", "risers" and "gravel" in the
         sheet, with the slabs' size-frequency per ground type (clutter_report)
-        and the shrubs' density."""
+        and the shrubs' density, with the wash margins' (wash_margin) as
+        "wash_margin"."""
         raster = self.ground_map()
         rng = np.random.default_rng([self.seed, 2])  # its own stream: the world's other placements do not move it
 
@@ -681,9 +719,16 @@ class WorldBuilder:
         if not shrubs:
             return
         placed = place("shrubs")
-        self.sheet["shrub_density"] = {
-            key: dict(entry, per_ha=round(entry["count"] / entry["area_m2"] * 1e4, 1))
-            for key, entry in self.clutter_report(placed, np.ones(raster.shape, bool), sizes=False).items()}
+        density = {key: dict(entry, recipe_per_ha=self.legend[self.legend.index(key)].clutter.shrubs.per_ha)
+                   for key, entry in self.clutter_report(placed, np.ones(raster.shape, bool), sizes=False).items()}
+        for band, recipe in self._in_margins():
+            margin = landscape.place_shrubs(self.hf, band & allowed, recipe, rng)
+            entry = density.setdefault("wash_margin", {"area_m2": 0.0, "count": 0, "recipe_per_ha": recipe.per_ha})
+            entry["area_m2"] = round(entry["area_m2"] + float(np.count_nonzero(band & allowed)) * self.hf.res ** 2, 1)
+            entry["count"] += len(margin)
+            placed += margin
+        self.sheet["shrub_density"] = {key: dict(entry, per_ha=round(entry["count"] / entry["area_m2"] * 1e4, 1))
+                                       for key, entry in density.items()}
         meshed = self._inside(within if shrubs_3d is None else shrubs_3d, [(p.x, p.y) for p in placed])
         self.shrubs([(p.x, p.y, p.size, p.height) for p, m in zip(placed, meshed) if m])
         self.shrub_dots([(p.x, p.y, p.size) for p, m in zip(placed, meshed) if not m])
@@ -731,14 +776,20 @@ class WorldBuilder:
         in layout (x, y, spot diameter)) as meshes where `within` (a boolean
         grid) holds; the rest stay in the orthophoto as they are. A spot's
         diameter includes its shadow and blur: the crown is IMAGED_CROWN of
-        it, 0.3-1.4 m, and the height the shrub recipe's of the ground under
-        it (default the sand sheet's, lidar: at most 0.3 m on the plain)."""
+        it, 0.3-1.4 m, and the height that of the wash-margin recipe on a
+        wash's margin (wash_margin), else the shrub recipe's of the ground
+        under it (default the sand sheet's, lidar: at most 0.3 m on the
+        plain)."""
         rng = np.random.default_rng([self.seed, rng_seed])
         meshed = [s for s, m in zip(detected, self._inside(within, [(x, y) for x, y, _ in detected])) if m]
-        under = self.ground_map()[self._samples([(x, y) for x, y, _ in meshed])] if meshed else []
+        samples = self._samples([(x, y) for x, y, _ in meshed]) if meshed else (np.zeros(0, int),) * 2
+        under = self.ground_map()[samples]
+        margin = [None] * len(meshed)
+        for band, recipe in self._in_margins():
+            margin = [m or (recipe if inside else None) for m, inside in zip(margin, band[samples])]
         out = []
-        for (x, y, d), index in zip(meshed, under):
-            recipe = self.legend[int(index)].clutter.shrubs or terrains.SAND_SHRUBS
+        for (x, y, d), index, beside in zip(meshed, under, margin):
+            recipe = beside or self.legend[int(index)].clutter.shrubs or terrains.SAND_SHRUBS
             crown = float(np.clip(d * rng.uniform(*IMAGED_CROWN), 0.3, 1.4))
             out.append((x, y, crown, float(rng.uniform(*recipe.height_m))))
         self.shrubs(out)
@@ -782,8 +833,9 @@ class WorldBuilder:
         """Orientation (3x3) and layout z of a shape whose base vertices
         `base` (its own frame, origin at the base) go at layout (x, y): yawed,
         tilted `tilt` [rad] about its own x axis, laid on the plane of the
-        ground under it, at the height where its lowest base vertex touches
-        the ground."""
+        ground under it, as low as keeps every base vertex at or under the
+        ground: the one standing highest above the ground touches it, so no
+        edge floats (and a tilt buries the far edge)."""
         Rz = np.array(sdf.rpy_to_matrix(tilt, 0.0, yaw))
         P = base @ Rz.T
         A = np.column_stack([P[:, :2], np.ones(len(P))])
@@ -795,9 +847,11 @@ class WorldBuilder:
     def slabs(self, name, placements):
         """Tabular blocks (design 5.5): landscape.Placement of slabs (size: the
         equivalent diameter D, height: the thickness) as meshes.slab
-        variants, tilted on the ground under them and sunk SLAB_BURY of their
-        height; those SLAB_COLLIDE wide and wider collide. Colours: VARNISHED
-        of them the varnish palette, the rest fresh sandstone. Counted in the
+        variants, tilted on the ground under them (_lay) and sunk SLAB_BURY
+        of their height; those SLAB_COLLIDE wide and wider collide. A tilt
+        buries the slab's far edge by its span x sin(tilt), so it is capped
+        where the top would go under there (slab_tilt). Colours: VARNISHED of
+        them the varnish palette, the rest fresh sandstone. Counted in the
         sheet's slabs[name]."""
         colliding = 0
         for p in placements:
@@ -805,7 +859,7 @@ class WorldBuilder:
             V, F = meshes.slab(variant)
             scale = np.array([p.size, p.size, p.height / meshes.SLAB_HEIGHT])
             base = V[V[:, 2] <= 1e-9] * scale
-            R, z = self._lay(base, p.x, p.y, p.yaw, p.tilt)
+            R, z = self._lay(base, p.x, p.y, p.yaw, slab_tilt(p.tilt, np.ptp(base[:, 1]), p.height))
             palette = terrains.ROCKS["varnish" if self.rng.uniform() < terrains.VARNISHED else "fresh_sandstone"]
             color = tuple(palette[int(self.rng.integers(len(palette)))])
             xyz = np.array(self.to_world(p.x, p.y, z - SLAB_BURY * p.height))
@@ -818,8 +872,9 @@ class WorldBuilder:
 
     def risers(self, name, risers):
         """Sub-metre ledges along contours (design 5.5): landscape.Riser as
-        meshes.riser_strip on the ground, the face downhill; they collide.
-        Counted in the sheet's risers[name] with their total length."""
+        meshes.riser_strip on the ground, the face downhill and the back
+        buried in the ground behind it; they collide. Counted in the sheet's
+        risers[name] with their total length."""
         length = 0.0
         for r in risers:
             path = np.asarray(r.path, float)
@@ -832,7 +887,8 @@ class WorldBuilder:
                 path = path[::-1]  # the ground must rise on the left: the face looks downhill
             z = self.height(path[:, 0], path[:, 1])
             world = np.column_stack([path - self.shift[:2], z - self.shift[2]])
-            V, F = meshes.riser_strip(world, r.height, r.depth, seed=int(self.rng.integers(1 << 30)))
+            V, F = meshes.riser_strip(world, r.height, r.depth, self._world_height,
+                                      seed=int(self.rng.integers(1 << 30)))
             palette = terrains.ROCKS["varnish" if self.rng.uniform() < terrains.VARNISHED else "fresh_sandstone"]
             self._pieces["risers"].append(Piece(V, F, F, tuple(palette[int(self.rng.integers(len(palette)))])))
             length += float(np.sum(np.linalg.norm(np.diff(path, axis=0), axis=1)))
@@ -840,18 +896,24 @@ class WorldBuilder:
         group["count"] += len(risers)
         group["length_m"] = round(group["length_m"] + length, 1)
 
+    def _world_height(self, x, y):
+        """height() in the world frame: the visual surface at world (x, y)."""
+        return self.height(x + self.shift[0], y + self.shift[1]) - self.shift[2]
+
     def shrubs(self, shrubs):
         """Desert shrubs: visual only (the rover drives through brush), each a
         meshes.shrub_lowpoly variant in a terrains.SHRUBS colour, merged by
-        write() like the rocks (a model each cost ~3 us per step). shrubs:
-        layout (x, y), or (x, y, diameter, height) [m] (default
-        terrains.MISSION_SHRUB). The sheet counts them."""
+        write() like the rocks (a model each cost ~3 us per step), standing
+        SHRUB_SINK into the visual surface (height(): the collision surface
+        lies the sinkage below it). shrubs: layout (x, y), or (x, y,
+        diameter, height) [m] (default terrains.MISSION_SHRUB). The sheet
+        counts them."""
         for s in shrubs:
             x, y, d, h = s if len(s) == 4 else (*s, *terrains.MISSION_SHRUB)
             V, F = meshes.shrub_lowpoly(int(self.rng.integers(meshes.SHRUB_VARIANTS)))
             R = np.array(sdf.rpy_to_matrix(0.0, 0.0, self.rng.uniform(0, 2 * math.pi)))
             color = tuple(terrains.SHRUBS[int(self.rng.integers(len(terrains.SHRUBS)))])
-            xyz = np.array(self.to_world(x, y, self.ground(x, y) - SHRUB_SINK))
+            xyz = np.array(self.to_world(x, y, self.height(x, y) - SHRUB_SINK))
             self._pieces["shrubs"].append(Piece((V * [d, d, h]) @ R.T + xyz, F, None, color))
             self._shrub_discs.append((x, y, d))
         self.sheet["shrubs"] = len(self._pieces["shrubs"])
@@ -867,8 +929,10 @@ class WorldBuilder:
         radius)] (layout: round starts and targets): per square metre the
         recipe's (count, median diameter) pairs, log-normal sizes, each a
         meshes.pebble variant in a terrains.PEBBLE_COLOURS colour, sunk
-        PEBBLE_SINK; thinned evenly when the discs would hold more than
-        `budget` (+130 MB per 20,000, M: render prototype)."""
+        PEBBLE_SINK into the visual surface (height(): on the carved collision
+        surface 87-94 % of them lay under the drawn sand, measured); thinned
+        evenly when the discs would hold more than `budget` (+130 MB per
+        20,000, M: render prototype)."""
         rng = np.random.default_rng([self.seed, 3])
         area = self.near(spots)
         expected = sum(count for count, _ in density) * area.sum() * self.hf.res ** 2
@@ -882,7 +946,7 @@ class WorldBuilder:
             x = self.hf.center[0] - self.hf.size / 2 + (cols + rng.uniform(-0.5, 0.5, k)) * self.hf.res
             y = self.hf.center[1] + self.hf.size / 2 - (rows + rng.uniform(-0.5, 0.5, k)) * self.hf.res
             d = d50 * np.exp(rng.normal(0, 0.5, k))
-            z = self.ground(x, y)
+            z = self.height(x, y)
             for i in range(k):
                 V, F = meshes.pebble(int(rng.integers(meshes.PEBBLE_VARIANTS)), 1 if d[i] > 0.04 else 0)
                 scale = d[i] * np.array([rng.uniform(0.7, 1.3), rng.uniform(0.7, 1.3), rng.uniform(0.5, 1.0)])
@@ -960,16 +1024,6 @@ class WorldBuilder:
         boulders at several places along a cliff, talus round each hill."""
         return [rock for x, y, radius in spots
                 for rock in self.scatter(count, (x, y), radius, sizes, avoid, clearance, min_slope)]
-
-    def scatter_points(self, count, center, radius, avoid=(), clearance=3.0):
-        """Random layout (x, y) in a disc (shrubs): scatter()'s placements without the sizes."""
-        return [(x, y) for x, y, _, _ in self.scatter(count, center, radius, (1.0, 1.0), avoid, clearance)]
-
-    def points_along(self, path, step, jitter):
-        """Layout (x, y) every `step` metres along a polyline, each moved by a
-        normal `jitter` [m] (shrubs along a wash)."""
-        return [(x + self.rng.normal(0, jitter), y + self.rng.normal(0, jitter))
-                for x, y in terrain.resample(path, step)]
 
     def rock_garden(self, name, x, y, length, width, size, yaw=0.0, spacing=None, avoid=(), clearance=1.0):
         """A dense plot of rocks of about one size, to work the rocker, as rock

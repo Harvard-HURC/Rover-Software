@@ -58,6 +58,9 @@ SUN_FIT_SLOPE = 10.0  # [deg] the sun's azimuth is fitted on steeper ground, whe
 SHADOW_COS = 0.05  # cos(illumination) at or below this: self-shadowed (A)
 DESHADE_LIMITS = (0.5, 2.0)  # the C-correction factor is clipped to this (A: steep, nearly unlit ground)
 INPAINT_RADIUS_PX = 3
+ZONE_TINT = 0.6  # a mission zone's palette covers this much of the orthophoto inside it (A)
+ZONE_FEATHER_M = 1.0  # [m] Gaussian sigma of a zone's edge in the orthophoto (A)
+ZONE_TEXTURE_M = 4.0  # [m] the orthophoto's light and shade under a zone's colour, against this blur (A)
 NAIP2024_ACQUIRED = datetime.date(2024, 7, 6)  # sim/data/imagery/route_area_naip2024.json (quarter-quad ..._20240706)
 
 
@@ -116,28 +119,9 @@ def disc_mask(points, size, n, center=(0.0, 0.0), grow=1.0):
 
 # --- Colour --------------------------------------------------------------------------------
 
-def srgb_to_lab(rgb):
-    """CIE L*a*b* (D65) of sRGB 0-255 colours (..., 3)."""
-    lin = textures.srgb_to_linear(rgb).astype(np.float64)
-    M = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
-    xyz = lin @ M.T / np.array([0.95047, 1.0, 1.08883])
-    f = np.where(xyz > (6 / 29) ** 3, np.cbrt(xyz), xyz / (3 * (6 / 29) ** 2) + 4 / 29)
-    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
-
-
 def delta_e(a, b):
     """CIE76 colour difference between sRGB 0-255 colours."""
-    return np.linalg.norm(srgb_to_lab(a) - srgb_to_lab(b), axis=-1)
-
-
-def palette_colour(munsell_rgb, naip_rgb, saturation=1.25):
-    """A ground type's palette colour by the rule of design spec 5.7: hue and
-    saturation from the soil survey's Munsell colour (as sRGB), lightness
-    from NAIP's median, saturated like the orthophoto. Returns sRGB."""
-    hue = textures.srgb_to_linear(munsell_rgb)
-    lin = hue * textures.luminance(textures.srgb_to_linear(naip_rgb)) / textures.luminance(hue)
-    y = textures.luminance(lin)
-    return tuple(int(v) for v in textures.linear_to_srgb(y + saturation * (lin - y)))
+    return np.linalg.norm(textures.srgb_to_lab(a) - textures.srgb_to_lab(b), axis=-1)
 
 
 @dataclass(frozen=True)
@@ -169,8 +153,10 @@ def colour_map(hf, raster, types, rng, n=4096, strata=None, dots=(), dot_rgb=DOT
     Each type's colour is its palette median, mottled by noise over its
     p10-p90 range (DEFAULT_SPREAD where none is measured); type edges wander
     WARP_M from the raster's samples, so they are not grid lines, and blend
-    over EDGE_SOFTNESS_M. Palettes are final colours: the saturation boost of
-    design spec 5.7 belongs in them (palette_colour)."""
+    over EDGE_SOFTNESS_M. Palettes are final colours (terrains.Palette.survey:
+    the soil survey's hue and chroma at NAIP's lightness, which is already
+    the soil's own saturation, so design spec 5.7's x1.25 orthophoto boost
+    is not applied to them)."""
     raster = np.asarray(raster)
     assert raster.shape == hf.z.shape, "the ground raster is on the heightmap's grid"
     kinds = dict(enumerate(types)) if not isinstance(types, dict) else dict(types)
@@ -256,27 +242,6 @@ def _dot_cover(dots, size, n, center):
 
 # --- Orthophoto ----------------------------------------------------------------------------
 
-def lonlat_fit(origin: geo.Origin, size, center=(0.0, 0.0)):
-    """(x, y) world -> (lat, lon) over a square: a quadratic fit of
-    geo.enu_to_wgs84, within 1e-9 deg over 2 km (an affine map is 0.1 m off
-    at the corners: a degree of longitude shortens northwards); the same fit
-    as dem.to_heightfield's."""
-    def terms(x, y):
-        x, y = (np.asarray(x, float) - center[0]) / size, (np.asarray(y, float) - center[1]) / size
-        return np.stack([np.ones_like(x), x, y, x * x, x * y, y * y], axis=-1)
-
-    def exact(ticks):
-        xy = np.array([(center[0] + a * size, center[1] + b * size) for a in ticks for b in ticks])
-        return terms(xy[:, 0], xy[:, 1]), np.array([geo.enu_to_wgs84(origin, x, y)[:2] for x, y in xy])
-
-    coef, *_ = np.linalg.lstsq(*exact((-0.5, 0.0, 0.5)), rcond=None)
-    A, check = exact((-0.25, 0.25))
-    residual = np.abs(A @ coef - check).max()
-    if residual > 1e-9:
-        raise ValueError(f"lat/lon fit is off by {residual:.2e} deg over {size} m")
-    return lambda x, y: np.moveaxis(terms(x, y) @ coef, -1, 0)
-
-
 def resample_raster(path, origin: geo.Origin, size, n, center=(0.0, 0.0)):
     """A GeoTIFF (dem.read_raster: DEM or NAIP, every band) at the texel
     centres of an n x n map over the world square: float32 (B, n, n),
@@ -284,7 +249,7 @@ def resample_raster(path, origin: geo.Origin, size, n, center=(0.0, 0.0)):
     bands, (lon0, dlon, _, lat0, _, minus_dlat) = dem.read_raster(path)
     xs, ys = texel_centres(size, n, center)
     X, Y = np.meshgrid(xs, ys)
-    lat, lon = lonlat_fit(origin, size, center)(X, Y)
+    lat, lon = geo.lonlat_fit(origin, size, center)(X, Y)
     col = ((lon - lon0) / dlon - 0.5).astype(np.float32)
     row = ((lat - lat0) / minus_dlat - 0.5).astype(np.float32)
     if col.min() < 0 or row.min() < 0 or col.max() > bands.shape[2] - 1 or row.max() > bands.shape[1] - 1:
@@ -452,6 +417,41 @@ def ortho_colour_map(naip_path, origin: geo.Origin, size, n, dem_hf=None, units=
     grown = cv2.dilate(mask.astype(np.uint8), np.ones((3, 3), np.uint8))
     rgb = cv2.inpaint(textures.linear_to_srgb(lin), grown, INPAINT_RADIUS_PX, cv2.INPAINT_TELEA)
     return Ortho(textures.linear_to_srgb(boost.apply(textures.srgb_to_linear(rgb))), grown.astype(bool), sun)
+
+
+def tint_zones(rgb, zones, kinds, size):
+    """An orthophoto colour map (sRGB uint8, n x n x 3, over a `size` square)
+    with its mission zones showing: zones (int, n x n) is the type index
+    of every texel inside a zone and -1 outside, kinds the TerrainType of
+    each index. On real ground a mission puts its zones where its course
+    needs them, not where the imagery shows that ground, so without this a
+    clay trap beside a drive looked like the sand sheet round it and the
+    caprock rib like the slope it climbs (design 5.7: zones carry their
+    colour). Inside a zone its palette covers ZONE_TINT of the picture,
+    times the picture's own light and shade (its luminance against a
+    ZONE_TEXTURE_M blur), the edge feathered over ZONE_FEATHER_M; in linear
+    light. Only the zones' bounding box is worked on."""
+    inside = zones >= 0
+    if not inside.any():
+        return rgb
+    texel = size / rgb.shape[0]
+    pad = int(math.ceil(3 * max(ZONE_FEATHER_M, ZONE_TEXTURE_M) / texel))
+    rows, cols = np.flatnonzero(inside.any(axis=1)), np.flatnonzero(inside.any(axis=0))
+    r0, r1 = max(rows[0] - pad, 0), min(rows[-1] + pad + 1, rgb.shape[0])
+    c0, c1 = max(cols[0] - pad, 0), min(cols[-1] + pad + 1, rgb.shape[1])
+    lin = textures.srgb_to_linear(rgb[r0:r1, c0:c1])
+    window = zones[r0:r1, c0:c1]
+    palette = np.zeros(lin.shape, np.float32)
+    for index in np.unique(window[window >= 0]):
+        palette[window == index] = textures.srgb_to_linear(kinds[int(index)].appearance.palette.base)
+    alpha = cv2.GaussianBlur((window >= 0).astype(np.float32), (0, 0), ZONE_FEATHER_M / texel)
+    palette = cv2.GaussianBlur(palette, (0, 0), ZONE_FEATHER_M / texel) / np.maximum(alpha, 1e-6)[..., None]
+    y = textures.luminance(lin)
+    shade = y / np.maximum(cv2.GaussianBlur(y, (0, 0), ZONE_TEXTURE_M / texel), 1e-6)
+    a = (ZONE_TINT * alpha)[..., None]
+    out = rgb.copy()
+    out[r0:r1, c0:c1] = textures.linear_to_srgb((1 - a) * lin + a * palette * shade[..., None])
+    return out
 
 
 def detect_shrubs(naip_path, origin: geo.Origin, size, slope=None, center=(0.0, 0.0), texel_m=0.5):
