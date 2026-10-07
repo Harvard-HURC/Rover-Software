@@ -21,20 +21,35 @@
     <span id="led" class="led" title="Status LED (URC rule 1.e.ii)"></span>
     <span id="state" class="state-text">Waiting for the station</span>
   </div>
+  <div class="views" role="group" aria-label="Inspection views (simulation only)">
+    <button id="fly-button" class="view-button" type="button" title="Fly over the world (B)"><kbd>B</kbd> Fly</button>
+    <button id="map-button" class="view-button" type="button" title="The world's map (G)"><kbd>G</kbd> Map</button>
+  </div>
   <button id="control" class="control" type="button">Release to autonomy</button>
   <button id="help-button" class="help-button" type="button" aria-label="Keyboard and gamepad help">?</button>
 </header>
 
 <main class="deck">
-  <section id="view" class="view" aria-label="Camera view">
+  <section id="view" class="view" data-view="eye" aria-label="Camera view">
     <img id="main-img" class="feed" alt="" draggable="false">
+    <canvas id="map-view" class="map-view" hidden aria-label="Map of the world with the rover and the fly camera"></canvas>
     <div class="view-top">
-      <div id="view-name" class="view-name">Rover eye</div>
+      <div class="view-title">
+        <div id="view-name" class="view-name">Rover eye</div>
+        <div id="view-detail" class="view-detail"></div>
+        <div id="sim-only" class="sim-only" hidden title="At URC the operators see only what the rover sends">Sim only</div>
+      </div>
       <div id="heading" class="heading num">–</div>
-      <div id="view-hint" class="view-hint">Drag to look around, double-click to centre</div>
+      <div class="view-side">
+        <div id="view-hint" class="view-hint">Drag to look around, double-click to centre</div>
+        <div id="map-layers" class="layers" role="group" aria-label="Map layer" hidden>
+          <button class="layer" type="button" data-layer="photo">Photo</button>
+          <button class="layer" type="button" data-layer="relief">Relief</button>
+        </div>
+      </div>
     </div>
     <div id="no-picture" class="no-picture" hidden>
-      <p class="no-picture-title">No picture yet</p>
+      <p id="no-picture-title" class="no-picture-title">No picture yet</p>
       <p id="no-picture-text">Cameras render only in worlds with the Sensors system.</p>
     </div>
     <button id="focus-veil" class="focus-veil" type="button">
@@ -53,9 +68,13 @@
       </div>
       <div class="gauge">
         <div class="gauge-value"><b id="turn" class="big num">0</b><span class="unit">°/s</span></div>
-        <div class="gauge-cmd">You ask <span id="cmd-turn" class="num">0</span></div>
+        <div class="gauge-cmd">You ask <span id="cmd-turn" class="num">0</span><span id="turn-ratio" class="ratio num"></span></div>
       </div>
       <canvas id="stick" class="stick" width="72" height="72" aria-label="Commanded and measured motion"></canvas>
+      <figure id="motors-figure" class="motors" hidden>
+        <canvas id="motors" class="motors-canvas" aria-label="Motor currents of the four wheels"></canvas>
+        <figcaption>Motor current</figcaption>
+      </figure>
       <div class="presets" role="group" aria-label="Speed preset">
         <button class="preset" type="button" data-preset="1"><kbd>1</kbd><span class="num" data-speed="1"></span></button>
         <button class="preset" type="button" data-preset="2"><kbd>2</kbd><span class="num" data-speed="2"></span></button>
@@ -90,9 +109,32 @@
       </div>
     </section>
 
+    <section class="panel drivetrain" aria-labelledby="drivetrain-title">
+      <h2 id="drivetrain-title">Drivetrain</h2>
+      <dl class="readouts three">
+        <div><dt><i class="swatch asked"></i>Turn asked</dt><dd id="yaw-asked" class="num">–</dd></div>
+        <div><dt><i class="swatch got"></i>Turn got</dt><dd id="yaw-got" class="num">–</dd></div>
+        <div><dt title="Achieved over commanded yaw rate: skid-steer turns slip, more on loose ground">Got of asked</dt><dd id="yaw-ratio" class="num">–</dd></div>
+      </dl>
+      <canvas id="yaw-history" class="history-canvas" aria-label="Commanded and achieved turn rate over the last 30 seconds"></canvas>
+      <table id="motor-table" class="motor-table" hidden>
+        <thead><tr><th scope="col">Wheel</th><th scope="col">Current</th><th scope="col">Torque</th><th scope="col">Slip</th><th scope="col" title="Dig-in: how much deeper than at rest the wheel sits in loose ground">Dig</th><th scope="col">Ground</th></tr></thead>
+        <tbody id="motor-rows"></tbody>
+      </table>
+      <p id="drivetrain-note" class="note"></p>
+    </section>
+
     <section class="panel map" aria-labelledby="map-title">
-      <h2 id="map-title">Map <button id="map-zoom" class="map-zoom" type="button">Whole terrain</button></h2>
-      <canvas id="map" class="map-canvas" aria-label="Map with the rover"></canvas>
+      <h2 id="map-title">Map
+        <span class="map-tools">
+          <span id="rail-layers" class="layers small" role="group" aria-label="Map layer" hidden>
+            <button class="layer" type="button" data-layer="photo">Photo</button>
+            <button class="layer" type="button" data-layer="relief">Relief</button>
+          </span>
+          <button id="map-zoom" class="map-zoom" type="button">Whole terrain</button>
+        </span>
+      </h2>
+      <canvas id="map" class="map-canvas" aria-label="Map with the rover; click to open the map view"></canvas>
       <p id="map-note" class="note"></p>
       <dl class="readouts three">
         <div><dt>Latitude</dt><dd id="lat" class="num">–</dd></div>
@@ -128,17 +170,8 @@
           <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Look left, right, up, down</td></tr>
           <tr><td>Drag</td><td>Look around: the scene follows the pointer</td></tr>
           <tr><td><kbd>C</kbd>, double-click</td><td>Centre: ahead, slightly down</td></tr>
-          <tr><td><kbd>J</kbd> <kbd>L</kbd> <kbd>I</kbd> <kbd>K</kbd></td><td>Look left, right, up, down in any view</td></tr>
+          <tr><td><kbd>J</kbd> <kbd>L</kbd> <kbd>I</kbd> <kbd>K</kbd></td><td>Look left, right, up, down (not in Fly)</td></tr>
         </table>
-        <h3>Page</h3>
-        <table>
-          <tr><td><kbd>V</kbd></td><td>Next view: eye, chase, onboard, depth</td></tr>
-          <tr><td><kbd>P</kbd></td><td>Show or hide the small view</td></tr>
-          <tr><td><kbd>M</kbd></td><td>Map zoom</td></tr>
-          <tr><td><kbd>H</kbd></td><td>This help</td></tr>
-        </table>
-      </section>
-      <section>
         <h3>Chase view</h3>
         <table>
           <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Orbit around the rover</td></tr>
@@ -148,17 +181,53 @@
           <tr><td><kbd>F</kbd></td><td>Follow the heading or hold the view</td></tr>
           <tr><td><kbd>R</kbd>, double-click</td><td>Back behind the rover</td></tr>
         </table>
+        <h3>Page</h3>
+        <table>
+          <tr><td><kbd>V</kbd></td><td>Next driving view: eye, chase, onboard, depth</td></tr>
+          <tr><td><kbd>B</kbd> <kbd>G</kbd></td><td>Fly, Map; again for the driving view</td></tr>
+          <tr><td><kbd>P</kbd></td><td>Show or hide the small view</td></tr>
+          <tr><td><kbd>M</kbd></td><td>Zoom of the map beside</td></tr>
+          <tr><td><kbd>H</kbd></td><td>This help</td></tr>
+        </table>
+      </section>
+      <section>
+        <h3>Fly camera (sim only)</h3>
+        <table>
+          <tr><td><kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd></td><td>Forward, back, left, right</td></tr>
+          <tr><td><kbd>E</kbd> <kbd>Q</kbd></td><td>Up, down</td></tr>
+          <tr><td><kbd>Shift</kbd></td><td>Four times as fast</td></tr>
+          <tr><td><kbd>+</kbd> <kbd>−</kbd>, wheel</td><td>Faster, slower (×0.25 to ×4)</td></tr>
+          <tr><td>Arrows, <kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td><td>Look around (or drag)</td></tr>
+          <tr><td>Double-click</td><td>Fly to that spot</td></tr>
+          <tr><td><kbd>R</kbd></td><td>Back to the rover</td></tr>
+          <tr><td><kbd>F</kbd></td><td>Follow the rover (keep the offset) or stay</td></tr>
+          <tr><td><kbd>T</kbd> <kbd>C</kbd></td><td>Look straight down, look level</td></tr>
+          <tr><td><kbd>O</kbd></td><td>Orthographic or perspective</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Stop</td></tr>
+        </table>
+        <h3>Map (sim only)</h3>
+        <table>
+          <tr><td>Click</td><td>Fly the fly camera there</td></tr>
+          <tr><td>Double-click</td><td>Fly view, straight down there</td></tr>
+          <tr><td>Drag, arrows</td><td>Move the map</td></tr>
+          <tr><td>Wheel, <kbd>+</kbd> <kbd>−</kbd></td><td>Zoom</td></tr>
+          <tr><td><kbd>C</kbd></td><td>Centre on the rover</td></tr>
+        </table>
         <h3>Gamepad</h3>
         <table>
-          <tr><td>Left stick</td><td>Drive</td></tr>
-          <tr><td>Right stick</td><td>Look around or orbit (big view)</td></tr>
-          <tr><td>D-pad</td><td>Look around in any view</td></tr>
-          <tr><td>LB, RB</td><td>Zoom out, in</td></tr>
+          <tr><td>Left stick</td><td>Drive (in every view)</td></tr>
+          <tr><td>Right stick</td><td>Look around, orbit or turn the fly camera (big view)</td></tr>
+          <tr><td>D-pad</td><td>Look around (rover eye)</td></tr>
+          <tr><td>LB, RB</td><td>Zoom out, in (chase camera)</td></tr>
           <tr><td>RT, B</td><td>Fast, stop</td></tr>
-          <tr><td>X, Y</td><td>Next view, follow or hold</td></tr>
+          <tr><td>X, Y</td><td>Next driving view, follow or hold</td></tr>
         </table>
       </section>
     </div>
+    <p class="note">Fly and Map are inspection views that only the simulation has: at URC the operators see only
+      what the rover sends. In them the keyboard flies the fly camera or moves the map, and the rover holds still
+      unless a gamepad drives it. Orthographic pictures have no cast shadows, and perspective ones none from more than
+      about 500 m away.</p>
     <p class="note">The rover eye sits at the rover's camera, where its pan and tilt axes meet, and only turns there.
       The rover's camera head turns with it, so the onboard camera sees what you see (except while released to autonomy).</p>
     <p class="note">The rover stops when this page stops sending for <span id="deadman-time">0.5</span> s: closing the tab or clicking elsewhere stops it.

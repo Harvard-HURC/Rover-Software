@@ -28,7 +28,7 @@
           </image>
           <clip>
             <near>0.1</near>
-            <far>2000</far>
+            <far>80000</far>
           </clip>
         </camera>
       </sensor>
