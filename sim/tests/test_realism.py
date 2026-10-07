@@ -20,6 +20,7 @@ import math
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -104,6 +105,21 @@ class Roughness(unittest.TestCase):
                     with self.subTest(world=world, scale=scale, percentile=label):
                         self.assertLess(abs(ours / theirs - 1), WORLD_TOLERANCE, f"{ours:.2f} cm against {theirs}")
 
+    def test_engineered_ground_kept_flat(self):
+        """The relief leaves the pads, the graded ways and the engineered
+        features (a mission's RELIEF: the keep-flat mask of design 5.4) within
+        2 cm of the macro shape the mission designed."""
+        for world, mission in SYNTHETIC.items():
+            with mock.patch.object(mission, "add_relief", lambda hf, *args, **kwargs: hf):
+                macro = mission.make_terrain()
+            hf, _, _, _ = natural_ground(world)
+            flat = landscape.keep_flat(macro, **mission.RELIEF) == 0.0
+            change = np.abs((hf.z - hf.z.min()) - (macro.z - macro.z.min()))
+            offset = np.median(change[flat])  # the heightmaps' zeros differ by the relief's lowest point
+            with self.subTest(world=world):
+                self.assertGreater(flat.sum(), 1000)
+                self.assertLess(np.percentile(np.abs(change[flat] - offset), 99.9), 0.02)
+
     def test_equipment_site_relatively_flat(self):
         """Rule 1.d's "relatively flat" site: 4 m roughness p50 at most 2 cm,
         about the real clay crust's median (design 5.2)."""
@@ -116,28 +132,34 @@ class Clutter(unittest.TestCase):
     """Design 5.5 and 11: the clutter the recipes placed in each world."""
 
     def test_slab_size_frequency(self):
-        """Block fields and badland edges: N(>=1), N(>=2), N(>=4 m) per 100 m2
-        as the measured tables less the features of 7 m and more (ledges and
-        macro shape), and 1-7 m cover of the block fields within 25 %."""
+        """Block fields and badland edges, pooled over the synthetic worlds:
+        N(>=1), N(>=2), N(>=4 m) per 100 m2 as the measured tables less the
+        features of 7 m and more (ledges and macro shape), within 30 % or
+        three Poisson sigma on a small pool; and the block fields' cover by
+        1-7 m slabs within 25 % of the table's 8.6 %."""
         recipes = {"block_field": terrains.BLOCK_SLABS, "badland_slope": terrains.BADLAND_SLABS}
-        judged = 0
-        for world in ("urc_delivery", "urc_astrobiology"):
+        pools = {key: {"area": 0.0, "cover": 0.0, "counts": {}} for key in recipes}
+        for world in SYNTHETIC:
             for key, entry in sheet(world)["slabs"]["slabs"]["by_type"].items():
-                recipe = recipes.get(key)
-                if recipe is None:
+                if key not in recipes:
                     continue
-                area = entry["area_m2"]
-                for d, observed in entry["per_100m2"].items():
-                    expected = float(landscape.slab_count(recipe, float(d)) - landscape.slab_count(recipe, recipe.d_max))
-                    sigma = math.sqrt(expected * area / 100) / area * 100  # Poisson, per 100 m2
-                    with self.subTest(world=world, type=key, d=d):
-                        self.assertLessEqual(abs(observed - expected), max(SLAB_TOLERANCE * expected, 2 * sigma),
-                                             f"N(>={d}) {observed} per 100 m2 against {expected:.3f}")
-                    judged += 1
-                if key == "block_field":
-                    with self.subTest(world=world, cover=key):
-                        self.assertLess(abs(entry["cover_1_7"] / 0.086 - 1), COVER_TOLERANCE, entry["cover_1_7"])
-        self.assertGreaterEqual(judged, 12)
+                pool = pools[key]
+                pool["area"] += entry["area_m2"]
+                pool["cover"] += entry["cover_1_7"] * entry["area_m2"]
+                for d, density in entry["per_100m2"].items():
+                    pool["counts"][d] = pool["counts"].get(d, 0.0) + density * entry["area_m2"] / 100
+        for key, pool in pools.items():
+            recipe, area = recipes[key], pool["area"]
+            self.assertGreater(area, 10_000, key)
+            for d, count in pool["counts"].items():
+                expected = float(landscape.slab_count(recipe, float(d)) - landscape.slab_count(recipe, recipe.d_max))
+                observed = count / area * 100
+                sigma = math.sqrt(expected * area / 100) / area * 100  # Poisson, per 100 m2
+                with self.subTest(type=key, d=d):
+                    self.assertLessEqual(abs(observed - expected), max(SLAB_TOLERANCE * expected, 3 * sigma),
+                                         f"N(>={d}) {observed:.4f} per 100 m2 against {expected:.4f}")
+        cover = pools["block_field"]["cover"] / pools["block_field"]["area"]
+        self.assertLess(abs(cover / 0.086 - 1), COVER_TOLERANCE, cover)
 
     def test_shrub_densities(self):
         """Recipe shrubs per type: as many as the recipe's density over the

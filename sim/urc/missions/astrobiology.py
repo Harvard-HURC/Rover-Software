@@ -85,7 +85,8 @@ STRATA = {"badland_slope": appearance.Strata(bands=(terrains.NAIP["maroon"], ter
 CAPROCK_Z = 16.0  # [m] above C2: the hills' sandstone caps, where slab joints show
 STAKE_PADS = [(BOUNDARY_RADIUS * math.cos(a), BOUNDARY_RADIUS * math.sin(a), 3.0)
               for a in (2 * math.pi * k / STAKES for k in range(STAKES))]
-RELIEF = dict(features=FEATURES + BADLANDS, pads=[(*C2[:2], 15.0)] + STAKE_PADS)  # kept flat (design 5.4)
+RELIEF = dict(features=FEATURES + BADLANDS, pads=[(*C2[:2], 15.0)] + STAKE_PADS,  # kept flat (design 5.4)
+              paths=[FEATURES[0].channel_path()])  # the wash
 
 BIOCRUST_NOTES = "Cyanobacteria, lichens and mosses: the highest surface biomass on site."
 UNITS = [

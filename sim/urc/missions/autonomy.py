@@ -18,21 +18,23 @@ rover works and stay in the photo elsewhere.
 - Route-Finding, north-west: START_POST (ArUco 0) on flat ground 412 m from
   C2, in radio line of sight (1.e.xii). POST1 (ArUco 1) on the crest of a
   narrow butte, 15 m above the start. The crest is gentle (< 8 deg) for its
-  last 85 m, but its west end is reached over a rim of 18-26 deg ground,
-  which the easy route switchbacks up at 16 deg on a rib of bare caprock
-  (EASY_ROUTE_RIB): across ground that steep, packed regolith (climb 23 deg)
-  does not carry the rover. Driving straight at Post 1 the grade is 26-44
-  deg from 22 of 24 compass bearings, steeper than the bare ground lets a
-  rover climb. Boulders of the broken caprock also line the butte's rim
+  last 85 m, but its west end is reached over a rim of steep ground, which
+  the easy route climbs at 16-17 deg on a rib of bare caprock
+  (EASY_ROUTE_RIB): across ground that steep, the bare ground (the soil map's
+  sand sheet and badland slope, climb 22 deg) does not carry the rover.
+  Driving straight at Post 1 the grade is 26-46 deg from 23 of 24 compass
+  bearings (on the lidar; the last runs along the crest to where the easy
+  route climbs on). Boulders of the broken caprock line the butte's rim
   (routes.rim: round the ground reached from Post 1 on slopes up to
   RIM_SLOPE, kept clear of the easy route along the crest), too tall to
   climb (0.3 m rocks stop the rover on the proving ground) and too close
   together to pass between, everywhere but where the easy route climbs onto
   the butte: that climb is the only way up (1.e.xv: not every approach is
-  navigable); the soil map paints the faces steeper than 30 deg as rock, which
-  grips to 40 deg, so there the boulders, not the grade, stop the rover. POST2 (ArUco 2) on the plain 71 m north of Post 1, out of the
-  C2 antenna's line of sight behind the butte (1.e.xvi). judges_only holds
-  the easy route, the butte's rim and its approach grades.
+  navigable). The soil map paints faces steeper than 30 deg as rock, which
+  grips to 40 deg: there the boulders, not the grade, stop the rover. POST2
+  (ArUco 2) on the plain 71 m north of Post 1, out of the C2 antenna's line
+  of sight behind the butte (1.e.xvi). judges_only holds the easy route, the
+  butte's rim and its approach grades.
 - Astronaut Assistance, south-east of C2 on gentle ground (< 6 deg), all in
   radio line of sight: the astronaut waits at ASTRONAUT_WAIT (1.e.v); Follow!
   along FOLLOW_PATH (1.e.vi); the rock pick hammer lies at HAMMER near its end;
@@ -107,12 +109,13 @@ NORTH_WASH = [(-90.0, 462.0), (-50.0, 474.0), (0.0, 440.0), (40.0, 448.0), (100.
 CLIFF_WASH = [(0.0, 342.0), (40.0, 350.0), (80.0, 352.0), (120.0, 366.0)]  # 15-20 m out from the foot of the cliff
 WASH_STEP = 45.0  # [m]
 SLABS = [(-85.0, 342.0, 12.0), (6.0, 397.0, 4.0), (44.0, 402.0, 3.5)]  # bare caprock on the butte (x, y, radius)
-# Where the easy route climbs onto the butte, its ground is 23-26 deg steep: packed regolith (climb 23 deg) does
+# Where the easy route climbs onto the butte, its ground is 23-26 deg steep: the bare ground (climb 22-23 deg) does
 # not carry the rover up it, slantwise or straight (measured: it stalls on the rim at 24 deg pitch). So the route
 # climbs a rib of bare caprock (slickrock, climb 40 deg): patches every EASY_ROUTE_RIB[0] metres of it, radius
 # EASY_ROUTE_RIB[1], wherever the ground under it is steeper than EASY_ROUTE_RIB[2] [deg] (A: a firm rib is where
-# a route up a badland butte goes).
-EASY_ROUTE_RIB = (3.0, 3.5, 15.0)
+# a route up a badland butte goes). On the lidar the route crosses side slopes of up to 21 deg there, where a
+# turning rover slides 3-4 m downhill (measured): the rib is 12 m wide, so it slides onto rib, not off it.
+EASY_ROUTE_RIB = (3.0, 6.0, 15.0)
 
 FEATURES = [
     features.Wash("wash", NORTH_WASH, sand_step=WASH_STEP, sand_radius=7.0),  # in the DEM already: no channel
@@ -238,9 +241,9 @@ def build(models_dir, worlds_dir, media):
                 "max_slope_deg": RIM_SLOPE, "boulder_step_m": RIM_STEP, "entry": w.geo(*entry),
                 "points": [w.geo(x, y) for x, y in rim]},
         "approach_grades": {"around": "post1", "radii_m": list(APPROACH_RADII), "grade_base_m": routes.GRADE_BASE,
-                            "note": "steepest grade driving straight at Post 1 from each compass bearing; the bare "
-                                    "ground grips to about 45 deg, so the rim's boulders, not these grades, stop "
-                                    "the rover",
+                            "note": "steepest grade driving straight at Post 1 from each compass bearing; the "
+                                    "bare ground climbs 22 deg, the rock faces over 30 deg 40 deg: there the rim's "
+                                    "boulders, not these grades, stop the rover",
                             "deg_by_bearing": {str(b): round(g, 1) for b, g in zip(APPROACH_BEARINGS, approach)}},
         "washes": {"north": [w.geo(x, y) for x, y in NORTH_WASH], "cliff": [w.geo(x, y) for x, y in CLIFF_WASH]},
         "terrain_source": dict(json.loads(DEM_PATH.with_suffix(".json").read_text()),

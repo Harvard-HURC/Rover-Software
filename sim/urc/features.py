@@ -124,13 +124,25 @@ class Wash:
     def patches(self):
         return along(f"{self.key}_sand", terrains.WASH_SAND, self.path, self.sand_step, self.sand_radius, self.skip)
 
+    @property
+    def falloff(self):
+        """[m] How far its banks reach past its floor: the channel's
+        smoothstep banks are steepest at their middle, 1.5 depth / falloff."""
+        return 1.5 * self.depth / math.tan(math.radians(self.bank))
+
+    def channel_path(self):
+        """(path, half-width) of its floor and banks, as landscape.keep_flat
+        takes them: flash floods rework a wash's floor and banks, so they are
+        smoother than the slopes round them (A), and its banks stay as
+        crossable as designed."""
+        return tuple(self.path), self.half_width + self.falloff
+
     def shape(self, hf):
         if self.depth:
             if self.sand_radius > self.half_width:
                 raise ValueError(f"{self.key}: sand patches of radius {self.sand_radius} m reach past the "
                                  f"{self.half_width} m half-width of the wash floor")
-            # The channel's banks are smoothstep profiles, steepest at their middle: 1.5 depth / falloff.
-            hf.channel(self.path, self.depth, self.half_width, 1.5 * self.depth / math.tan(math.radians(self.bank)))
+            hf.channel(self.path, self.depth, self.half_width, self.falloff)
 
     def footprints(self):
         return [f for patch in self.patches for f in patch.footprints()]

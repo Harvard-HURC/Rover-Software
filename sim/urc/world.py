@@ -673,9 +673,7 @@ class WorldBuilder:
         if not placements:
             return {}
         raster = self.ground_map()
-        col, row = (np.round(landscape.Canvas(self.hf, self.legend).pixels([(p.x, p.y) for p in placements]))
-                    .astype(int).reshape(-1, 2).T)
-        under = raster[np.clip(row, 0, self.hf.n - 1), np.clip(col, 0, self.hf.n - 1)]
+        under = raster[self._samples([(p.x, p.y) for p in placements])]
         size = np.array([p.size for p in placements])
         out = {}
         for i in np.unique(under):
@@ -689,13 +687,20 @@ class WorldBuilder:
             out[self.legend[int(i)].key] = entry
         return out
 
+    def _samples(self, points):
+        """(rows, columns) of the heightmap samples nearest layout points (clamped to the grid)."""
+        p = np.asarray(points, float).reshape(-1, 2)
+        hf = self.hf
+        col = np.round((p[:, 0] - hf.center[0] + hf.size / 2) / hf.res).astype(int)
+        row = np.round((hf.center[1] + hf.size / 2 - p[:, 1]) / hf.res).astype(int)
+        return np.clip(row, 0, hf.n - 1), np.clip(col, 0, hf.n - 1)
+
     def _inside(self, grid, points):
         """Whether each layout point lies on a True sample of a boolean grid
         on the heightmap's samples (nearest sample; every point for None)."""
         if grid is None or not len(points):
             return np.ones(len(points), bool)
-        col, row = np.round(landscape.Canvas(self.hf, self.legend).pixels(points)).astype(int).T
-        return np.asarray(grid, bool)[np.clip(row, 0, self.hf.n - 1), np.clip(col, 0, self.hf.n - 1)]
+        return np.asarray(grid, bool)[self._samples(points)]
 
     def imaged_shrubs(self, detected, within, rng_seed=4):
         """Shrubs found in a world's imagery (appearance.detect_shrubs, here
@@ -705,15 +710,11 @@ class WorldBuilder:
         it, 0.3-1.4 m, and the height the shrub recipe's of the ground under
         it (default the sand sheet's, lidar: at most 0.3 m on the plain)."""
         rng = np.random.default_rng([self.seed, rng_seed])
-        raster = self.ground_map()
-        meshed = self._inside(within, [(x, y) for x, y, _ in detected])
+        meshed = [s for s, m in zip(detected, self._inside(within, [(x, y) for x, y, _ in detected])) if m]
+        under = self.ground_map()[self._samples([(x, y) for x, y, _ in meshed])] if meshed else []
         out = []
-        for (x, y, d), m in zip(detected, meshed):
-            if not m:
-                continue
-            col, row = np.round(landscape.Canvas(self.hf, self.legend).pixels([(x, y)])[0]).astype(int)
-            recipe = self.legend[int(raster[min(max(row, 0), self.hf.n - 1),
-                                            min(max(col, 0), self.hf.n - 1)])].clutter.shrubs or terrains.SAND_SHRUBS
+        for (x, y, d), index in zip(meshed, under):
+            recipe = self.legend[int(index)].clutter.shrubs or terrains.SAND_SHRUBS
             crown = float(np.clip(d * rng.uniform(*IMAGED_CROWN), 0.3, 1.4))
             out.append((x, y, crown, float(rng.uniform(*recipe.height_m))))
         self.shrubs(out)

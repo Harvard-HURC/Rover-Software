@@ -101,7 +101,8 @@ PADS = [(*C2[:2], 30.0), (*GATE, 4.0), (*TOOLBOX, 5.0), (*ASTRONAUT_A, 4.0), (*A
         (*ASTRONAUT_C, 4.0), (*SPECTROMETER, 3.0),
         (*SAND_FLAT, 14.0)]  # x, y, radius: kept flat (design 5.4); the sand flat too, which a dune of the sand's
 # lidar relief would make a 15-25 deg slope (measured)
-RELIEF = dict(features=FEATURES + BADLANDS, pads=PADS, paths=[(tuple(RIDGE_PASS), 7.0)])  # kept flat (design 5.4)
+RELIEF = dict(features=FEATURES + BADLANDS, pads=PADS,  # kept flat (design 5.4): pads, the ridge pass, the wash
+              paths=[(tuple(RIDGE_PASS), 7.0), next(f for f in FEATURES if f.key == "wash").channel_path()])
 COURSE = [GATE, TOOLBOX, ASTRONAUT_A, WATER_JUG, ASTRONAUT_B, SUPPLY_CRATE, CRATE_HILL, FIELD_SIGN, INSTRUMENT_CASE,
           FIRST_AID, RIDGE_PASS[0], RIDGE_PASS[1], ASTRONAUT_C, SPECTROMETER]  # the legs, in task order
 COURSE_GRAVEL = 15.0  # [m] gravel lies within this of the course (A: the clutter budget, design D10)
