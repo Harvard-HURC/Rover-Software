@@ -101,12 +101,11 @@ class Terrain(unittest.TestCase):
     def test_strip_follows_its_profile(self):
         hf = terrain.Heightfield(64, 513)
         segments = ((5.0, 0.0), (10.0, 10.0), (5.0, -10.0))
-        self.assertEqual(terrain.kinks(segments), [5.0, 15.0])
         hf.strip((-20.0, 3.0), 0.0, 4.1, segments, falloff=2.0)
         t = math.tan(math.radians(10))
         for u, z in ((2.5, 0.0), (10.0, 5 * t), (15.0, 10 * t), (17.5, 7.5 * t), (21.0, 5 * t)):
             self.assertAlmostEqual(hf.height(-20.0 + u, 3.0), z, delta=0.002 if u < 20 else 5 * t, msg=u)
-        # On its profile out to its very edge, here between two rows of samples (tiles need that).
+        # On its profile out to its very edge, here between two rows of samples.
         self.assertAlmostEqual(hf.height(-12.43, 3.0 + 2.04), 2.57 * t, delta=1e-9)
         cell = hf.res * math.sqrt(2)
         self.assertEqual(hf.height(-10.0, 3.0 + 2.05 + cell + 2.0 + hf.res), 0.0)  # beyond the falloff: untouched
@@ -252,12 +251,12 @@ class Meshes(unittest.TestCase):
             P = np.array([(1, 0, 0), (0, 1, 0), (0.5, -0.7, 0)]) @ R.T
             np.testing.assert_allclose(P[:, 2], gx * P[:, 0] + gy * P[:, 1], atol=1e-12)
 
-    def test_shrub_sits_on_its_origin(self):
+    def test_shrub_fills_a_unit_crown_on_its_origin(self):
         for variant in range(meshes.SHRUB_VARIANTS):
-            V, F = meshes.shrub(variant)
-            self.assertGreaterEqual(len(F), 6 * len(meshes.hull_faces(1)))  # at least six clumps
-            self.assertTrue(-0.05 <= V[:, 2].min() <= 0.05)
-            self.assertLess(np.abs(V[:, :2]).max(), 1.0)
+            V, F = meshes.shrub_lowpoly(variant)
+            self.assertGreaterEqual(len(F), 6 * len(meshes.hull_faces(0)))  # at least six clumps
+            np.testing.assert_allclose(V.min(axis=0), (-0.5, -0.5, 0.0), atol=1e-9)
+            np.testing.assert_allclose(V.max(axis=0), (0.5, 0.5, 1.0), atol=1e-9)
 
     def test_quad_faces_plus_x(self):
         V, F, N, UV = meshes.quad()
@@ -267,19 +266,13 @@ class Meshes(unittest.TestCase):
         self.assertTrue(np.all(np.sign(UV[:, 0] - 0.5) == np.sign(V[:, 1])))
         self.assertTrue(np.all(np.sign(UV[:, 1] - 0.5) == np.sign(V[:, 2])))
 
-    def test_drape_follows_terrain(self):
-        hf = terrain.Heightfield(64, 129)
-        X, Y = hf.grid()
-        hf.z = 0.2 * X
-        V, F, UV = meshes.drape(hf, 5, -3, 4, seed=1, offset=0.03)
-        np.testing.assert_allclose(V[:, 2], 0.2 * (V[:, 0] + 5) + 0.03, atol=1e-9)
-        self.assertLessEqual(np.hypot(V[:, 0], V[:, 1]).max(), 4 + 1e-9)
-        face_n = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
-        self.assertTrue(np.all(face_n[:, 2] > 0))  # facing up
+    def test_obj_has_a_normal_and_uv_per_vertex(self):
+        V, F, _, UV = meshes.quad()
         with tempfile.TemporaryDirectory() as d:
             meshes.write_obj(Path(d) / "m.obj", V, F, UV=UV)
             text = (Path(d) / "m.obj").read_text()
         self.assertEqual(text.count("\nvn "), len(V))
+        self.assertEqual(text.count("\nvt "), len(V))
         self.assertIn("/", text.split("\nf ")[1])
 
 

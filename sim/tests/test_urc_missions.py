@@ -12,7 +12,7 @@ import numpy as np
 from worldfiles import WORLDS, gz_check, model_root, rock_vertices, sheet, terrain as world_terrain, vec
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import dem, lander, props, routes, rules, sdf, terrain, terrains  # noqa: E402
+from urc import dem, lander, landscape, props, routes, rules, sdf, terrain, terrains  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.missions import MISSIONS, autonomy, delivery  # noqa: E402
 
@@ -51,6 +51,15 @@ def mass(model):
     return sum(float(m.text) for m in model.iter("mass"))
 
 
+def grade(hf, x, y, base=routes.GRADE_BASE):
+    """Steepest slope [deg] at (x, y) over a `base`-metre span: the slope a
+    rover feels (routes.GRADE_BASE), not that of the 0.5 m micro-relief."""
+    h = base / 2
+    gx = (hf.height(x + h, y) - hf.height(x - h, y)) / base
+    gy = (hf.height(x, y + h) - hf.height(x, y - h)) / base
+    return np.degrees(np.arctan(np.hypot(gx, gy)))
+
+
 def climb_limits(world, x, y):
     """The steepest slope [deg] the rover climbs at world points (x, y): the
     climb angle of the ground there (the world's ground map, ground.json:
@@ -61,9 +70,9 @@ def climb_limits(world, x, y):
 
 
 class Autonomy(unittest.TestCase):
-    """The Autonomy world on the real terrain (USGS 3DEP DEM of the square
-    mile). The rules are checked on the terrain the world ships (the sheet's
-    heightmap, world coordinates): the DEM as it is."""
+    """The Autonomy world on the real terrain (the USGS 0.5 m lidar DEM of
+    the square mile). The rules are checked on the terrain the world ships
+    (the sheet's heightmap, world coordinates): the DEM as it is."""
 
     ROCK_STOP = 0.25  # [m] the rover crosses 0.2 m rocks, 0.3 m ones stop it (proving ground)
     ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width / 2  # [m] over the wheels
@@ -164,7 +173,7 @@ class Autonomy(unittest.TestCase):
         self.assertTrue(3.0 <= math.hypot(hammer["x"] - end["x"], hammer["y"] - end["y"]) <= 5.0)
         antenna = tuple(c2["antenna"][k] for k in ("x", "y", "z"))
         for x, y in terrain.resample(follow + [self.xy(stay_to)], 2.0):
-            self.assertLessEqual(self.terrain.slope_deg(x, y), 8.0, (x, y))
+            self.assertLessEqual(grade(self.terrain, x, y), 8.0, (x, y))
             self.assertTrue(sheets.radio_los(self.terrain, antenna, x, y, self.terrain.height(x, y)), (x, y))
 
     def test_ar_posts(self):
@@ -210,7 +219,6 @@ class Autonomy(unittest.TestCase):
         zones = self.sheet["terrain_zones"]
         washes = [[self.xy(p) for p in wash] for wash in self.sheet["judges_only"]["washes"].values()]
         easy = [self.xy(p) for p in self.sheet["judges_only"]["easy_route"]["points"]]
-        caprock = next(layer.start for layer in autonomy.LAYERS if layer.name == "caprock")
         c2_z = self.sheet["c2"]["z"]
         self.assertEqual({z["type"] for z in zones.values()}, {"sand", "scree", "gravel", "clay", "slickrock"})
         rib = [key for key in zones if key.startswith("easy_route_rib_")]
@@ -226,7 +234,7 @@ class Autonomy(unittest.TestCase):
                 self.assertLess(self.distance(easy, c["x"], c["y"]), 0.5, key)
                 self.assertGreater(slope, autonomy.EASY_ROUTE_RIB[2], key)
             elif zone["type"] == "slickrock":
-                self.assertGreater(c["z"] - c2_z, caprock, key)
+                self.assertGreater(c["z"] - c2_z, autonomy.CAPROCK_Z, key)
             else:
                 self.assertLess(slope, 10.0, key)
         bare = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
@@ -354,29 +362,41 @@ class Delivery(unittest.TestCase):
 
     def test_wash_can_be_driven_into_and_out_of(self):
         """D6's spectrometer lies in the wash and the way to the ridge pass
-        crosses it: across the wash its banks stay below the 23 deg the
-        bare ground climbs (features.WASH_BANK plus the terrain's own slope),
-        except where it cuts through the ridge."""
+        crosses it: every 20 m along the wash, except where it cuts through
+        the ridge, a line straight across it within 8 m stays below the 23
+        deg the bare ground climbs (features.WASH_BANK plus the terrain's own
+        slope and its micro-relief), grades taken over 2 m (a rover's
+        length)."""
         hf = world_terrain("urc_delivery")
         wash = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["wash"]]
         ridge = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["ridge"]]
         points = terrain.resample(wash, 20.0)
         climb = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        span = 4  # samples of the 0.5 m profile: 2 m
         crossings = 0
         for a, b, c in zip(points, points[1:], points[2:]):
             if terrain.path_distance(ridge, *b)[0] < 76.0:  # the ridge reaches 46 m out, the profile 30 m
                 continue
-            n = np.array([a[1] - c[1], c[0] - a[0]]) / math.dist(a, c)
-            profile = [hf.height(*(b + u * n)) for u in np.arange(-30.0, 30.01, 0.5)]
-            self.assertLess(np.degrees(np.arctan(np.abs(np.diff(profile)) / 0.5)).max(), climb, tuple(b))
+            t = (c - a) / math.dist(a, c)
+            n = np.array([-t[1], t[0]])
+            steepest = []
+            for offset in np.arange(-8.0, 8.01, 2.0):
+                profile = np.array([hf.height(*(b + offset * t + u * n)) for u in np.arange(-30.0, 30.01, 0.5)])
+                steepest.append(np.degrees(np.arctan(np.abs(profile[span:] - profile[:-span]) / 2.0)).max())
+            self.assertLess(min(steepest), climb, tuple(b))
             crossings += 1
         self.assertGreater(crossings, 20)
 
     def test_terrain_gets_harder(self):
+        """1.c.ii: the ground gets harder with distance from the start: its
+        slopes (over the 2 m the paint rules judge) and its micro-relief."""
         hf = delivery.make_terrain()
-        near = hf.slope_map()[hf.radial(0, 0) < 150]
-        far = hf.slope_map()[(hf.radial(0, 0) > 450) & (hf.radial(0, 0) < 700)]
-        self.assertGreater(np.percentile(far, 90), 2 * np.percentile(near, 90))
+        r = hf.radial(0, 0)
+        slope = terrain.slope_map(hf.z, hf.res, landscape.SLOPE_SMOOTH)
+        self.assertGreater(np.percentile(slope[(r > 450) & (r < 700)], 90), 2 * np.percentile(slope[r < 150], 90))
+        rms = landscape.window_rms(hf.z, hf.res, 4.0)
+        centre = landscape.windows(r, int(round(4.0 / hf.res))).mean(axis=1)
+        self.assertGreater(np.median(rms[(centre > 450) & (centre < 700)]), 1.5 * np.median(rms[centre < 150]))
 
 
 class Astrobiology(unittest.TestCase):

@@ -9,19 +9,23 @@ its lowest point. WorldBuilder takes layout coordinates everywhere and writes
 world coordinates; the sheet reports world coordinates (what Gazebo's ground
 truth and the referee use) and WGS84.
 
-Everything a world is built from is shared: ground types, rock and shrub
-colours and the ground textures (terrains.py, urc_media), terrain features
-(features.py, terrain.py), and here zones, rocks (scatter, scatter_each,
-rock_garden, rock_field), blocks, shrubs, signs and stations. A mission
-module only says where and how much. A world's own model holds only what is
-unique to it: its heightmaps, ground map, zone decal meshes and merged rock
-and shrub meshes.
+Everything a world is built from is shared: ground types and their recipes
+(terrains.py: traction, palette, relief, clutter), terrain features
+(features.py, terrain.py), paint rules and clutter placement (landscape.py),
+colour maps and detail layers (appearance.py), the far field (farfield.py),
+the light of the mission date (lighting.py), meshes and textures (meshes.py,
+textures.py, urc_media), and here zones, rocks, slabs, risers, shrubs,
+pebbles, blocks, signs and stations. A mission module only says where and
+how much. A world's own models hold only what is unique to it: its
+heightmaps, ground map, colour map, merged clutter meshes and far field.
 
 Gazebo spends time on every shape every step, touched or not: measured on
 the proving ground, 0.56-0.83 us per collision and 0.1-0.18 us per visual
 per 1 ms step (400 extra static boxes in the terrain link, out of reach).
 Static shapes therefore go in the terrain's own link, merged where they can
-be (a body never collides with itself, which keeps them off the broadphase).
+be (a body never collides with itself, which keeps them off the broadphase):
+one mesh per CHUNK square and kind of clutter. Visuals are binary glTF (gate
+G3: 0.41x the memory of OBJ), one primitive per colour; collisions are OBJ.
 
 The ground: every world paints a ground raster (landscape.paint: its paint
 rules, default DEFAULT_GROUND everywhere, then its zones) and writes it
@@ -29,9 +33,11 @@ next to the heightmap as ground.png, with ground.json (legend, traction,
 and the collision map naming the ground type of every other shape of the
 terrain model), for the drivetrain, the sheet readers and the map: the
 rover's drivetrain takes the friction of every wheel contact from them
-(design D1). The collision heightmap is the visual one carved down by each
-type's static sinkage (SINKAGE: the wheels sit 2-3 cm into sand), each PNG
-normalised to its own maximum, and objects stand on the carved surface.
+(design D1). The same raster colours the terrain (appearance.colour_map,
+Terra's layer 0, design D11) and says where clutter lies (landscape.place).
+The collision heightmap is the visual one carved down by each type's static
+sinkage (SINKAGE: the wheels sit 2-3 cm into sand), each PNG normalised to
+its own maximum, and objects stand on the carved surface.
 
 Physics: DART at 1 ms steps, its LCP solver chosen per world (design D4;
 gates G2 and G5 in sim/data/research): PGS gives each wheel mu times its own
@@ -50,7 +56,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import dem, geo, landscape, meshes, props, rules, sdf, sheet, terrain, terrains
+from . import appearance, dem, farfield, geo, landscape, lighting, meshes, props, rules, sdf, sheet, terrain, terrains
 
 SYSTEMS = (
     ("gz-sim-physics-system", "gz::sim::systems::Physics", {}),
@@ -61,14 +67,25 @@ SYSTEMS = (
     ("gz-sim-sensors-system", "gz::sim::systems::Sensors", {"render_engine": "ogre2"}),
     ("gz-sim-particle-emitter-system", "gz::sim::systems::ParticleEmitter", {}),  # the drivetrain's wheel dust
 )
-ROCK_CHUNK = 128.0  # [m] rocks and shrubs are merged into one mesh per square this size
+CHUNK = 128.0  # [m] clutter is merged into one mesh per square this size and kind
 ROCK_BURY = 0.08  # rocks sink this fraction of their size below the ground under their base
+SLAB_BURY = 0.15  # slabs sink this fraction of their height (design 5.5)
+SLAB_COLLIDE = 0.15  # [m] slabs this wide and wider collide (design 5.5)
 SHRUB_SINK = 0.05  # [m] a shrub's origin below the ground
+PEBBLE_SINK = 0.35  # pebbles sink this fraction of their height (M: render prototype)
+IMAGED_CROWN = (0.45, 0.7)  # a shrub's crown / its NAIP dark spot's diameter (M: render prototype, by eye on NAIP)
 ZONE_OUTLINE_POINTS = 64  # most outline vertices a zone records in the sheet
 SINKAGE = True  # carve the collision heightmap by each ground type's static sinkage (design 5.8)
 SINKAGE_EASE = 0.75  # [m] the carve eases in over this inside its type (A: design 0.5-1 m)
 MAX_SINKAGE = max(t.traction.sinkage_m for t in terrains.TYPES.values())  # [m] world z = 0 lies this far below
 # the lowest point when sinkage is on, so that any carve fits above it
+COLOUR_TEXELS = 4096  # colour map size (design 5.7: 0.5 m per texel at 2 km, 6.25 cm at 256 m)
+CAP_DETAIL = 0.47  # weight slab joints fade in to at the terrain's top, above a world's cap height (M: prototype)
+# How each kind of merged clutter looks: roughness (A: matte) and whether it casts shadows (pebbles do not: 20,000
+# tiny shadows cost frame time and are not seen, M: render prototype).
+STYLE = {"rocks": (0.9, True), "slabs": (0.85, True), "risers": (0.9, True), "shrubs": (0.95, True),
+         "pebbles": (0.9, False)}
+COLLIDING = ("rocks", "slabs", "risers")  # kinds with collisions (landscape.PREFIXES names their ground)
 
 
 def site(lat, lon, paths=dem.SITE_DEMS):
@@ -84,11 +101,28 @@ def garden_spacing(size):
     return 0.7 + 3 * size
 
 
+def add_relief(hf, rules, features=(), pads=(), paths=(), seed=0, within=None):
+    """A synthetic world's micro-relief (design 5.4) added to hf in place:
+    the paint rules and the features' footprints say which ground lies where
+    (landscape.paint), each type's recipe what relief it carries
+    (landscape.relief), kept off engineered ground (landscape.keep_flat:
+    features' keep_flat outlines, pads [(x, y, radius)], paths [(polyline,
+    half_width)]) and, with `within` (a weight grid in [0, 1]), off
+    everything outside it. Returns hf."""
+    raster = landscape.paint(hf, rules, features)
+    keep = landscape.keep_flat(hf, features, pads, paths)
+    if within is not None:
+        keep = keep * within
+    hf.z += landscape.relief(hf, raster, keep, seed=seed)
+    return hf
+
+
 @dataclass
 class Layer:
     """The terrains.TYPES ground `name` as a terrain texture, used from layout
     height z = start upwards and blended in over `fade` metres (the first
-    layer covers everything below)."""
+    layer covers everything below): the fallback of a terrain without a
+    colour map (WorldBuilder.terrain)."""
     name: str
     start: float = 0.0
     fade: float = 1.0
@@ -97,6 +131,17 @@ class Layer:
     @property
     def kind(self):
         return terrains.TYPES[self.name]
+
+
+@dataclass
+class Piece:
+    """One piece of merged clutter: its vertices in world coordinates, the
+    faces of its visual and, if it collides, of its collision mesh (indices
+    into the same vertices), and its colour (linear RGB)."""
+    V: np.ndarray
+    visual: np.ndarray
+    collision: np.ndarray
+    color: tuple
 
 
 class WorldBuilder:
@@ -119,6 +164,7 @@ class WorldBuilder:
         self.worlds_dir = Path(worlds_dir)
         self.media = media
         self.solver = solver
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.root = sdf.model_root("unused")[0]
         self.root.remove(self.root.find("model"))
@@ -130,9 +176,12 @@ class WorldBuilder:
                       "points": {}, "objects": {}, "tasks": []}
         self._antenna = None
         self._terrain = None
+        self._look = None  # how terrain() asked the ground to look (write() makes it)
         self.zones = []
         self._rocks = []  # (world xyz, size, variant, orientation, rgb, collides), merged by write()
-        self._shrubs = []  # (world xyz, variant, orientation, rgb), merged by write()
+        self._pieces = defaultdict(list)  # clutter kind -> [Piece], merged by write()
+        self._shrub_discs = []  # layout (x, y, diameter) of the shrubs with meshes
+        self._dots = []  # world (x, y, diameter) of shrubs drawn into the colour map, not as meshes
         self._placed = {}  # model name -> layout (x, y): sinking zones may not be declared under them later
         self.legend = landscape.Legend()
         self.paint_rules = [landscape.Base(terrains.DEFAULT_GROUND)]
@@ -173,9 +222,16 @@ class WorldBuilder:
         return {"x": round(wx, 3), "y": round(wy, 3), "z": round(wz, 3), "lat": round(lat, 8),
                 "lon": round(lon, 8), "alt": round(alt, 2)}
 
+    def surface(self):
+        """The visual terrain in the world frame, as Gazebo draws it: centred
+        on the origin, z from the heightmap's zero."""
+        return terrain.Heightfield(self.hf.size, self.hf.n, self.hf.z - self.shift[2])
+
     # --- World basics -------------------------------------------------------------
 
     def _setup(self):
+        """Physics, systems, the scene and the sun of the mission date
+        (lighting.MISSION, design D13), and the world's WGS84 frame."""
         w = self.world
         sdf.physics(w, 0.001, 1.0, self.solver)
         self.sheet["physics"] = {
@@ -185,17 +241,18 @@ class WorldBuilder:
         for filename, name, params in SYSTEMS:
             sdf.plugin(w, filename, name, **params)
         scene = sdf.sub(w, "scene")
-        sdf.sub(scene, "ambient", (0.5, 0.48, 0.46, 1))
-        sdf.sub(scene, "background", (0.62, 0.74, 0.9, 1))
+        sdf.sub(scene, "ambient", (*lighting.AMBIENT, 1))
+        sdf.sub(scene, "background", (*lighting.BACKGROUND, 1))
         sdf.sub(scene, "grid", False)
         sdf.sub(scene, "shadows", True)
-        sdf.sub(scene, "sky")
+        sdf.sub(scene, "sky")  # the patched media draw the clear desert sky and haze (lighting.SKY, design D12)
         sun = sdf.sub(w, "light", type="directional", name="sun")
         sdf.sub(sun, "cast_shadows", True)
         sdf.pose(sun, (0, 0, 100))
-        sdf.sub(sun, "diffuse", (1.0, 0.96, 0.9, 1))
-        sdf.sub(sun, "specular", (0.3, 0.3, 0.3, 1))
-        sdf.sub(sun, "direction", (-0.45, 0.35, -0.82))
+        sdf.sub(sun, "diffuse", (*lighting.MISSION.colour, 1))
+        sdf.sub(sun, "specular", (*lighting.SUN_SPECULAR, 1))
+        sdf.sub(sun, "intensity", lighting.MISSION.intensity)
+        sdf.sub(sun, "direction", tuple(round(v, 4) for v in lighting.MISSION.direction))
         sph = sdf.sub(w, "spherical_coordinates")
         sdf.sub(sph, "surface_model", "EARTH_WGS84")
         sdf.sub(sph, "world_frame_orientation", "ENU")
@@ -203,14 +260,32 @@ class WorldBuilder:
         sdf.sub(sph, "longitude_deg", self.origin.lon)
         sdf.sub(sph, "elevation", self.origin.alt)
         sdf.sub(sph, "heading_deg", 0.0)
+        self.sheet["light"] = {"sun_elevation_deg": round(lighting.MISSION.elevation_deg, 2),
+                               "sun_azimuth_deg": round(lighting.MISSION.azimuth_deg, 2),
+                               "when": f"{lighting.MISSION_DATE} {lighting.MISSION_TIME.strftime('%H:%M')} MDT"}
 
     # --- Terrain ---------------------------------------------------------------------
 
-    def terrain(self, layers):
-        """The terrain model (heightmap, GeoTIFF DEM, textures) at the world origin.
-        At most four layers: Gazebo's ogre2 terrain (Ogre-Next Terra) has four
-        detail maps and silently drops the rest. write() writes the heightmap."""
-        assert 1 <= len(layers) <= 4, "ogre2 heightmaps blend at most four textures"
+    def terrain(self, layers=None, details=None, cap=None, strata=None, orthophoto=None, real=False, sources=None,
+                texels=COLOUR_TEXELS):
+        """The terrain model (heightmap, GeoTIFF DEM, ground map, colour map,
+        far field) at the world origin; write() writes its files.
+
+        The ground looks like its ground raster (design D11): a colour map of
+        texels x texels, Terra's layer 0, baked from each type's palette
+        (appearance.colour_map; strata: {type key: appearance.Strata} for
+        the banded types, default badland banding on badland slopes) or, with
+        orthophoto (a NAIP GeoTIFF), draped from the imagery, de-shaded
+        (appearance.ortho_colour_map). Over it at most three shared detail
+        layers: `details` (appearance.DetailLayer), default detail_layers(cap).
+        real: the terrain is the DEM itself (Autonomy), which the far
+        field continues as it is; synthetic terrain gets its seam sunk under
+        it (farfield.build). sources: provenance for the sheet.
+
+        layers: height-banded textures instead of a colour map (Layer, at most
+        four: Ogre-Next Terra has four detail maps and drops the rest), the
+        fallback for small test worlds."""
+        assert layers is None or 1 <= len(layers) <= 4, "ogre2 heightmaps blend at most four textures"
         name = f"urc_terrain_{self.key}"
         shutil.rmtree(self.models_dir / name, ignore_errors=True)  # all generated here
         (self.models_dir / name / "meshes").mkdir(parents=True)
@@ -222,26 +297,26 @@ class WorldBuilder:
         sdf.sub(vis, "cast_shadows", False)
         visual = sdf.sub(sdf.sub(vis, "geometry"), "heightmap")
         sdf.sub(visual, "use_terrain_paging", False)
-        for layer in layers:
+        for layer in layers or ():
             t = sdf.sub(visual, "texture")
             sdf.sub(t, "diffuse", layer.kind.texture(self.media))
             sdf.sub(t, "normal", layer.kind.normal(self.media))
             sdf.sub(t, "size", layer.tile)
-        for layer in layers[1:]:
+        for layer in (layers or ())[1:]:
             b = sdf.sub(visual, "blend")
             sdf.sub(b, "min_height", layer.start - self.shift[2])
             sdf.sub(b, "fade_dist", layer.fade)
-        # Ground beyond the heightmap: a horizon to look at and a floor that
-        # catches anything driven off the edge. The floor is a box: an infinite
-        # plane's bounding box overlaps every shape and costs a broadphase pair
-        # each step.
-        sdf.visual(link, "horizon", sdf.plane((8000, 8000)), (0, 0, -0.3),
-                   tuple(0.8 * c / 255 for c in layers[0].kind.rgb), cast_shadows=False)
+        # A floor that catches anything driven off the edge (the far field is
+        # what is seen there): a box, as an infinite plane's bounding box
+        # overlaps every shape and costs a broadphase pair each step.
         floor = sdf.collision(link, "floor", sdf.box((8000, 8000, 1.0)), (0, 0, -2.5))
         self._surfaces[floor.get("name")] = None  # the world's base ground, known at write()
-        # Zones, blocks and decals join this link, rocks and shrubs in write().
+        # Blocks join this link, clutter in write().
         self._terrain = (name, root, link)
         self._heightmaps = (collision, visual)
+        self._look = None if layers else dict(details=details, cap=cap, strata=strata, orthophoto=orthophoto,
+                                              real=real, texels=texels)
+        self._sources = sources
         self.include(name, "terrain", (0, 0, 0), world=True)
 
     def _write_terrain(self):
@@ -255,7 +330,7 @@ class WorldBuilder:
         the highest point included, stays exact."""
         name = self._terrain[0]
         directory = self.models_dir / name
-        surface = terrain.Heightfield(self.hf.size, self.hf.n, self.hf.z - self.shift[2])
+        surface = self.surface()
         z_max = float(surface.z.max())
         surface.write_png(directory / "heightmap.png", 0.0, z_max)
         dem.write_geotiff(surface, directory / "dem.tif", self.origin)
@@ -263,8 +338,11 @@ class WorldBuilder:
         self.sheet["terrain"] = {"heightmap": rel(directory / "heightmap.png"),
                                  "dem_geotiff": rel(directory / "dem.tif"), "size_m": self.hf.size,
                                  "samples": self.hf.n, "z_max": round(z_max, 4),
-                                 "note":"heightmap.png: 16-bit, centred on the world origin, row 0 north, "
+                                 "note": "heightmap.png: 16-bit, centred on the world origin, row 0 north, "
                                          "column 0 west; z = pixel / 65535 * z_max"}
+        sources = self._sources or self._relief_sources()
+        if sources:
+            self.sheet["terrain"]["sources"] = sources
         collision = ("heightmap.png", z_max)
         if self.sinkage:
             carved = terrain.Heightfield(self.hf.size, self.hf.n, surface.z - self.carve())
@@ -275,6 +353,79 @@ class WorldBuilder:
         for element, (png, top) in zip(self._heightmaps, (collision, ("heightmap.png", z_max))):
             sdf.sub(element, "uri", sdf.model_uri(name, png))
             sdf.sub(element, "size", (self.hf.size, self.hf.size, top))
+
+    def _relief_sources(self):
+        """Where a synthetic world's micro-relief comes from: the lidar
+        windows of the relief swatches of the types it paints (design 5.4)."""
+        present = np.unique(self.ground_map())
+        keys = sorted({self.legend[i].relief.swatch for i in present if self.legend[i].relief.swatch})
+        return {"relief": {key: landscape.swatch(key).source for key in keys}} if keys else None
+
+    def detail_layers(self, cap=None):
+        """The world's detail layers (appearance.DetailLayer, design 5.7):
+        gravel lag and cracked silt at nearly constant weights everywhere
+        (appearance.DEFAULT_DETAILS: Terra weights by height only, so a
+        detail cannot follow the ground types), then slab joints fading in
+        above the layout height `cap` (caprock tops)."""
+        out = list(appearance.DEFAULT_DETAILS)
+        if cap is not None:
+            out.append(appearance.DetailLayer("slab_joints", CAP_DETAIL, above=cap - self.shift[2]))
+        return out
+
+    def _write_colour(self):
+        """The colour map (Terra's layer 0) and its detail layers on the
+        visual heightmap (appearance.terra_layers: the map pre-compensated so
+        that the render shows it plus zero-mean detail), and the shrubs that
+        have no mesh drawn into it as dots."""
+        look = self._look
+        name = self._terrain[0]
+        directory = self.models_dir / name
+        surface = self.surface()
+        n = look["texels"]
+        if look["orthophoto"]:
+            units = self._soil_units(n)
+            discs = [(*self.to_world(x, y, 0.0)[:2], d) for x, y, d in self._shrub_discs]
+            ortho = appearance.ortho_colour_map(look["orthophoto"], self.origin, self.hf.size, n, dem_hf=surface,
+                                                units=units, inpaint_mask=appearance.disc_mask(discs, self.hf.size, n))
+            colour = ortho.rgb
+            self.sheet["terrain"]["orthophoto"] = {
+                "source": os.path.relpath(look["orthophoto"], self.worlds_dir),
+                "inpainted_share": round(float(ortho.inpainted.mean()), 4),
+                "fitted_sun": {"elevation_deg": round(ortho.sun.elevation_deg, 2),
+                               "azimuth_deg": round(ortho.sun.azimuth_deg, 2)}}
+        else:
+            strata = look["strata"] if look["strata"] is not None else {"badland_slope": appearance.Strata()}
+            colour = appearance.colour_map(surface, self.ground_map(), self.legend.types,
+                                           np.random.default_rng([self.seed, 1]), n=n, strata=strata,
+                                           dots=self._dots)
+        details = look["details"] if look["details"] is not None else self.detail_layers(look["cap"])
+        layers = appearance.terra_layers(colour, surface, details, self.media)
+        Image.fromarray(layers.layer0).save(directory / "colour.png", compress_level=1)
+        layers.write(self._heightmaps[1], sdf.model_uri(name, "colour.png"), self.media.flat_normal(),
+                     self.hf.size)
+        self.sheet["terrain"].update(
+            colour_map=os.path.relpath(directory / "colour.png", self.worlds_dir), colour_texels=n,
+            details=[dict(key=d.key, weight=d.weight, **({"above_z": round(d.above, 3)} if d.above is not None
+                                                         else {})) for d in details],
+            colour_clipped=round(layers.clipped, 4))
+
+    def _soil_units(self, n):
+        """SSURGO map unit of every texel of an n x n colour map (deshade
+        fits NAIP's shading per unit), from the soil map the paint rules
+        name, else one unit."""
+        soils = next((rule for rule in self.paint_rules if isinstance(rule, landscape.Soils)), None)
+        if soils is None:
+            return None
+        found, _ = soils.unit_map(landscape.Canvas(self.hf, self.legend))
+        index = np.clip(np.floor((np.arange(n) + 0.5) / n * (self.hf.n - 1) + 0.5).astype(int), 0, self.hf.n - 1)
+        return found[np.ix_(index, index)].astype(np.int32)
+
+    def _write_farfield(self):
+        """The far field (farfield.build, design D14): the real landscape
+        out to 40 km, its seam sunk under the terrain's edge."""
+        name = farfield.build(self.models_dir, self.media, f"urc_farfield_{self.key}", self.origin, self.hf.size,
+                              terrain=None if self._look["real"] else self.surface())
+        self.include(name, "farfield", (0, 0, 0), world=True)
 
     # --- Ground ------------------------------------------------------------------------
 
@@ -322,26 +473,29 @@ class WorldBuilder:
             collisions[key] = self._surfaces[key] or base
         info = landscape.ground_json(self.legend, self.hf.size, self.hf.n, base, collisions)
         (directory / "ground.json").write_text(json.dumps(info, indent=1) + "\n")
+        raster = self.ground_map()
+        share = np.bincount(raster.ravel(), minlength=len(self.legend)) / raster.size
         self.sheet["terrain"].update(ground_map=os.path.relpath(directory / "ground.png", self.worlds_dir),
-                                     ground_legend=os.path.relpath(directory / "ground.json", self.worlds_dir))
+                                     ground_legend=os.path.relpath(directory / "ground.json", self.worlds_dir),
+                                     ground_share={self.legend[i].key: round(float(s), 4)
+                                                   for i, s in enumerate(share) if s > 0})
 
     # --- Zones -------------------------------------------------------------------------
 
     def zone(self, key, kind, x, y, radius, irregularity=0.3):
         """A zone of terrain type `kind` (terrains.TYPES): an irregular patch
         up to `radius` around layout (x, y). It paints the ground raster,
-        which tells the drivetrain how the ground grips, and has a decal.
-        Declare zones before placing anything on them: a zone whose ground
-        sinks moves the ground under what stands there (place() sets objects
-        on the carved ground)."""
+        which tells the drivetrain how the ground grips and the colour map
+        how it looks. Declare zones before placing anything on them: a zone
+        whose ground sinks moves the ground under what stands there (place()
+        sets objects on the carved ground)."""
         seed = int(self.rng.integers(1 << 30))
         return self._add_zone(terrains.blob(key, kind, x, y, radius, seed, irregularity))
 
-    def zone_rect(self, key, kind, x, y, length, width, yaw=0.0, breaks=()):
+    def zone_rect(self, key, kind, x, y, length, width, yaw=0.0):
         """A rectangular zone (test lanes, aprons): `length` along yaw, `width`
-        across, centred on layout (x, y); `breaks`: distances from its start
-        where the ground has a kink (the decal follows it there)."""
-        return self._add_zone(terrains.rect(key, kind, x, y, length, width, yaw, breaks))
+        across, centred on layout (x, y)."""
+        return self._add_zone(terrains.rect(key, kind, x, y, length, width, yaw))
 
     def _add_zone(self, zone):
         assert self._terrain is not None, "terrain() first"
@@ -352,32 +506,22 @@ class WorldBuilder:
                 if terrains.inside(zone.outline, x, y):
                     raise ValueError(f"zone {zone.key} would sink the ground under {name}, which was placed "
                                      "before it")
-        model, _, link = self._terrain
-        x0, y0, _ = zone.frame
-        d = zone.decal
-        if d["shape"] == "blob":
-            V, F, UV = meshes.drape(self.hf, x0, y0, d["radius"], d["seed"], offset=terrains.DECAL_OFFSET,
-                                    step=d["step"], tile=terrains.DECAL_TILE, irregularity=d["irregularity"],
-                                    grow=terrains.DECAL_MARGIN)
-        else:
-            m = terrains.DECAL_MARGIN
-            V, F, UV = meshes.drape_rect(self.hf, x0, y0, d["length"] + 2 * m, d["width"] + 2 * m, d["yaw"],
-                                         offset=terrains.DECAL_OFFSET, step=terrains.DECAL_STEP,
-                                         tile=terrains.DECAL_TILE, breaks=[b + m for b in d["breaks"]])
-        meshes.write_obj(self.models_dir / model / "meshes" / f"zone_{zone.key}.obj", V, F, UV=UV)
-        kind = zone.kind
-        sdf.visual(link, f"zone_{zone.key}", sdf.mesh(sdf.model_uri(model, "meshes", f"zone_{zone.key}.obj")),
-                   self.to_world(x0, y0, 0.0), albedo=kind.texture(self.media), cast_shadows=False)
         self.zones.append(zone)
+        kind = zone.kind
+        x0, y0, _ = zone.frame
         stride = max(1, int(math.ceil(len(zone.outline) / ZONE_OUTLINE_POINTS)))
         self.sheet.setdefault("terrain_zones", {})[zone.key] = dict(
             type=kind.key, title=kind.title, center=self.geo(x0, y0), area_m2=round(zone.area, 1),
             outline=[[round(v, 2) for v in self.to_world(x, y, 0.0)[:2]] for x, y in zone.outline[::stride]])
+        self._type_entry(kind)
+        return zone
+
+    def _type_entry(self, kind):
+        """The sheet's terrain_types entry of a ground type: its traction (under terrains.DIG) and notes."""
         traction = terrains.traction(kind)
         self.sheet.setdefault("terrain_types", {})[kind.key] = dict(
             title=kind.title, mu_s=traction.mu_s, mu_k=traction.mu_k, climb_deg=round(traction.climb_deg, 1),
             hold_deg=round(traction.hold_deg, 1), sinkage_m=traction.sinkage_m, notes=kind.notes)
-        return zone
 
     # --- Models -----------------------------------------------------------------------
 
@@ -463,19 +607,130 @@ class WorldBuilder:
                   color)
         self._surfaces[f"{name}_collision"] = surface
 
-    # --- Rocks -----------------------------------------------------------------------------
+    # --- Clutter: rocks, slabs, risers, shrubs, pebbles --------------------------------------
+
+    def near(self, spots=(), paths=()):
+        """A boolean grid on the heightmap's samples: within radius of the
+        layout points spots [(x, y, radius)] or half_width of the polylines
+        paths [(polyline, half_width)] (where clutter goes: design D10, a
+        mission's radius)."""
+        canvas = landscape.Canvas(self.hf, self.legend)
+        out = np.zeros((self.hf.n, self.hf.n), np.uint8)
+        for x, y, radius in spots:
+            (c, r), = canvas.pixels([(x, y)])
+            cv2.circle(out, (int(round(c * 16)), int(round(r * 16))), int(round(radius / self.hf.res * 16)), 1, -1,
+                       shift=4)
+        mask = out.astype(bool)
+        for path, half_width in paths:
+            mask |= canvas.stroke(path, half_width)
+        return mask
+
+    def clutter(self, within=None, avoid=(), clearance=3.0, rock_sizes=None, slab_sizes=None, rocks_within=None,
+                shrubs=True, shrubs_3d=None):
+        """The ground's own clutter by the catalogue's recipes (design 5.5,
+        landscape.place on the ground raster with its zones): slabs and
+        risers within `within` (a boolean grid on the heightmap's samples,
+        default everywhere), rocks within rocks_within (default `within`),
+        all `clearance` metres clear of the layout points `avoid`
+        (keep_clear); with `shrubs`, shrubs everywhere, as meshes within
+        shrubs_3d (default `within`) and as dots in the colour map elsewhere
+        (design D10; a world on real ground has its own: imaged_shrubs).
+        rock_sizes, slab_sizes: (low, high) [m] instead of the recipes'
+        ranges (rocks: the clutter budget; slabs: real-DEM worlds take
+        0.15-1 m, design D9). Groups "slabs", "risers" and "gravel" in the
+        sheet, with the slabs' size-frequency per ground type (clutter_report)
+        and the shrubs' density."""
+        raster = self.ground_map()
+        rng = np.random.default_rng([self.seed, 2])  # its own stream: the world's other placements do not move it
+
+        def place(kind, **extra):
+            return landscape.place(self.hf, raster, kind, rng, avoid, clearance, self.legend, **extra)
+
+        slabs = place("slabs", within=within, sizes=slab_sizes)
+        self.slabs("slabs", slabs)
+        allowed = ~landscape.avoid_mask(self.hf, avoid, clearance)
+        self.sheet["slabs"]["slabs"]["by_type"] = self.clutter_report(
+            slabs, allowed if within is None else allowed & np.asarray(within, bool))
+        self.risers("risers", place("risers", within=within))
+        rocks = place("rocks", within=within if rocks_within is None else rocks_within, sizes=rock_sizes)
+        self.rock_field("gravel", [(p.x, p.y, p.size, p.yaw) for p in rocks])
+        if not shrubs:
+            return
+        placed = place("shrubs")
+        self.sheet["shrub_density"] = {
+            key: dict(entry, per_ha=round(entry["count"] / entry["area_m2"] * 1e4, 1))
+            for key, entry in self.clutter_report(placed, np.ones(raster.shape, bool), sizes=False).items()}
+        meshed = self._inside(within if shrubs_3d is None else shrubs_3d, [(p.x, p.y) for p in placed])
+        self.shrubs([(p.x, p.y, p.size, p.height) for p, m in zip(placed, meshed) if m])
+        self.shrub_dots([(p.x, p.y, p.size) for p, m in zip(placed, meshed) if not m])
+
+    def clutter_report(self, placements, allowed, sizes=True):
+        """{type key: entry} for placements (landscape.Placement) on the
+        ground raster: the area [m2] of each type where they were allowed
+        (a boolean grid), their count and, with sizes, slabs' cumulative
+        counts N(>=1, 2, 4 m) per 100 m2 and the cover by 1-7 m slabs (design
+        5.5: the measured block fields' size-frequency)."""
+        if not placements:
+            return {}
+        raster = self.ground_map()
+        under = raster[self._samples([(p.x, p.y) for p in placements])]
+        size = np.array([p.size for p in placements])
+        out = {}
+        for i in np.unique(under):
+            area = float(np.count_nonzero((raster == i) & allowed)) * self.hf.res ** 2
+            d = size[under == i]
+            entry = {"area_m2": round(area, 1), "count": int(len(d))}
+            if sizes:
+                entry["per_100m2"] = {str(k): round(float(np.count_nonzero(d >= k)) / area * 100, 4) for k in (1, 2, 4)}
+                big = d[(d >= 1.0) & (d < 7.0)]
+                entry["cover_1_7"] = round(float(np.sum(math.pi / 4 * big * big)) / area, 4)
+            out[self.legend[int(i)].key] = entry
+        return out
+
+    def _samples(self, points):
+        """(rows, columns) of the heightmap samples nearest layout points (clamped to the grid)."""
+        p = np.asarray(points, float).reshape(-1, 2)
+        hf = self.hf
+        col = np.round((p[:, 0] - hf.center[0] + hf.size / 2) / hf.res).astype(int)
+        row = np.round((hf.center[1] + hf.size / 2 - p[:, 1]) / hf.res).astype(int)
+        return np.clip(row, 0, hf.n - 1), np.clip(col, 0, hf.n - 1)
+
+    def _inside(self, grid, points):
+        """Whether each layout point lies on a True sample of a boolean grid
+        on the heightmap's samples (nearest sample; every point for None)."""
+        if grid is None or not len(points):
+            return np.ones(len(points), bool)
+        return np.asarray(grid, bool)[self._samples(points)]
+
+    def imaged_shrubs(self, detected, within, rng_seed=4):
+        """Shrubs found in a world's imagery (appearance.detect_shrubs, here
+        in layout (x, y, spot diameter)) as meshes where `within` (a boolean
+        grid) holds; the rest stay in the orthophoto as they are. A spot's
+        diameter includes its shadow and blur: the crown is IMAGED_CROWN of
+        it, 0.3-1.4 m, and the height the shrub recipe's of the ground under
+        it (default the sand sheet's, lidar: at most 0.3 m on the plain)."""
+        rng = np.random.default_rng([self.seed, rng_seed])
+        meshed = [s for s, m in zip(detected, self._inside(within, [(x, y) for x, y, _ in detected])) if m]
+        under = self.ground_map()[self._samples([(x, y) for x, y, _ in meshed])] if meshed else []
+        out = []
+        for (x, y, d), index in zip(meshed, under):
+            recipe = self.legend[int(index)].clutter.shrubs or terrains.SAND_SHRUBS
+            crown = float(np.clip(d * rng.uniform(*IMAGED_CROWN), 0.3, 1.4))
+            out.append((x, y, crown, float(rng.uniform(*recipe.height_m))))
+        self.shrubs(out)
+        self.sheet["imaged_shrubs"] = {"detected": len(detected), "meshed": len(out)}
 
     def rock_field(self, name, rocks, colliding_size=0.1, palette="desert"):
         """Rocks on the terrain, counted in the sheet as group `name`. rocks:
-        [(x, y, size [m], yaw)] in layout coordinates (from scatter or
-        scatter_each); size is the long half-axis (about the rock's height);
-        rocks smaller than colliding_size are visual only; each takes a colour
-        of the terrains.ROCKS palette. Rocks grip like rock (ground.json's
-        prefixes), wherever they lie.
+        [(x, y, size [m], yaw)] in layout coordinates (from scatter,
+        scatter_each or landscape.place); size is the long half-axis (about
+        the rock's height); rocks smaller than colliding_size are visual
+        only; each takes a colour of the terrains.ROCKS palette. Rocks grip
+        like rock (ground.json's prefixes), wherever they lie.
 
         write() merges every group's rocks into meshes in the terrain's own
-        link, one per ROCK_CHUNK square (and colour, for the visuals), as
-        separate rocks would cost more than the rover (see the module notes).
+        link, one per CHUNK square (and colour, for the visuals), as separate
+        rocks would cost more than the rover (see the module notes).
         Collisions use a coarser mesh of each rock's surface
         (meshes.hull_faces)."""
         colors = terrains.ROCKS[palette]
@@ -496,55 +751,165 @@ class WorldBuilder:
         base laid on the plane of the ground under it, then sunk until every
         base vertex is ROCK_BURY * size below the ground, so that no edge of
         it floats on a slope."""
-        base = meshes.rock_base(variant) * size
-        Rz = np.array(sdf.rpy_to_matrix(0.0, 0.0, yaw))
+        R, z = self._lay(meshes.rock_base(variant) * size, x, y, yaw)
+        return R, z - ROCK_BURY * size
+
+    def _lay(self, base, x, y, yaw, tilt=0.0):
+        """Orientation (3x3) and layout z of a shape whose base vertices
+        `base` (its own frame, origin at the base) go at layout (x, y): yawed,
+        tilted `tilt` [rad] about its own x axis, laid on the plane of the
+        ground under it, at the height where its lowest base vertex touches
+        the ground."""
+        Rz = np.array(sdf.rpy_to_matrix(tilt, 0.0, yaw))
         P = base @ Rz.T
         A = np.column_stack([P[:, :2], np.ones(len(P))])
         (gx, gy, _), *_ = np.linalg.lstsq(A, self.height(x + P[:, 0], y + P[:, 1]), rcond=None)
         R = meshes.tilt(gx, gy) @ Rz
         P = base @ R.T
-        return R, float(np.min(self.height(x + P[:, 0], y + P[:, 1]) - P[:, 2])) - ROCK_BURY * size
+        return R, float(np.min(self.height(x + P[:, 0], y + P[:, 1]) - P[:, 2]))
+
+    def slabs(self, name, placements):
+        """Tabular blocks (design 5.5): landscape.Placement of slabs (size: the
+        equivalent diameter D, height: the thickness) as meshes.slab
+        variants, tilted on the ground under them and sunk SLAB_BURY of their
+        height; those SLAB_COLLIDE wide and wider collide. Colours: VARNISHED
+        of them the varnish palette, the rest fresh sandstone. Counted in the
+        sheet's slabs[name]."""
+        colliding = 0
+        for p in placements:
+            variant = int(self.rng.integers(meshes.SLAB_VARIANTS))
+            V, F = meshes.slab(variant)
+            scale = np.array([p.size, p.size, p.height / meshes.SLAB_HEIGHT])
+            base = V[V[:, 2] <= 1e-9] * scale
+            R, z = self._lay(base, p.x, p.y, p.yaw, p.tilt)
+            palette = terrains.ROCKS["varnish" if self.rng.uniform() < terrains.VARNISHED else "fresh_sandstone"]
+            color = tuple(palette[int(self.rng.integers(len(palette)))])
+            xyz = np.array(self.to_world(p.x, p.y, z - SLAB_BURY * p.height))
+            collides = p.size >= SLAB_COLLIDE
+            colliding += collides
+            self._pieces["slabs"].append(Piece((V * scale) @ R.T + xyz, F, F if collides else None, color))
+        group = self.sheet.setdefault("slabs", {}).setdefault(name, {"count": 0, "colliding": 0})
+        group["count"] += len(placements)
+        group["colliding"] += colliding
+
+    def risers(self, name, risers):
+        """Sub-metre ledges along contours (design 5.5): landscape.Riser as
+        meshes.riser_strip on the ground, the face downhill; they collide.
+        Counted in the sheet's risers[name] with their total length."""
+        length = 0.0
+        for r in risers:
+            path = np.asarray(r.path, float)
+            if len(path) < 2:
+                continue
+            d = np.diff(path, axis=0)
+            left = np.stack([-d[:, 1], d[:, 0]], axis=1) / np.maximum(np.linalg.norm(d, axis=1), 1e-9)[:, None]
+            mid = (path[1:] + path[:-1]) / 2
+            if np.mean(self.height(*(mid + left).T) - self.height(*(mid - left).T)) < 0:
+                path = path[::-1]  # the ground must rise on the left: the face looks downhill
+            z = self.height(path[:, 0], path[:, 1])
+            world = np.column_stack([path - self.shift[:2], z - self.shift[2]])
+            V, F = meshes.riser_strip(world, r.height, r.depth, seed=int(self.rng.integers(1 << 30)))
+            palette = terrains.ROCKS["varnish" if self.rng.uniform() < terrains.VARNISHED else "fresh_sandstone"]
+            self._pieces["risers"].append(Piece(V, F, F, tuple(palette[int(self.rng.integers(len(palette)))])))
+            length += float(np.sum(np.linalg.norm(np.diff(path, axis=0), axis=1)))
+        group = self.sheet.setdefault("risers", {}).setdefault(name, {"count": 0, "length_m": 0.0})
+        group["count"] += len(risers)
+        group["length_m"] = round(group["length_m"] + length, 1)
+
+    def shrubs(self, shrubs):
+        """Desert shrubs: visual only (the rover drives through brush), each a
+        meshes.shrub_lowpoly variant in a terrains.SHRUBS colour, merged by
+        write() like the rocks (a model each cost ~3 us per step). shrubs:
+        layout (x, y), or (x, y, diameter, height) [m] (default
+        terrains.MISSION_SHRUB). The sheet counts them."""
+        for s in shrubs:
+            x, y, d, h = s if len(s) == 4 else (*s, *terrains.MISSION_SHRUB)
+            V, F = meshes.shrub_lowpoly(int(self.rng.integers(meshes.SHRUB_VARIANTS)))
+            R = np.array(sdf.rpy_to_matrix(0.0, 0.0, self.rng.uniform(0, 2 * math.pi)))
+            color = tuple(terrains.SHRUBS[int(self.rng.integers(len(terrains.SHRUBS)))])
+            xyz = np.array(self.to_world(x, y, self.ground(x, y) - SHRUB_SINK))
+            self._pieces["shrubs"].append(Piece((V * [d, d, h]) @ R.T + xyz, F, None, color))
+            self._shrub_discs.append((x, y, d))
+        self.sheet["shrubs"] = len(self._pieces["shrubs"])
+
+    def shrub_dots(self, dots):
+        """Shrubs too far out for meshes, drawn into the colour map as dark
+        dots [(x, y, diameter)] (layout; design D10)."""
+        self._dots += [(*self.to_world(x, y, 0.0)[:2], d) for x, y, d in dots]
+        self.sheet["shrub_dots"] = len(self._dots)
+
+    def pebbles(self, spots, density=terrains.PEBBLES, budget=terrains.PEBBLE_BUDGET):
+        """Visual-only pebbles (design 5.5) in the discs spots [(x, y,
+        radius)] (layout: round starts and targets): per square metre the
+        recipe's (count, median diameter) pairs, log-normal sizes, each a
+        meshes.pebble variant in a terrains.PEBBLE_COLOURS colour, sunk
+        PEBBLE_SINK; thinned evenly when the discs would hold more than
+        `budget` (+130 MB per 20,000, M: render prototype)."""
+        rng = np.random.default_rng([self.seed, 3])
+        area = self.near(spots)
+        expected = sum(count for count, _ in density) * area.sum() * self.hf.res ** 2
+        thin = min(1.0, budget / max(expected, 1.0))
+        cells = np.flatnonzero(area)
+        placed = 0
+        for count, d50 in density:
+            k = int(rng.poisson(count * thin * len(cells) * self.hf.res ** 2)) if len(cells) else 0
+            picked = cells[rng.integers(0, len(cells), k)] if k else np.zeros(0, int)
+            rows, cols = np.divmod(picked, self.hf.n)
+            x = self.hf.center[0] - self.hf.size / 2 + (cols + rng.uniform(-0.5, 0.5, k)) * self.hf.res
+            y = self.hf.center[1] + self.hf.size / 2 - (rows + rng.uniform(-0.5, 0.5, k)) * self.hf.res
+            d = d50 * np.exp(rng.normal(0, 0.5, k))
+            z = self.ground(x, y)
+            for i in range(k):
+                V, F = meshes.pebble(int(rng.integers(meshes.PEBBLE_VARIANTS)), 1 if d[i] > 0.04 else 0)
+                scale = d[i] * np.array([rng.uniform(0.7, 1.3), rng.uniform(0.7, 1.3), rng.uniform(0.5, 1.0)])
+                R = np.array(sdf.rpy_to_matrix(0.0, 0.0, rng.uniform(0, 2 * math.pi)))
+                xyz = np.array(self.to_world(x[i], y[i], z[i] - PEBBLE_SINK * 0.55 * scale[2]))
+                color = tuple(terrains.PEBBLE_COLOURS[int(rng.integers(len(terrains.PEBBLE_COLOURS)))])
+                self._pieces["pebbles"].append(Piece((V * scale) @ R.T + xyz, F, None, color))
+            placed += k
+        self.sheet["pebbles"] = {"count": self.sheet.get("pebbles", {}).get("count", 0) + placed,
+                                 "thinned_to": round(thin, 3)}
 
     def _write_clutter(self):
-        """Rocks and shrubs, merged into one mesh per ROCK_CHUNK square of the
-        world (and colour, for the visuals) in the terrain's link: rock and
-        shrub visuals rocks_<i>_<j>_c<k> and shrubs_<i>_<j>_c<k>, rock
-        collisions rocks_<i>_<j>."""
-        visuals, collisions = defaultdict(list), defaultdict(list)
-
-        def chunk(xyz):
-            return math.floor(xyz[0] / ROCK_CHUNK), math.floor(xyz[1] / ROCK_CHUNK)
-
-        def rock(variant, faces, size, R, xyz):
-            return (meshes.rock_variant(variant)[0][:faces.max() + 1] * size) @ R.T + xyz, faces
-
+        """All clutter merged by kind into one mesh per CHUNK square of the
+        world in the terrain's link: visual <kind>_<i>_<j> (binary glTF, a
+        primitive per colour), collision <kind>_<i>_<j> (OBJ) for the kinds
+        that collide."""
         for xyz, size, variant, R, color, collides in self._rocks:
             # The rock's own 162 vertices for boulders, 42 of them for the rest.
-            visuals["rocks", chunk(xyz), color].append(rock(variant, meshes.hull_faces(2 if size >= 0.5 else 1),
-                                                            size, R, xyz))
-            if collides:
-                collisions["rocks", chunk(xyz)].append(rock(variant, meshes.hull_faces(1 if size >= 0.2 else 0),
-                                                            size, R, xyz))
-        for xyz, variant, R, color in self._shrubs:
-            V, F = meshes.shrub(variant)
-            visuals["shrubs", chunk(xyz), color].append((V @ R.T + xyz, F))
-        palettes = defaultdict(set)
-        for group, _, color in visuals:
-            palettes[group].add(color)
-        for (group, (i, j), color), parts in sorted(visuals.items()):
-            k = sorted(palettes[group]).index(color)
-            self._write_merged(sdf.visual, f"{group}_{i}_{j}_c{k}", (i, j), parts, color=color)
-        for (group, (i, j)), parts in sorted(collisions.items()):
-            self._write_merged(sdf.collision, f"{group}_{i}_{j}", (i, j), parts)
-
-    def _write_merged(self, element, name, chunk, parts, **style):
-        """Parts [(V, F)] in world coordinates as one mesh, meshes/<name>.obj,
-        added to the terrain link as `element` (sdf.visual or sdf.collision)."""
+            visual = meshes.hull_faces(2 if size >= 0.5 else 1)
+            collision = meshes.hull_faces(1 if size >= 0.2 else 0) if collides else None
+            V = meshes.rock_variant(variant)[0][:visual.max() + 1] * size @ R.T + xyz
+            self._pieces["rocks"].append(Piece(V, visual, collision, color))
         model, _, link = self._terrain
-        V, F = meshes.combine(parts)
-        origin = (chunk[0] * ROCK_CHUNK, chunk[1] * ROCK_CHUNK, 0.0)
-        meshes.write_obj(self.models_dir / model / "meshes" / f"{name}.obj", V - origin, F)
-        element(link, name, sdf.mesh(sdf.model_uri(model, "meshes", f"{name}.obj")), origin, **style)
+        directory = self.models_dir / model / "meshes"
+        for kind in sorted(self._pieces):
+            chunks = defaultdict(list)
+            for piece in self._pieces[kind]:
+                cx, cy = piece.V[:, :2].mean(axis=0)
+                chunks[math.floor(cx / CHUNK), math.floor(cy / CHUNK)].append(piece)
+            roughness, shadows = STYLE[kind]
+            for (i, j), pieces in sorted(chunks.items()):
+                name = f"{kind}_{i}_{j}"
+                origin = np.array([i * CHUNK, j * CHUNK, 0.0])
+                by_colour = defaultdict(list)
+                for piece in pieces:
+                    by_colour[piece.color].append((piece.V - origin, piece.visual))
+                parts = [(*meshes.combine(by_colour[c]), None, None, meshes.Material(c, roughness))
+                         for c in sorted(by_colour)]
+                meshes.write_glb_parts(directory / f"{name}.glb", parts)
+                sdf.visual(link, name, sdf.mesh(sdf.model_uri(model, "meshes", f"{name}.glb")), tuple(origin),
+                           color=None, cast_shadows=shadows)
+                solid = [(p.V - origin, p.collision) for p in pieces if p.collision is not None]
+                if solid:
+                    V, F = meshes.combine(solid)
+                    used = np.unique(F)  # rocks' collision faces use the first of their vertices only
+                    remap = np.zeros(len(V), int)
+                    remap[used] = np.arange(len(used))
+                    meshes.write_obj(directory / f"{name}.obj", V[used], remap[F])
+                    sdf.collision(link, name, sdf.mesh(sdf.model_uri(model, "meshes", f"{name}.obj")), tuple(origin))
+        self.sheet["clutter_triangles"] = {kind: int(sum(len(p.visual) for p in pieces))
+                                           for kind, pieces in sorted(self._pieces.items())}
 
     def scatter(self, count, center, radius, sizes, avoid=(), clearance=3.0, min_slope=0.0):
         """Random rock placements in a disc, sizes log-uniform in `sizes`,
@@ -603,25 +968,18 @@ class WorldBuilder:
                     out.append(rock)
         self.rock_field(name, out, colliding_size=0.0)
 
-    def shrubs(self, points):
-        """Desert shrubs at layout points: visual only (the rover drives
-        through brush), each a meshes.shrub variant in a terrains.SHRUBS
-        colour, merged by write() like the rocks (a model each cost ~3 us per
-        step)."""
-        for x, y in points:
-            variant = int(self.rng.integers(meshes.SHRUB_VARIANTS))
-            R = np.array(sdf.rpy_to_matrix(0.0, 0.0, self.rng.uniform(0, 2 * math.pi)))
-            color = tuple(terrains.SHRUBS[int(self.rng.integers(len(terrains.SHRUBS)))])
-            self._shrubs.append((self.to_world(x, y, self.ground(x, y) - SHRUB_SINK), variant, R, color))
-        self.sheet["shrubs"] = len(self._shrubs)
-
     # --- Output ----------------------------------------------------------------------
 
     def write(self):
         self._write_terrain()
         self._write_clutter()
         self._write_ground()
+        if self._look is not None:
+            self._write_colour()
+            self._write_farfield()
         name, root, _ = self._terrain
+        for collision in self._terrain[2].findall("collision"):
+            sdf.collide_bitmask(collision, sdf.GROUND)
         sdf.write_model(self.models_dir, name, root, f"Terrain for the URC {self.sheet['mission']} world.")
         self.worlds_dir.mkdir(parents=True, exist_ok=True)
         world_path = self.worlds_dir / f"{self.name}.sdf"

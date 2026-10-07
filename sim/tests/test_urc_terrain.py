@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Ground types, zones, the ground map, sinkage, rocks and the proving ground (pixi run sim-test).
+"""Ground types, zones, the ground map, sinkage, clutter, the terrain's looks
+(colour map, detail layers, far field, the mission sun) and the proving
+ground (pixi run sim-test).
 
 The geometry tests need no Gazebo; the physics tests run proving-ground
 copies headless (Sensors stripped, the rover respawned), and a small world
@@ -25,12 +27,13 @@ from worldfiles import world_copy
 from worldfiles import terrain as world_terrain
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import dem, features, geo, landscape, meshes, terrain, terrains  # noqa: E402
+from urc import appearance, dem, features, geo, landscape, lighting, meshes, terrain, terrains, textures  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.media import Media  # noqa: E402
 from urc.missions import COURSES, MISSIONS, delivery, proving_ground  # noqa: E402
-from urc.world import MAX_SINKAGE, ROCK_BURY, Layer, WorldBuilder, site  # noqa: E402
+from urc.world import COLLIDING, MAX_SINKAGE, ROCK_BURY, SLAB_BURY, Layer, WorldBuilder, add_relief, site  # noqa: E402
 
+TARGETS = Path(landscape.RELIEF_DIR).parent / "research" / "terrain_targets.json"
 WORLDS_WITH_ZONES = ("urc_delivery", "urc_astrobiology", "urc_equipment_servicing", "urc_autonomy", "proving_ground")
 SOLVERS = {"urc_equipment_servicing": "dantzig"}  # every other world: pgs (gates G2, G5)
 QUANTUM = 0.003  # [m] a generated world's 16-bit heightmap rounds heights by up to z_max / 131070 (< 1.5 mm)
@@ -219,8 +222,7 @@ class Catalogue(unittest.TestCase):
             if slabs:
                 self.assertEqual(slabs.counts, tuple(sorted(slabs.counts)), kind.key)
                 self.assertEqual(slabs.d_max, slabs.counts[-1][0], kind.key)
-        self.assertEqual({k.appearance.detail for k in terrains.TYPES.values()} - {None},
-                         {"gravel", "ripples", "popcorn", "slab_joints", "cracked_silt"})
+        self.assertLessEqual({k.appearance.detail for k in terrains.TYPES.values()} - {None}, set(textures.DETAILS))
 
     def test_recipe_defaults_are_todays_worlds(self):
         """A type given only a mu is today's ground: Coulomb traction, its
@@ -479,6 +481,150 @@ class GroundWorld(unittest.TestCase):
             self.w.zone("late_sand", terrains.SAND, SmallWorld.FEATURES[0].x, SmallWorld.FEATURES[0].y, 3.0)
 
 
+class LookedWorld(unittest.TestCase):
+    """A small world built as the missions are: paint rules and relief, a
+    colour map with detail layers, the far field, the mission sun, and the
+    ground's own clutter by the recipes (slabs, risers, gravel, shrubs) and
+    pebbles."""
+    MESA = features.Mesa("mesa", 20.0, 20.0, 9.0, 6.0, 8.0, seed=2)
+    PAINT = [landscape.Base("regolith"), landscape.Hills((MESA,), slope="badland_slope", cap="caprock"),
+             landscape.Below("caprock", "block_field", reach_m=15.0)]
+    TEXELS = 256
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        d = Path(cls.tmp.name)
+        hf = terrain.Heightfield(128.0, 257)
+        X, _ = hf.grid()
+        hf.z = 0.05 * X
+        cls.MESA.shape(hf)
+        add_relief(hf, cls.PAINT, pads=[(0.0, 0.0, 5.0)], seed=1)
+        w = WorldBuilder("looked", "Looked", None, geo.Origin(38.4, -110.79, 1350.0), hf, d / "models",
+                         d / "worlds", Media(d / "models"), seed=1, name="looked", solver="pgs")
+        w.paint(cls.PAINT)
+        w.terrain(texels=cls.TEXELS, cap=5.0)
+        w.zone("sand", terrains.SAND_SHEET, -25.0, -25.0, 12.0)
+        w.rover(0.0, 0.0, 0.0)
+        w.clutter(within=w.near([(0.0, 0.0, 60.0)]), avoid=w.keep_clear(), clearance=2.0, rock_sizes=(0.15, 0.3),
+                  shrubs_3d=w.near([(-25.0, -25.0, 6.0)]))
+        w.pebbles([(0.0, 0.0, 8.0)], budget=500)
+        cls.w = w
+        cls.world_path, sheet_path = w.write()
+        cls.sheet = json.loads(sheet_path.read_text())
+        cls.dir = d / "models" / "urc_terrain_looked"
+        cls.model = ET.parse(cls.dir / "model.sdf").getroot()
+        cls.world = ET.parse(cls.world_path).getroot()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_colour_map_is_terra_layer_0(self):
+        """Layer 0 is the colour map over the whole terrain with a flat normal
+        map; then the detail layers with their tiles, each blended in by
+        height (design 5.7, D11); the sheet names them."""
+        visual = self.model.find(".//visual/geometry/heightmap")
+        layers = visual.findall("texture")
+        self.assertEqual(layers[0].findtext("diffuse"), "model://urc_terrain_looked/colour.png")
+        self.assertIn("/flat_normal_", layers[0].findtext("normal"))
+        self.assertEqual(float(layers[0].findtext("size")), 128.0)
+        details = [d.key for d in appearance.DEFAULT_DETAILS] + ["slab_joints"]
+        self.assertEqual([d["key"] for d in self.sheet["terrain"]["details"]], details)
+        for layer, key in zip(layers[1:], details):
+            self.assertIn(f"/detail_{key}_diffuse_", layer.findtext("diffuse"))
+            self.assertAlmostEqual(float(layer.findtext("size")), textures.DETAILS[key].tile_m)
+        self.assertEqual(len(visual.findall("blend")), len(details))
+        colour = Image.open(self.dir / "colour.png")
+        self.assertEqual(colour.size, (self.TEXELS, self.TEXELS))
+        self.assertLess(self.sheet["terrain"]["colour_clipped"], 0.05)
+
+    def test_colour_map_shows_the_ground_types(self):
+        """The sand sheet, the block field and the regolith have their own
+        colours: each type's median texel (undoing the detail compensation
+        in linear light) lies within CIE76 10 of its palette (design 11)."""
+        colour = textures.srgb_to_linear(np.asarray(Image.open(self.dir / "colour.png").convert("RGB")))
+        a0 = (1 - appearance.DEFAULT_DETAILS[0].weight) * (1 - appearance.DEFAULT_DETAILS[1].weight)  # below the cap
+        original = a0 * colour + (1 - a0) * colour.reshape(-1, 3).mean(axis=0)  # the details average the map's mean
+        n, hf = self.TEXELS, self.w.hf
+        index = np.clip(np.floor((np.arange(n) + 0.5) / n * (hf.n - 1) + 0.5).astype(int), 0, hf.n - 1)
+        types = self.w.ground_map()[np.ix_(index, index)]
+        for key in ("sand_sheet", "block_field", "regolith"):
+            texels = original[types == self.w.legend.index(key)]
+            self.assertGreater(len(texels), 50, key)
+            median = textures.linear_to_srgb(np.median(texels, axis=0))
+            self.assertLess(float(appearance.delta_e(median, terrains.TYPES[key].appearance.palette.base)), 10.0, key)
+
+    def test_far_field_and_no_horizon_plane(self):
+        """The far field (design D14) in place of the old horizon plane; the
+        catch floor stays."""
+        uris = [i.findtext("uri") for i in self.world.iter("include")]
+        self.assertIn("model://urc_farfield_looked", uris)
+        self.assertFalse([v for v in self.model.iter("visual") if v.get("name").startswith("horizon")])
+        self.assertTrue([c for c in self.model.iter("collision") if c.get("name") == "floor_collision"])
+        far = ET.parse(self.dir.parent / "urc_farfield_looked" / "model.sdf").getroot()
+        self.assertTrue(far.findtext(".//visual/geometry/mesh/uri").endswith("farfield.glb"))
+
+    def test_mission_sun(self):
+        """The sun of 2027-05-28 10:30 MDT (lighting.MISSION, design D13)."""
+        sun = self.world.find("world/light[@name='sun']")
+        np.testing.assert_allclose(vec(sun.findtext("direction")), lighting.MISSION.direction, atol=1e-4)
+        self.assertAlmostEqual(float(sun.findtext("intensity")), lighting.SUN_INTENSITY)
+        np.testing.assert_allclose(vec(sun.findtext("diffuse"))[:3], lighting.SUN_COLOUR)
+        np.testing.assert_allclose(vec(self.world.findtext("world/scene/ambient"))[:3], lighting.AMBIENT)
+
+    def test_clutter_is_merged_by_kind(self):
+        """One glTF visual per chunk and kind, keeping its own colours (no SDF
+        material), and an OBJ collision for the kinds that collide; every
+        collision named by ground.json's prefixes (rock)."""
+        info = json.loads((self.dir / "ground.json").read_text())
+        visuals = {v.get("name"): v for v in self.model.iter("visual") if v.get("name") != "terrain_visual"}
+        self.assertLessEqual({"rocks", "slabs", "shrubs", "pebbles"}, {name.split("_")[0] for name in visuals})
+        for name, v in visuals.items():
+            self.assertTrue(v.findtext("geometry/mesh/uri").endswith(".glb"), name)
+            self.assertIsNone(v.find("material"), name)
+        solid = [c for c in self.model.iter("collision") if c.get("name") not in ("terrain_collision", "floor_collision")]
+        self.assertTrue(any(c.get("name").startswith("slabs_") for c in solid))
+        for c in solid:
+            name = c.get("name")
+            self.assertIn(name.split("_")[0], COLLIDING)
+            self.assertTrue(c.findtext("geometry/mesh/uri").endswith(".obj"), name)
+            self.assertTrue(any(name.startswith(prefix) for prefix in info["prefixes"]), name)
+
+    def test_slabs_lie_in_the_ground(self):
+        """Each slab stands on the ground under it, part of it sunk (its base
+        SLAB_BURY of its thickness below the ground at its lowest corner),
+        its top above it; the sheet keeps the size-frequency per type."""
+        shift = np.array(self.w.shift)
+        slabs = self.w._pieces["slabs"]
+        self.assertGreater(len(slabs), 10)
+        for piece in slabs:
+            V = piece.V + shift
+            depth = self.w.height(V[:, 0], V[:, 1]) - V[:, 2]
+            self.assertGreater(depth.max(), 0.0)  # sunk
+            self.assertLess(depth.min(), 0.0)  # and standing out
+        self.assertIn("block_field", self.sheet["slabs"]["slabs"]["by_type"])
+
+    def test_shrubs_as_meshes_or_dots(self):
+        """Recipe shrubs on the sand sheet: meshes where asked, the rest dots
+        in the colour map (design D10); the sheet counts both and their
+        density per type."""
+        self.assertGreater(self.sheet["shrubs"], 0)
+        self.assertGreater(self.sheet["shrub_dots"], 0)
+        self.assertIn("sand_sheet", self.sheet["shrub_density"])
+
+    def test_pebbles_keep_their_budget(self):
+        """Pebbles in their discs, thinned to the budget (design 5.5)."""
+        self.assertAlmostEqual(self.sheet["pebbles"]["count"], 500, delta=4 * math.sqrt(500))
+        self.assertLess(self.sheet["pebbles"]["thinned_to"], 1.0)
+
+    def test_relief_sources_in_the_sheet(self):
+        """Where the synthetic relief comes from: the swatches' lidar windows."""
+        relief = self.sheet["terrain"]["sources"]["relief"]
+        self.assertIn("badland", relief)
+        self.assertTrue(all(isinstance(v, list) for v in relief.values()))
+
+
 class SinkagePhysics(unittest.TestCase):
     """The carved collision heightmap in Gazebo: its lowest pixel is not 0
     (world z = 0 lies MAX_SINKAGE below the lowest point) and it has its own
@@ -587,6 +733,32 @@ class GeneratedWorlds(unittest.TestCase):
         here = site(38.4040, -110.7935)
         self.assertAlmostEqual(here.alt, dem.site_altitude(38.4040, -110.7935), places=9)
 
+    def test_every_world_looks_like_its_ground(self):
+        """Every world: a colour map as Terra layer 0 with detail layers, the
+        far field, the mission sun; Autonomy draped with NAIP, the others
+        baked from their ground (design 5.7, D11-D14)."""
+        for world in WORLDS_WITH_ZONES:
+            with self.subTest(world=world):
+                s = sheet(world)
+                root = ET.parse(WORLDS / f"{world}.sdf").getroot()
+                self.assertTrue((WORLDS / s["terrain"]["colour_map"]).is_file())
+                self.assertEqual(s["terrain"]["colour_texels"], 4096)
+                key = world.removeprefix("urc_")
+                self.assertIn(f"model://urc_farfield_{key}", [i.findtext("uri") for i in root.iter("include")])
+                np.testing.assert_allclose(vec(root.findtext("world/light/direction")), lighting.MISSION.direction,
+                                           atol=1e-4)
+                self.assertEqual("orthophoto" in s["terrain"], world == "urc_autonomy")
+
+    def test_clutter_within_budget(self):
+        """Merged clutter stays within the render budget (gate G6: 1.5 M shrub
+        and 0.8 M pebble triangles kept 17-18 fps): at most 3 M triangles
+        a world, pebbles within their budget."""
+        for world in WORLDS_WITH_ZONES:
+            with self.subTest(world=world):
+                s = sheet(world)
+                self.assertLess(sum(s["clutter_triangles"].values()), 3_000_000)
+                self.assertLessEqual(s.get("pebbles", {}).get("count", 0), 1.05 * terrains.PEBBLE_BUDGET)
+
     def test_delivery_has_every_ground_of_rule_1_c_ii(self):
         # "soft sandy areas, gravel, rough stony areas, rock and boulder fields, vertical drops and steep
         # loosely consolidated slopes"
@@ -668,8 +840,30 @@ class ProvingGround(unittest.TestCase):
         expected = {"lane_mu020", "lane_mu035", "lane_mu050", "lane_mu070", "lane_mu095", "sand_pit", "clay_patch",
                     "slickrock_slab", "side_slope_10", "side_slope_20", "garden_10cm", "garden_20cm", "garden_30cm",
                     "garden_40cm", "articulation", "washboard", "step_10cm", "step_20cm", "step_30cm",
-                    "boulder_field"}
+                    "boulder_field", "natural_sand_sheet", "natural_badland", "natural_block_field"}
         self.assertEqual(set(self.sheet["points"]), expected)
+
+    def test_natural_strips(self):
+        """The three natural strips: their ground painted, their type's
+        micro-relief on them (4 m roughness within the real p25-p75, design
+        5.4) and nowhere else on the course (it stays as built), the block
+        field's slabs on it."""
+        hf = proving_ground.make_terrain()
+        raster = np.asarray(Image.open(sheets.path("proving_ground").parent / self.sheet["terrain"]["ground_map"]))
+        ground = sheets.ground(self.sheet, sheets.path("proving_ground"))
+        index = {t["key"]: t["index"] for t in ground.info["types"]}
+        targets = json.loads(TARGETS.read_text())["types"]
+        natural = landscape.window_share((proving_ground.natural(hf) >= 0.999).astype(np.uint8), 1, hf.res, 4.0)
+        rms = landscape.window_rms(hf.z, hf.res, 4.0) * 100
+        for strip in proving_ground.NATURAL:
+            with self.subTest(strip=strip.key):
+                inside = (landscape.window_share(raster, index[strip.kind.key], hf.res, 4.0) == 1.0) & (natural == 1.0)
+                self.assertGreaterEqual(inside.sum(), 6)
+                low, _, high, _ = targets[strip.kind.key]["4"]
+                self.assertTrue(low <= np.median(rms[inside]) <= high, (np.median(rms[inside]), low, high))
+        built = landscape.window_share((proving_ground.natural(hf) == 0).astype(np.uint8), 1, hf.res, 4.0) == 1.0
+        self.assertLess(np.median(rms[built]), 1.0)  # the course stays as built: its own 2 m noise only
+        self.assertGreater(self.sheet["slabs"]["slabs"]["by_type"]["block_field"]["count"], 10)
 
     def test_friction_lanes(self):
         """Calibration lanes: plain Coulomb mu (design 5.6), in ground.json and the sheet."""

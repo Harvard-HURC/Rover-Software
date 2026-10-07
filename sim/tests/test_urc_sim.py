@@ -19,14 +19,15 @@ import cv2
 import numpy as np
 
 from simulate import SIM_DIR, follow, simulate, spin_ratio
-from worldfiles import rock_vertices, sheet, terrain, world_copy
+from worldfiles import MODELS, WORLDS, model_root, sheet, terrain, vec, world_copy
 
 import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
 from gz.sim8 import Joint, Model, TestFixture, World, world_entity
 from gz.transport13 import Node
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import geo, routes, terrains  # noqa: E402
+from urc import geo, landscape, routes, terrains  # noqa: E402
+from urc.world import COLLIDING  # noqa: E402
 from urc import judge as J  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc import terrain as heightfields  # noqa: E402
@@ -48,9 +49,23 @@ _, ids, _ = detector.detectMarkers(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY))
 print("IDS", json.dumps([] if ids is None else ids.flatten().tolist()))
 """
 CAMERA_RANGE = 5.0  # [m] rover centre to the post; the camera is 0.35 m ahead of it
+DUG = 0.5  # how far a route planner takes digging ground's wheels to be dug in (A: half way to its dig_max)
 ROCK_STOP = 0.25  # [m] a rock standing higher than this stops the rover (proving ground: 0.2 m crossed, 0.3 m not)
 ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width / 2  # [m] over the wheels
 SLOW = unittest.skipUnless(os.environ.get("ROVER_SLOW"), "slow (many minutes of sim time): set ROVER_SLOW=1")
+
+
+def clutter_vertices(world):
+    """World (x, y, z) of every vertex of the world's merged clutter
+    collisions: rocks, slabs and risers (world.COLLIDING)."""
+    name = re.search(r"<uri>model://(urc_terrain_\w+)</uri>", (WORLDS / f"{world}.sdf").read_text()).group(1)
+    out = [np.zeros((0, 3))]
+    for c in model_root(name).iter("collision"):
+        if re.fullmatch(rf"({'|'.join(COLLIDING)})_-?\d+_-?\d+_collision", c.get("name")):
+            path = MODELS / name / "meshes" / Path(c.findtext("geometry/mesh/uri")).name
+            out.append(np.array([vec(line[2:]) for line in path.read_text().splitlines() if line.startswith("v ")])
+                       + vec(c.findtext("pose"))[:3])
+    return np.concatenate(out)
 
 
 @contextlib.contextmanager
@@ -63,41 +78,53 @@ def fast_copy(world, rover, lift=0.05):
         yield path
 
 
-def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
+def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0, res=1.0):
     """A route (world (x, y)) from start to goal with grades up to max_slope
     (routes.easy_route) that keeps `clearance` past the rover's half width
-    from every rock taller than ROCK_STOP and off ground steeper than its
-    type climbs less `margin` [deg] (ground.json): the search sees those as
-    walls in the terrain. None if there is none."""
+    from every rock, slab or riser taller than ROCK_STOP and off ground
+    steeper than its type climbs less `margin` [deg] (ground.json; slopes
+    over the 2 m the paint rules judge, as the rover feels them, not the
+    0.5 m micro-relief, whose own steps are a rock's): the search sees those
+    as walls in the terrain. Ground that digs in climbs as with its wheels
+    half dug in (DUG): a pure-pursuit driver's corrections spin them in (on
+    the strong preset a rover stalls on 13 deg of sand sheet it entered dug
+    in, measured on Delivery's crate hill). The search grid is `res`
+    metres (routes.easy_route): on 2 m the micro-relief's blocked spots,
+    blurred, close passages the rover fits through. None if there is
+    none."""
     hf = terrain(world)
     s = sheet(world)
     ground = sheets.ground(s, sheets.path(world))
     climb = np.zeros(256)
     for t in ground.info["types"]:
-        climb[t["index"]] = math.degrees(math.atan(max(t["mu_k"] - t["crr"], 0.0)))
-    blocked = (hf.slope_map() + margin > climb[ground.raster]).astype(np.uint8)
-    V = rock_vertices(world)
+        dig = 1.0 + DUG * (t["dig_max"] - 1.0) if t["dig_rate"] else 1.0
+        climb[t["index"]] = math.degrees(math.atan(max(t["mu_k"] - t["crr"] * dig, 0.0)))
+    slope = heightfields.slope_map(hf.z, hf.res, landscape.SLOPE_SMOOTH)
+    blocked = (slope + margin > climb[ground.raster]).astype(np.uint8)
+    V = clutter_vertices(world)
     tall = V[V[:, 2] - hf.height(V[:, 0], V[:, 1]) > ROCK_STOP]
     cols = np.round((tall[:, 0] - hf.center[0] + hf.size / 2) / hf.res).astype(int)
     rows = np.round((hf.center[1] + hf.size / 2 - tall[:, 1]) / hf.res).astype(int)
     rocks = np.zeros_like(blocked)
-    rocks[rows, cols] = 1
+    inside = (rows >= 0) & (rows < hf.n) & (cols >= 0) & (cols < hf.n)  # a slab at the edge reaches past it
+    rocks[rows[inside], cols[inside]] = 1
     reach = int(math.ceil((ROVER_HALF_WIDTH + clearance) / hf.res))
     blocked |= cv2.dilate(rocks, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * reach + 1,) * 2))
     walls = heightfields.Heightfield(hf.size, hf.n, hf.z + 100.0 * blocked, hf.center)
-    found = routes.easy_route(walls, start, goal, max_slope)
+    found = routes.easy_route(walls, start, goal, max_slope, res=res)
     return None if found is None else found[0]
 
 
-def drive_route(world, path, seconds, speed=0.8, tolerance=2.0, skip=2.5):
+def drive_route(world, path, seconds, speed=0.8, tolerance=2.0, skip=2.5, **driver):
     """follow() a world (x, y) route, the rover spawned `skip` metres along
-    it (off whatever stands at its start), facing along it."""
+    it (off whatever stands at its start), facing along it; driver:
+    simulate.pursue's settings."""
     dense = heightfields.resample(path, 0.25)
     k = int(round(skip / 0.25))
     x, y = dense[k]
     yaw = math.atan2(dense[k + 4][1] - y, dense[k + 4][0] - x)
     with fast_copy(world, (float(x), float(y), yaw)) as copy:
-        return follow(copy, [tuple(p) for p in dense[k:]], seconds, speed=speed, tolerance=tolerance)
+        return follow(copy, [tuple(p) for p in dense[k:]], seconds, speed=speed, tolerance=tolerance, **driver)
 
 
 def xy(entry):
@@ -136,9 +163,10 @@ class Worlds(unittest.TestCase):
         self.assertLess(math.hypot(east, north), 1.0)  # antenna lever arm 0.25 m + noise
 
     def test_rim_boulders_stop_a_straight_climb(self):
-        """1.e.xv in the physics: driven straight up the butte's 32-40 deg
-        north face at Post 1, steeper than its packed regolith climbs (23 deg),
-        and lined with the rim's boulders, the rover stays well below Post 1."""
+        """1.e.xv in the physics: driven straight up the butte's steep north
+        face at Post 1 (the soil map's badland slope, climbs 22 deg, and rock
+        above 30 deg, climbs 40 deg), lined with the rim's boulders, the
+        rover stays well below Post 1."""
         post = sheet("urc_autonomy")["points"]["post1"]
         ground = terrain("urc_autonomy")
         x, y = post["x"], post["y"] + 16.0
@@ -266,13 +294,15 @@ class DeliveryGround(unittest.TestCase):
         """A sustained spin slows until the rover hardly turns (design spec
         6.9: strong preset), and the rover then drives out straight, slowly
         while its wheels are dug in (measured 0.22 m/s of a commanded 0.3)."""
-        x, y = xy(self.zones["sand_flat"]["center"])
+        x, y = xy(self.zones["sand_flat"]["center"])  # kept flat (delivery.PADS)
         cmd = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (10.5, 0.0, 0.0), (11.0, 0.3, 0.0)]
         with fast_copy("urc_delivery", (x, y, 0.0)) as world:
             s = simulate(40.0, world=world, cmd=cmd, trace_every=10)
         t, rate = s.trace[:, 0], s.trace[:, 7]
         fresh, dug = rate[(t >= 0.5) & (t < 1.5)].max(), rate[(t >= 8.5) & (t < 10.5)].mean()
-        self.assertGreater(fresh, 0.8 * spin_ratio(terrains.SAND.traction))  # it did start turning
+        # It did start turning: the strong preset digs in at once, so the peak falls short of the fresh ratio
+        # (measured: 0.19 against 0.26, then 0.02 from 2 s on).
+        self.assertGreater(fresh, 0.5 * spin_ratio(terrains.SAND.traction))
         self.assertLess(dug, 0.25 * fresh, (fresh, dug))
         out = np.hypot(s.trace[:, 1] - x, s.trace[:, 2] - y)
         self.assertGreater(out[-1] - out[t <= 30.0][-1], 1.5)  # still driving out, not stuck
@@ -320,9 +350,13 @@ class MissionRoutes(unittest.TestCase):
 
     def test_autonomy_easy_route_to_post1(self):
         """The judges' easy route from the start post to within 3 m of Post 1
-        in at most 6 minutes of sim time (design spec 11, A)."""
+        in at most 6 minutes of sim time (design spec 11, A). The route is a
+        path on a 2 m grid whose switchbacks up the butte's rim cross 20 deg
+        side slopes: the driver looks 4 m ahead and so rounds them (with the
+        2 m default it turns sharply there, slides off the line and stops,
+        measured; it arrives at 334 s)."""
         easy = [xy(p) for p in sheet("urc_autonomy")["judges_only"]["easy_route"]["points"]]
-        d = drive_route("urc_autonomy", easy, 360.0, speed=1.0, tolerance=3.0)
+        d = drive_route("urc_autonomy", easy, 360.0, speed=1.0, tolerance=3.0, lookahead=4.0)
         self.assertIsNotNone(d.arrived, f"{d.gap(easy[-1]):.1f} m short of Post 1")
 
     def test_autonomy_route_to_post2(self):

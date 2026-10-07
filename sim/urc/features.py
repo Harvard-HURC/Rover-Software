@@ -110,7 +110,11 @@ class Wash:
     `<key>_sand_<k>` every `sand_step` metres (along), but not at the indices
     in `skip` (where it cuts through a ridge, say). A channel's sand stays on
     its floor, within `half_width` of the path, not up its banks, which rise
-    no steeper than `bank` [deg]."""
+    no steeper than `bank` [deg]. Soft sand, not the catalogue's looser wash
+    sand: on the strong dig-in preset a rover whose wheels dug in climbs no
+    more than 1 deg of wash sand (atan(mu_k - crr dig_max)), so every wash
+    floor would trap it (measured: Delivery's course stalled on a 4 deg wash
+    floor)."""
     key: str
     path: tuple
     depth: float = 0.0
@@ -124,13 +128,25 @@ class Wash:
     def patches(self):
         return along(f"{self.key}_sand", terrains.SAND, self.path, self.sand_step, self.sand_radius, self.skip)
 
+    @property
+    def falloff(self):
+        """[m] How far its banks reach past its floor: the channel's
+        smoothstep banks are steepest at their middle, 1.5 depth / falloff."""
+        return 1.5 * self.depth / math.tan(math.radians(self.bank))
+
+    def channel_path(self):
+        """(path, half-width) of its floor and banks, as landscape.keep_flat
+        takes them: flash floods rework a wash's floor and banks, so they are
+        smoother than the slopes round them (A), and its banks stay as
+        crossable as designed."""
+        return tuple(self.path), self.half_width + self.falloff
+
     def shape(self, hf):
         if self.depth:
             if self.sand_radius > self.half_width:
                 raise ValueError(f"{self.key}: sand patches of radius {self.sand_radius} m reach past the "
                                  f"{self.half_width} m half-width of the wash floor")
-            # The channel's banks are smoothstep profiles, steepest at their middle: 1.5 depth / falloff.
-            hf.channel(self.path, self.depth, self.half_width, 1.5 * self.depth / math.tan(math.radians(self.bank)))
+            hf.channel(self.path, self.depth, self.half_width, self.falloff)
 
     def footprints(self):
         return [f for patch in self.patches for f in patch.footprints()]
@@ -212,7 +228,7 @@ class Lane:
     along `yaw`, `width` wide, its profile `segments` [(length [m], grade
     [deg])] climbing from the ground at the start (or z0), tilted `cross` deg
     across (left side up), blended into the terrain over `falloff`.
-    surfaces: zones laid along it, their decals creased at the profile's kinks."""
+    surfaces: zones laid along it."""
     key: str
     start: tuple
     yaw: float
@@ -255,9 +271,42 @@ class Lane:
     def dress(self, w):
         for surface in self.surfaces:
             length = surface.length or self.length
-            breaks = [k for k in terrain.kinks(self.segments) if k < length - 1e-6]
             w.zone_rect(surface.key, surface.kind, *self.at(length / 2, surface.offset), length, surface.width,
-                        self.yaw, breaks)
+                        self.yaw)
+
+
+@dataclass(frozen=True)
+class Natural:
+    """A strip of natural ground of `kind` (the proving ground's
+    calibration strips): planar from `start` along yaw, `length` long and
+    `width` wide, climbing at `grade` deg (terrain.Heightfield.strip),
+    blended into the terrain over `falloff`; not kept flat, so it takes its
+    type's micro-relief and clutter (landscape.relief, WorldBuilder.clutter)
+    like the same ground anywhere."""
+    key: str
+    kind: TerrainType
+    start: tuple
+    yaw: float
+    length: float
+    width: float
+    grade: float = 0.0
+    falloff: float = 3.0
+
+    def at(self, u, v=0.0):
+        return _axis_point(self.start, self.yaw, u, v)
+
+    def polygon(self):
+        """Its layout corners."""
+        return _rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)
+
+    def shape(self, hf):
+        hf.strip(self.start, self.yaw, self.width, ((self.length, self.grade),), self.falloff)
+
+    def footprints(self):
+        return [(self.polygon(), self.kind)]
+
+    def dress(self, w):
+        w.zone_rect(self.key, self.kind, *self.at(self.length / 2), self.length, self.width, self.yaw)
 
 
 @dataclass(frozen=True)

@@ -333,6 +333,8 @@ def lander(models_dir, media):
     _controls(model, base)
     sdf.plugin(model, "JointMonitor", "rover_sim::JointMonitor", update_rate=50,
                press_prefix=["key_", "button_"], press_threshold=0.002)
+    for collision in model.iter("collision"):  # the base is fixed: no part reaches the ground (sdf.ABOVE_GROUND)
+        sdf.collide_bitmask(collision, sdf.ABOVE_GROUND)
     sdf.write_model(models_dir, NAME, root, "URC Equipment Servicing mock lander.")
     return NAME
 

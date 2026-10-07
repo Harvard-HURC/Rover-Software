@@ -206,6 +206,8 @@ def colour_map(hf, raster, types, rng, n=4096, strata=None, dots=(), dot_rgb=DOT
         if not indices:
             continue
         mask = np.isin(t, indices)
+        if not mask.any():
+            continue
         band = _strata_band(recipe, at_texels(hf, n), xs, ys, mask, rng, noise)
         colours = textures.srgb_to_linear(recipe.bands)
         lin[mask] = colours[band] + 0.5 * mottle[mask][:, None] * spread[t[mask]]

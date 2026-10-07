@@ -405,6 +405,13 @@
         <color_end>0.8 0.7 0.56 0</color_end>
         <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
         <particle_scatter_ratio>0</particle_scatter_ratio>
+        <material>
+          <pbr>
+            <metal>
+              <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>
+            </metal>
+          </pbr>
+        </material>
       </particle_emitter>
     </link>
     <joint name="rocker_left_joint" type="revolute">
@@ -605,6 +612,13 @@
         <color_end>0.8 0.7 0.56 0</color_end>
         <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
         <particle_scatter_ratio>0</particle_scatter_ratio>
+        <material>
+          <pbr>
+            <metal>
+              <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>
+            </metal>
+          </pbr>
+        </material>
       </particle_emitter>
     </link>
     <joint name="rocker_right_joint" type="revolute">

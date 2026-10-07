@@ -1,12 +1,10 @@
-"""Meshes: rocks, slabs, risers, shrubs, pebbles, textured quads and
-terrain-draped decals, written as Wavefront OBJ (write_obj) or binary glTF
-(write_glb).
+"""Meshes: rocks, slabs, risers, shrubs, pebbles and textured quads,
+written as Wavefront OBJ (write_obj) or binary glTF (write_glb).
 
 Gazebo's mesh loader needs a normal per vertex, so both writers always write
 them (area-weighted from the faces when not given). GLB loads in less memory
 than OBJ (gate G3: 512 vs 801 MB for 1.64 M triangles) and collides the same,
-so the merged visual-only clutter (shrubs, pebbles) and the far field are
-GLB. gz does not rotate glTF's Y-up frame to its Z-up one (M: render
+so the merged clutter visuals and the far field are GLB. gz does not rotate glTF's Y-up frame to its Z-up one (M: render
 prototype), so write_glb writes the world frame as it is: x east, y north,
 z up.
 """
@@ -126,20 +124,6 @@ SHRUB_VARIANTS = 6  # shrub shapes every world's shrubs are drawn from
 
 
 @functools.lru_cache(maxsize=None)
-def shrub(variant):
-    """Desert shrub `variant` (< SHRUB_VARIANTS): 6-10 overlapping round
-    clumps, the origin on the ground at its centre. Returns (V, F)."""
-    rng = np.random.default_rng(500 + variant)
-    V, F = icosphere(1)
-    parts = []
-    for _ in range(int(rng.integers(6, 11))):
-        r = rng.uniform(0.12, 0.25)
-        x, y = rng.normal(0, 0.18, 2)
-        parts.append((V * r + (x, y, r * 0.8 + rng.uniform(0, 0.15)), F))
-    return combine(parts)
-
-
-@functools.lru_cache(maxsize=None)
 def hull_faces(subdivisions):
     """Faces of icosphere(subdivisions). Subdividing only appends vertices, so
     they index the first vertices of any finer icosphere, or of a rock made
@@ -179,59 +163,6 @@ def blob_outline(radius, seed, irregularity=0.35, step=0.5):
     theta = np.linspace(0, 2 * np.pi, spokes, endpoint=False)
     wobble = sum(rng.uniform(-1, 1) * np.cos(k * theta + rng.uniform(0, 6.3)) / k for k in range(1, 6))
     return theta, radius * (1 - irregularity / 2 + irregularity / 2 * wobble / np.abs(wobble).max())
-
-
-def drape(hf, cx, cy, radius, seed, offset=0.03, step=0.5, tile=4.0, irregularity=0.35, grow=0.0):
-    """A decal following the terrain: the blob_outline patch around (cx, cy),
-    grown outwards by `grow` metres, whose vertices sit `offset` above the
-    heightfield. A polar mesh (rings and spokes), so the outline is smooth.
-    Coordinates are relative to (cx, cy, 0); UVs repeat every `tile` metres.
-    Returns (V, F, UV)."""
-    theta, edge = blob_outline(radius, seed, irregularity, step)
-    edge = edge + grow
-    spokes = len(theta)
-    rings = max(2, int(np.ceil(radius / step)))
-    X = [0.0]
-    Y = [0.0]
-    for i in range(1, rings + 1):
-        X += list(edge * i / rings * np.cos(theta))
-        Y += list(edge * i / rings * np.sin(theta))
-    X, Y = np.array(X), np.array(Y)
-    V = np.stack([X, Y, hf.height(X + cx, Y + cy) + offset], axis=1)
-    UV = np.stack([(X + radius) / tile, (Y + radius) / tile], axis=1)
-
-    def ring(i, j):
-        return 0 if i == 0 else 1 + (i - 1) * spokes + j % spokes
-
-    F = [(0, ring(1, j), ring(1, j + 1)) for j in range(spokes)]
-    for i in range(1, rings):
-        for j in range(spokes):
-            a, b, c, d = ring(i, j), ring(i, j + 1), ring(i + 1, j), ring(i + 1, j + 1)
-            F += [(a, c, d), (a, d, b)]  # counter-clockwise seen from above
-    return V, np.array(F, int), UV
-
-
-def drape_rect(hf, cx, cy, length, width, yaw=0.0, offset=0.03, step=0.5, tile=4.0, breaks=()):
-    """A rectangular decal following the terrain: `length` along yaw, `width`
-    across, centred on (cx, cy), vertices `offset` above the heightfield. Grid
-    lines also run across at the distances `breaks` from the start (put them
-    on the terrain's kinks, so the decal does not cut the corners). Returns
-    (V, F, UV) relative to (cx, cy, 0)."""
-    us = np.unique(np.concatenate([np.linspace(0, length, max(2, int(np.ceil(length / step)) + 1)),
-                                   [b for b in breaks if 0 < b < length]])) - length / 2
-    vs = np.linspace(-width / 2, width / 2, max(2, int(np.ceil(width / step)) + 1))
-    U, W = (a.ravel() for a in np.meshgrid(us, vs))  # row-major: one row per v
-    c, s = np.cos(yaw), np.sin(yaw)
-    X, Y = c * U - s * W, s * U + c * W
-    V = np.stack([X, Y, hf.height(X + cx, Y + cy) + offset], axis=1)
-    UV = np.stack([(U + length / 2) / tile, (W + width / 2) / tile], axis=1)
-    n = len(us)
-    F = []
-    for i in range(len(vs) - 1):
-        for j in range(n - 1):
-            a, b, d = i * n + j, i * n + j + 1, (i + 1) * n + j
-            F += [(a, b, d + 1), (a, d + 1, d)]  # counter-clockwise seen from above
-    return V, np.array(F, int), UV
 
 
 # --- Clutter shapes (design spec 5.5) ----------------------------------------------------

@@ -7,12 +7,15 @@ by the gate holds the sample tube (in a rack) and the cache container; the
 fuel tank stands beside the lander with its hose on the ground; the tubular
 key is in lock A. The rover works on a gravel apron in front of the lander
 (a zone of gravel ground, urc/terrains.py); rocks and a rock garden lie off
-the approach, which stays clear.
+the approach, which stays clear. The ground round it is the dry clay crust of
+the shale pediment with patches of crusted sand sheet (PAINT), their MDRS
+micro-relief at a low amplitude (4 m roughness about 2 cm, design 5.2: the
+rule's "relatively flat" site) and their gravel and shrubs.
 """
 import math
 
-from .. import lander, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder, site
+from .. import lander, landscape, props, rules, terrain, terrains
+from ..world import WorldBuilder, add_relief, site
 
 KEY = "equipment_servicing"
 TITLE = "Equipment Servicing"
@@ -31,18 +34,23 @@ TANK_IN_LANDER = (1.0, 3.3, -math.pi / 2)  # hose runs along the lander's -y, in
 GRAVEL_APRON = (92.5, 0.0, 12.0, 14.0)  # x, y, length (east), width: up to 0.5 m from the lander's face
 ROCK_GARDEN = (50.0, 16.0, 20.0, 10.0, 0.18)  # x, y, length, width, rock size: beside the approach
 
-LAYERS = [Layer("regolith"), Layer("pavement", start=0.25, fade=0.3)]
+PAINT = [landscape.Base("clay_crust"), landscape.Noise("sand_sheet", feature_m=60.0, cover=0.35)]
+PADS = [(*C2[:2], 10.0), (*GATE, 6.0), (*SAMPLE_STAND[:2], 2.0), (*LANDER[:2], 9.0)]  # x, y, radius: kept flat
+RELIEF = dict(pads=PADS)  # kept flat (design 5.4)
+APPROACH_CLEAR = 7.0  # [m] no gravel this close to the drive from the gate to the lander (the apron's half-width)
+GRAVEL_REACH = 30.0  # [m] gravel lies within this of that drive, where the rover works (A: with the lander's 101
+# joints the world has little physics time to spare, design 10.3)
 
 
 def make_terrain():
     hf = terrain.Heightfield(SIZE, SAMPLES, center=CENTER)
-    hf.noise(0.5, 70.0, seed=31, octaves=3).noise(0.03, 3.0, seed=32, octaves=2)
+    hf.noise(0.5, 70.0, seed=31, octaves=3)
     hf.z -= hf.height(0, 0)
     hf.flatten(*C2[:2], 10.0, 10.0, z=0.0)
     hf.flatten(*GATE, 6.0, 8.0)
     hf.flatten(*SAMPLE_STAND[:2], 2.0, 3.0)
     hf.flatten(*LANDER[:2], 9.0, 8.0)
-    return hf
+    return add_relief(hf, PAINT, seed=13, **RELIEF)
 
 
 def lander_point(xyz):
@@ -55,7 +63,8 @@ def build(models_dir, worlds_dir, media):
     hf = make_terrain()
     w = WorldBuilder(KEY, TITLE, "1.d", site(*SITE), hf, models_dir, worlds_dir, media, seed=13, solver=SOLVER)
     w.sheet["time_limit_s"] = rules.EQUIPMENT_TIME
-    w.terrain(LAYERS)
+    w.paint(PAINT)
+    w.terrain()
     w.zone_rect("gravel_apron", terrains.GRAVEL, *GRAVEL_APRON)  # first: the fuel tank stands on its ground
     w.c2(*C2)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE)
@@ -120,5 +129,8 @@ def build(models_dir, worlds_dir, media):
     w.rock_field("scattered", w.scatter(260, CENTER, 120.0, (0.03, 0.25), avoid=keep_clear, clearance=4.0))
     w.rock_field("boulders", w.scatter(40, CENTER, 120.0, (0.3, 0.8), avoid=keep_clear, clearance=12.0))
     w.rock_garden("rock_garden", *ROCK_GARDEN, avoid=keep_clear, clearance=3.0)
-    w.shrubs(w.scatter_points(14, CENTER, 110.0, avoid=keep_clear, clearance=8.0))
+    drive = [GATE, (lx, ly)]
+    gravel = w.near(paths=[(drive, GRAVEL_REACH)]) & ~w.near(paths=[(drive, APPROACH_CLEAR)])
+    w.clutter(avoid=keep_clear, clearance=4.0, rock_sizes=(0.15, 0.3), rocks_within=gravel)
+    w.pebbles([(*ROVER[:2], 35.0), (sx, sy, 6.0), (lx - 6.0, ly, 6.0)])
     return w.write()

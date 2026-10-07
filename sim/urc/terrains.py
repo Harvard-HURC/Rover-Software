@@ -1,10 +1,11 @@
 """Ground types and zones.
 
-TYPES is the one catalogue of ground: every world picks its terrain layers,
-zones, decals and paint rules (landscape.py) from it by name, and its
-textures are generated once into urc_media and shared (TerrainType.texture).
-ROCKS and SHRUBS hold the rock and shrub colours (WorldBuilder.rock_field,
-WorldBuilder.shrubs) the same way.
+TYPES is the one catalogue of ground: every world picks its zones and paint
+rules (landscape.py) from it by name, and its colour map, detail layers,
+micro-relief and clutter follow from the types it paints (WorldBuilder).
+ROCKS, SHRUBS and PEBBLE_COLOURS hold the colours of rocks, slabs, risers,
+shrubs and pebbles (WorldBuilder.rock_field, slabs, risers, shrubs,
+pebbles) the same way.
 
 Each type carries four groups of fields, the structure of the realism design
 (docs/superpowers/specs/2026-10-06-urc-realism-design.md, sections 5.1-5.7;
@@ -35,8 +36,8 @@ the friction of every wheel contact itself instead (design D1): on the
 heightmap from ground.png under the contact, on the terrain model's other
 shapes from ground.json's collision map (TERRAIN_SURFACE where it names
 none), on any other model from its SDF friction, else OBJECT_SURFACE. So a
-zone only paints the ground raster and shows a decal; nothing in a world
-carries a friction coefficient of its own.
+zone only paints the ground raster (which the colour map shows); nothing in
+a world carries a friction coefficient of its own.
 """
 import math
 import zlib
@@ -47,11 +48,8 @@ import numpy as np
 from . import meshes, textures
 
 DIG = "strong"  # dig-in preset worlds are written with: "strong" (the catalogue's, the user's choice) or "mild"
-DECAL_OFFSET = 0.02  # [m] decal above the original surface
-DECAL_MARGIN = 0.2  # [m] the decal reaches this far past the zone outline
-DECAL_STEP = 0.5  # [m] decal mesh spacing (and a round zone's outline spacing)
-DECAL_TILE = 4.0  # [m] decal texture repeat
-NORMAL_STRENGTH = 2.0  # bumpiness of the ground normal maps
+OUTLINE_STEP = 0.5  # [m] a round zone's outline spacing
+NORMAL_STRENGTH = 2.0  # bumpiness of the ground normal maps (Layer textures)
 DUST_RGB = (0.80, 0.70, 0.56)  # dust puff colour of the tuned particle emitter (design spec 6.5, M)
 
 
@@ -136,9 +134,11 @@ def _srgb(lab):
 @dataclass(frozen=True)
 class Appearance:
     """How the ground looks: its colour-map palette, the shared detail
-    texture laid over it (None: none) and the dust its wheels raise."""
+    texture of its surface (None: none; Terra weights detail layers by height
+    only, so a world lays the same few over all its ground,
+    WorldBuilder.detail_layers) and the dust its wheels raise."""
     palette: Palette
-    detail: str = None  # key of a shared detail texture in urc_media
+    detail: str = None  # key of textures.DETAILS
     dust: float = 0.0  # dust factor: scales the emitters' rate behind the wheels (0: none)
     dust_rgb: tuple = DUST_RGB  # [0-1]
 
@@ -252,7 +252,8 @@ class TerrainType:
 
     def texture(self, media):
         """The type's ground texture in urc_media, shared by every world (as a
-        terrain layer or a zone decal)."""
+        height-banded terrain layer: world.Layer, the fallback of a terrain
+        without a colour map)."""
         return media.texture(f"ground_{self.key}", textures.terrain_texture, self.rgb, seed=self.seed,
                              variation=self.variation, pebbles=self.pebbles)
 
@@ -353,7 +354,7 @@ GRAVEL = TerrainType(
     "gravel", "Gravel", None, (150, 128, 108), pebbles=0.06, variation=0.35,
     notes="Loose pebbles on packed ground: rolls under the wheels.",
     traction=Traction(0.62, 0.52, 0.05, 0.0, 0.3, 0.005),  # crr: loose worn gravel 0.04-0.08 [6]; mu (A)
-    appearance=Appearance(Palette.survey(MUNSELL["farb_a"], NAIP["green_river"]), "gravel", 0.3),  # hue (A)
+    appearance=Appearance(Palette.survey(MUNSELL["farb_a"], NAIP["green_river"]), "gravel_lag", 0.3),  # hue (A)
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 SAND = TerrainType(
     "sand", "Soft sand", None, (218, 186, 140), pebbles=0.002, variation=0.3,
@@ -362,7 +363,7 @@ SAND = TerrainType(
     # Bekker dry sand [5]: 0.85 x (0.41 + 0.20); bulldozing (A) between Rankine passive pressure (0.006) and
     # Bekker's bulldozing formula (0.11) at 2 cm sinkage [39][40], Sheppard's bulk density [2]
     traction=Traction(0.52, 0.52, 0.20, 0.06, 1.0, 0.02, *STRONG_DIG),
-    appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["sheppard"]), "ripples", 0.8),
+    appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["sheppard"]), "rippled_sand", 0.8),
     relief=LOOSE_SAND_RELIEF, clutter=Clutter(shrubs=SAND_SHRUBS))
 SCREE = TerrainType(
     "scree", "Loose scree", None, (138, 112, 94), pebbles=0.05, variation=0.45,
@@ -378,7 +379,7 @@ CLAY = TerrainType(
     # a loose fine layer: no peak [34]; a 4.8 cm pulverised mantle on disturbed slopes (T, Mancos [8]);
     # mu, crr and sinkage (A); dry powder, not the moist clay of [5]
     traction=Traction(0.45, 0.45, 0.15, 0.06, 0.5, 0.02, *STRONG_DIG),
-    appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn", 1.0),
+    appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn_crust", 1.0),
     relief=FLAT_RELIEF)
 SLICKROCK = TerrainType(
     "slickrock", "Slickrock sandstone slab", None, (222, 184, 140), pebbles=0.0,
@@ -392,25 +393,26 @@ REGOLITH = TerrainType(
     "regolith", "Packed regolith", None, (190, 150, 115),
     notes="The default ground: packed sandy loam, climbable up to 23 deg.",
     traction=Traction(0.62, 0.52, 0.10, 0.0, 0.3, 0.005),  # Bekker sandy loam [5]: 0.85 x (0.51 + 0.10); mu_s (A)
-    appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["sheppard_leebench"]), None, 0.4),
-    relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL))  # relief: Leebench is packed sand sheet (A, Q14)
+    appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["sheppard_leebench"]), "gravel_lag", 0.4),
+    relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL))  # Leebench: packed sand sheet with sparse surface
+# gravel (A, design 5.3, the user's Q14 answer)
 PAVEMENT = TerrainType(
     "pavement", "Desert pavement", None, (166, 122, 93), pebbles=0.01,
     notes="Packed ground armoured with small stones, between the washes and the hills.",
     traction=PAVEMENT_TRACTION,  # a visual type: fan pavement's traction (design 5.6)
-    appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["plain"]), "gravel", 0.3),
+    appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["plain"]), "gravel_lag", 0.3),
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 MUDSTONE = TerrainType(
     "mudstone", "Maroon mudstone", None, (138, 82, 70),
     notes="Morrison-like maroon and purple mudstone bands on the hills.",
     traction=BADLAND_TRACTION,  # a visual type: badland slope's traction (design 5.6)
-    appearance=Appearance(Palette(NAIP["maroon"], (160, 138, 135), (195, 170, 161)), "popcorn", 0.7),
+    appearance=Appearance(Palette(NAIP["maroon"], (160, 138, 135), (195, 170, 161)), "popcorn_crust", 0.7),
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 BENTONITE = TerrainType(
     "bentonite", "Grey bentonitic mudstone", None, (148, 148, 158),
     notes="Grey-blue bentonite bands on the hills; where it weathers to powder it is CLAY.",
     traction=BADLAND_TRACTION,  # a visual type: badland slope's traction (design 5.6)
-    appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn", 0.7),
+    appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn_crust", 0.7),
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 CAPROCK = TerrainType(
     "caprock", "Sandstone caprock", None, (212, 194, 156),
@@ -437,34 +439,34 @@ SAND_SHEET = TerrainType(
     traction=Traction(0.60, 0.55, 0.15, 0.03, 0.6, 0.015, *STRONG_DIG),  # between sand and loam (A); a crust
     # gives a small peak (A, [34])
     appearance=Appearance(Palette.survey(MUNSELL["sheppard"], WINDOWS["sand_sheet_D"][1], WINDOWS["sand_sheet_D"]),
-                          "ripples", 0.6),
+                          "rippled_sand", 0.6),
     relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL, shrubs=SAND_SHRUBS))
 WASH_SAND = TerrainType(
     "wash_sand", "Wash sand", None, (255, 198, 154), pebbles=0.004, variation=0.3,
     notes="Loose sand on wash floors (Riverwash: 98 % sand in the top 15 cm): the loosest ground there is.",
     traction=Traction(0.52, 0.52, 0.25, 0.10, 1.2, 0.03, *STRONG_DIG),  # looser than sand (A); URC teams stuck
     # in sand [14][32]
-    appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["wash"]), "ripples", 0.6),  # hue (A)
+    appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["wash"]), "rippled_sand", 0.6),  # hue (A)
     relief=WASH_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL, shrubs=WASH_SHRUBS))
 FAN_PAVEMENT = TerrainType(
     "fan_pavement", "Fan gravel pavement", None, (196, 172, 140), pebbles=0.08, variation=0.35,
     notes="A gravel lag armouring an alluvial fan; designed patches only (design 5.3, Q14).",
     traction=PAVEMENT_TRACTION,
-    appearance=Appearance(Palette.survey(MUNSELL["leebench"]), "gravel", 0.3),
+    appearance=Appearance(Palette.survey(MUNSELL["leebench"]), "gravel_lag", 0.3),
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 CLAY_CRUST = TerrainType(
     "clay_crust", "Shale pediment crust", None, (223, 209, 184), pebbles=0.02, variation=0.3,
     notes="Dry crust of gravelly silty clay on the grey shale pediment (Chipeta).",
     traction=Traction(0.78, 0.65, 0.08, 0.0, 0.1, 0.0),  # crr: medium-hard soil 0.04-0.08 [6]; dry crust mu (A)
     appearance=Appearance(Palette.survey(MUNSELL["chipeta"], NAIP["chipeta"], WINDOWS["shale_pediment_A"]),
-                          "gravel", 0.5),  # its A horizon is 30 % gravel [2]
+                          "gravel_lag", 0.5),  # its A horizon is 30 % gravel [2]
     relief=PEDIMENT_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL))
 BADLAND_SLOPE = TerrainType(
     "badland_slope", "Badland slope", None, (225, 200, 192), pebbles=0.002, variation=0.45,
     notes="Bentonitic mudstone slopes under a popcorn crust: rounded knobs, rills and maroon, grey and white bands.",
     traction=BADLAND_TRACTION,
     appearance=Appearance(Palette.survey(NAIP["maroon"], NAIP["badland_rock"], WINDOWS["badland_banded_B"]),
-                          "popcorn", 0.7),  # hue: maroon 10R-5YR (A)
+                          "popcorn_crust", 0.7),  # hue: maroon 10R-5YR (A)
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 SILT_FLAT = TerrainType(
     "silt_flat", "Silt flat", None, (225, 214, 187), pebbles=0.0005, variation=0.3,
@@ -497,17 +499,30 @@ DEFAULT_GROUND = "regolith"  # what a world's ground is where nothing else is pa
 OBJECT_SURFACE = "manmade"  # objects whose SDF sets no friction (ground.json object_default)
 TERRAIN_SURFACE = "rock"  # terrain-model shapes the collision map does not name (ground.json terrain_default)
 
+def _linear(rgb):
+    """An sRGB colour [0-255] in linear light [0-1]."""
+    return tuple(round(float(v), 4) for v in textures.srgb_to_linear(rgb))
+
+
 # Rock colours by palette: rock_field gives each rock one of its palette's.
 ROCKS = {"desert": ((0.47, 0.33, 0.25), (0.55, 0.45, 0.36), (0.42, 0.40, 0.40), (0.60, 0.50, 0.38),
                     (0.38, 0.27, 0.22)),
          "lichen": ((0.62, 0.64, 0.32),),  # epilithic lichen covering boulders
-         # Slabs (design 5.5): varnished dark tops (105-136, 100-116, 101-116) (M) and fresh tan faces,
-         # 10YR 6/3 [2][28]; VARNISHED of them varnished (A).
-         "varnish": ((105 / 255, 100 / 255, 101 / 255), (120 / 255, 108 / 255, 108 / 255),
-                     (136 / 255, 116 / 255, 116 / 255)),
-         "fresh_sandstone": ((169 / 255, 145 / 255, 115 / 255),)}
+         # Slabs and risers (design 5.5): varnished dark tops (105-136, 100-116, 101-116) (M) and fresh tan
+         # faces, 10YR 6/3 [2][28], measured in sRGB and given here in linear light, as mesh colours are;
+         # VARNISHED of them varnished (A).
+         "varnish": tuple(_linear(c) for c in ((105, 100, 101), (120, 108, 108), (136, 116, 116))),
+         "fresh_sandstone": (_linear((169, 145, 115)),)}
 VARNISHED = 0.7
 SHRUBS = ((0.42, 0.47, 0.33), (0.37, 0.42, 0.29), (0.47, 0.49, 0.38))  # sage, dark and grey-green brush
+MISSION_SHRUB = (0.9, 0.6)  # [m] diameter, height of a shrub a mission places by hand (A: today's shrub meshes)
+# Pebbles round starts and targets (design 5.5): per square metre (count, median diameter [m]), log-normal sizes;
+# 5.3 per m2 in all (M: render prototype, 20,302 within 35 m), the size split (A). PEBBLE_BUDGET: most per world
+# (M: ~20,000 cost +130 MB, frame time within noise).
+PEBBLES = ((4.0, 0.03), (1.3, 0.06))
+PEBBLE_BUDGET = 20_000
+PEBBLE_COLOURS = ((0.42, 0.33, 0.27), (0.30, 0.24, 0.21), (0.55, 0.47, 0.40), (0.62, 0.40, 0.30),
+                  (0.20, 0.17, 0.16), (0.70, 0.66, 0.60))  # (M: render prototype, tuned by eye)
 
 
 def traction(kind, dig=None):
@@ -535,13 +550,11 @@ def calibration_surface(mu):
 @dataclass
 class Zone:
     """A zone of ground type `kind`: an outline in its frame (x, y, yaw). It
-    paints the ground raster (landscape.paint) and shows a decal (decal: the
-    decal mesh's shape parameters)."""
+    paints the ground raster (landscape.paint)."""
     key: str
     kind: TerrainType
     outline: np.ndarray  # (n, 2) layout polygon, counter-clockwise
     frame: tuple  # (x, y, yaw)
-    decal: dict
 
     @property
     def area(self):
@@ -555,19 +568,14 @@ class Zone:
 
 def blob(key, kind, x, y, radius, seed, irregularity=0.3):
     """An irregular round zone (the outline of meshes.blob_outline)."""
-    step = min(DECAL_STEP, radius / 8)
-    theta, edge = meshes.blob_outline(radius, seed, irregularity, step)
+    theta, edge = meshes.blob_outline(radius, seed, irregularity, min(OUTLINE_STEP, radius / 8))
     outline = np.stack([x + edge * np.cos(theta), y + edge * np.sin(theta)], axis=1)
-    return Zone(key, kind, outline, (x, y, 0.0), dict(shape="blob", radius=radius, seed=seed,
-                                                       irregularity=irregularity, step=step))
+    return Zone(key, kind, outline, (x, y, 0.0))
 
 
-def rect(key, kind, x, y, length, width, yaw=0.0, breaks=()):
-    """A rectangular zone, `length` along yaw and `width` across, centred on
-    (x, y). `breaks` (distances from the start): kinks of the ground under
-    it, where the draped decal mesh gets an edge."""
-    zone = Zone(key, kind, None, (x, y, yaw), dict(shape="rect", length=length, width=width, yaw=yaw,
-                                                   breaks=tuple(breaks)))
+def rect(key, kind, x, y, length, width, yaw=0.0):
+    """A rectangular zone, `length` along yaw and `width` across, centred on (x, y)."""
+    zone = Zone(key, kind, None, (x, y, yaw))
     u, v = np.array([-1, 1, 1, -1]) * length / 2, np.array([-1, -1, 1, 1]) * width / 2
     zone.outline = np.stack(zone.to_layout(u, v), axis=1)
     return zone
