@@ -53,6 +53,8 @@ NDVI_ANOMALY = 0.01  # shrub dark spots exceed it: 53-68 % of their pixels vs 2 
 SHRUB_AREA_M2 = (0.25, 13.0)  # dark-spot sizes taken for shrubs: one NAIP pixel to a 4 m crown (A)
 SHRUB_MAX_SLOPE = 25.0  # [deg] dark spots on steeper ground are rock, varnish or shadow (A)
 FIT_STRIDE = 3  # the sun fit uses every 3rd texel each way (speed; the fit is over millions)
+SUN_FIT_SLOPE = 10.0  # [deg] the sun's azimuth is fitted on steeper ground, where shading outweighs albedo
+# (M: fitted azimuth over five windows of the route area 100-120 deg on all ground, 107-119 deg above 10 deg)
 SHADOW_COS = 0.05  # cos(illumination) at or below this: self-shadowed (A)
 DESHADE_LIMITS = (0.5, 2.0)  # the C-correction factor is clipped to this (A: steep, nearly unlit ground)
 INPAINT_RADIUS_PX = 3
@@ -351,7 +353,8 @@ def deshade(naip, dem_hf, units=None, acquired=NAIP2024_ACQUIRED, site=lighting.
     Luminance per unit is fitted as rho (k + cos i), i the illumination angle
     under a fitted sun on the DEM. The sun's azimuth comes from least squares
     of luminance (each unit scaled to its median) on the surface normal's
-    horizontal components; its elevation from the sun's path on the date at
+    horizontal components over ground steeper than SUN_FIT_SLOPE; its
+    elevation from the sun's path on the date at
     that azimuth (the vertical component is nearly collinear with the
     intercept, and steep badland slopes are paler: fitted, it comes out
     negative, M). Then k per unit, and each texel is divided by
@@ -374,9 +377,10 @@ def deshade(naip, dem_hf, units=None, acquired=NAIP2024_ACQUIRED, site=lighting.
         inside = units == u
         clean = inside & usable
         scaled[inside] = lum[inside] / np.median(lum[clean] if clean.any() else lum[inside])
-    sun = _fit_sun(scaled, normals, usable, acquired, site)
+    sloped = usable & (normals[..., 2] < math.cos(math.radians(SUN_FIT_SLOPE)))
+    sun = _fit_sun(scaled, normals, sloped, acquired, site)
     shadow = cast_shadows(heights, texel, sun) | (illumination(normals, sun) <= SHADOW_COS)
-    sun = _fit_sun(scaled, normals, usable & ~shadow, acquired, site)  # again, without the shadows
+    sun = _fit_sun(scaled, normals, sloped & ~shadow, acquired, site)  # again, without the shadows
     shadow = cast_shadows(heights, texel, sun) | (illumination(normals, sun) <= SHADOW_COS)
     cos_i = illumination(normals, sun)
     fit = usable & ~shadow
