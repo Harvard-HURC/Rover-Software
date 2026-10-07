@@ -22,6 +22,15 @@ the proving ground, 0.56-0.83 us per collision and 0.1-0.18 us per visual
 per 1 ms step (400 extra static boxes in the terrain link, out of reach).
 Static shapes therefore go in the terrain's own link, merged where they can
 be (a body never collides with itself, which keeps them off the broadphase).
+
+The ground: every world paints a ground raster (landscape.paint: its paint
+rules, default DEFAULT_GROUND everywhere, then its zones) and writes it
+next to the heightmap as ground.png, with ground.json (legend, traction,
+and the collision map naming the ground type of every other shape of the
+terrain model), for the drivetrain, the sheet readers and the map. With
+SINKAGE the collision heightmap is the visual one carved down by each
+type's static sinkage (the wheels sit in sand), each PNG normalised to its
+own maximum, and objects stand on the carved surface.
 """
 import json
 import math
@@ -31,9 +40,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
+from PIL import Image
 
-from . import dem, geo, meshes, props, rules, sdf, sheet, terrain, terrains
+from . import dem, geo, landscape, meshes, props, rules, sdf, sheet, terrain, terrains
 
 SYSTEMS = (
     ("gz-sim-physics-system", "gz::sim::systems::Physics", {}),
@@ -47,6 +58,10 @@ ROCK_CHUNK = 128.0  # [m] rocks and shrubs are merged into one mesh per square t
 ROCK_BURY = 0.08  # rocks sink this fraction of their size below the ground under their base
 SHRUB_SINK = 0.05  # [m] a shrub's origin below the ground
 ZONE_OUTLINE_POINTS = 64  # most outline vertices a zone records in the sheet
+SINKAGE = False  # carve the collision heightmap by each ground type's static sinkage (design 5.8; off in wave 1)
+SINKAGE_EASE = 0.75  # [m] the carve eases in over this inside its type (A: design 0.5-1 m)
+MAX_SINKAGE = max(t.traction.sinkage_m for t in terrains.TYPES.values())  # [m] world z = 0 lies this far below
+# the lowest point when sinkage is on, so that any carve fits above it
 
 
 def garden_spacing(size):
@@ -77,8 +92,10 @@ class WorldBuilder:
         self.key = key
         self.name = name or f"urc_{key}"
         self.hf = hf
+        self.layout_origin = origin  # what landscape.Soils paints the soil map in
+        self.sinkage = SINKAGE
         cx, cy = hf.center
-        self.shift = (cx, cy, float(hf.z.min()))
+        self.shift = (cx, cy, float(hf.z.min()) - (MAX_SINKAGE if self.sinkage else 0.0))
         self.origin = geo.Origin(*geo.enu_to_wgs84(origin, *self.shift))  # the world origin
         self.models_dir = Path(models_dir)
         self.worlds_dir = Path(worlds_dir)
@@ -98,6 +115,11 @@ class WorldBuilder:
         self._rocks = []  # (world xyz, size, variant, orientation, rgb, collides), merged by write()
         self._shrubs = []  # (world xyz, variant, orientation, rgb), merged by write()
         self._placed = {}  # model name -> layout (x, y): zones may not be declared under them later
+        self.legend = landscape.Legend()
+        self.paint_rules = [landscape.Base(terrains.DEFAULT_GROUND)]
+        self._surfaces = {}  # exact collision name in the terrain link -> ground type key (ground.json)
+        self._raster = None  # the ground raster, painted when first needed (ground_map)
+        self._carved = None  # the collision surface with sinkage, a layout Heightfield
         self._setup()
 
     # --- Coordinates -----------------------------------------------------------------
@@ -115,11 +137,20 @@ class WorldBuilder:
         which the sheet's heightmap and DEM give."""
         return self.hf.height(x, y)
 
+    def collision_height(self, x, y):
+        """Height of the collision heightmap at a layout point (layout z): the
+        terrain, carved by the sinkage of its ground with SINKAGE."""
+        if not self.sinkage:
+            return self.height(x, y)
+        if self._carved is None:
+            self._carved = terrain.Heightfield(self.hf.size, self.hf.n, self.hf.z - self.carve(), self.hf.center)
+        return self._carved.height(x, y)
+
     def ground(self, x, y):
         """What a wheel or an object rests on at layout (x, y): the top of a
-        friction zone's tiles, else the terrain."""
+        friction zone's tiles, else the collision surface."""
         tops = [terrains.top_height(zone.tiles, x, y) for zone in self.zones]
-        return max([self.height(x, y)] + [t for t in tops if t is not None])
+        return max([self.collision_height(x, y)] + [t for t in tops if t is not None])
 
     def geo(self, x, y, z=None):
         """Sheet entry for a layout point: world x, y, z and WGS84."""
@@ -190,42 +221,101 @@ class WorldBuilder:
         # each step.
         sdf.visual(link, "horizon", sdf.plane((8000, 8000)), (0, 0, -0.3),
                    tuple(0.8 * c / 255 for c in layers[0].kind.rgb), cast_shadows=False)
-        sdf.collision(link, "floor", sdf.box((8000, 8000, 1.0)), (0, 0, -2.5))
+        floor = sdf.collision(link, "floor", sdf.box((8000, 8000, 1.0)), (0, 0, -2.5))
+        self._surfaces[floor.get("name")] = None  # the world's base ground, known at write()
         # Zones, blocks and decals join this link, rocks and shrubs in write().
         self._terrain = (name, root, link)
         self._heightmaps = (collision, visual)
         self.include(name, "terrain", (0, 0, 0), world=True)
 
     def _write_terrain(self):
-        """heightmap.png (what Gazebo draws and collides with, the sheet's
-        terrain) and the same surface as a GeoTIFF DEM. Gazebo scales an
-        image heightmap by its own highest pixel (pixel / max_pixel * size_z),
-        so the PNG spans 0-65535 from the lowest point (world z = 0) up."""
+        """heightmap.png (what Gazebo draws and, without SINKAGE, collides
+        with; the sheet's terrain) and the same surface as a GeoTIFF DEM; with
+        SINKAGE the collision surface as heightmap_collision.png. Gazebo
+        scales an image heightmap by its own highest pixel (pixel / max_pixel
+        * size_z) and does not shift its lowest, so each PNG spans 0-65535
+        from world z = 0 (the lowest point, less MAX_SINKAGE with sinkage) to
+        its own highest point, which its <size> z names: a carve anywhere,
+        the highest point included, stays exact."""
         name = self._terrain[0]
         directory = self.models_dir / name
         surface = terrain.Heightfield(self.hf.size, self.hf.n, self.hf.z - self.shift[2])
         z_max = float(surface.z.max())
         surface.write_png(directory / "heightmap.png", 0.0, z_max)
         dem.write_geotiff(surface, directory / "dem.tif", self.origin)
-        for element in self._heightmaps:
-            sdf.sub(element, "uri", sdf.model_uri(name, "heightmap.png"))
-            sdf.sub(element, "size", (self.hf.size, self.hf.size, z_max))
         rel = lambda p: os.path.relpath(p, self.worlds_dir)  # noqa: E731
         self.sheet["terrain"] = {"heightmap": rel(directory / "heightmap.png"),
                                  "dem_geotiff": rel(directory / "dem.tif"), "size_m": self.hf.size,
                                  "samples": self.hf.n, "z_max": round(z_max, 4),
                                  "note":"heightmap.png: 16-bit, centred on the world origin, row 0 north, "
                                          "column 0 west; z = pixel / 65535 * z_max"}
+        collision = ("heightmap.png", z_max)
+        if self.sinkage:
+            carved = terrain.Heightfield(self.hf.size, self.hf.n, surface.z - self.carve())
+            collision = ("heightmap_collision.png", float(carved.z.max()))
+            carved.write_png(directory / collision[0], 0.0, collision[1])
+            self.sheet["terrain"].update(collision_heightmap=rel(directory / collision[0]),
+                                         z_max_collision=round(collision[1], 4))
+        for element, (png, top) in zip(self._heightmaps, (collision, ("heightmap.png", z_max))):
+            sdf.sub(element, "uri", sdf.model_uri(name, png))
+            sdf.sub(element, "size", (self.hf.size, self.hf.size, top))
+
+    # --- Ground ------------------------------------------------------------------------
+
+    def paint(self, rules):
+        """The world's paint rules (landscape.paint), instead of
+        DEFAULT_GROUND everywhere; before anything needs the ground raster."""
+        assert self._raster is None, "paint() before the ground raster is used"
+        self.paint_rules = list(rules)
+
+    def ground_map(self):
+        """The ground raster on the heightmap's grid (uint8 indices into
+        self.legend): the paint rules, then every zone declared so far."""
+        if self._raster is None:
+            self._raster = landscape.paint(self.hf, self.paint_rules, self.zones, self.legend)
+        return self._raster
+
+    def carve(self):
+        """How far [m] the collision surface lies below the terrain at each
+        sample: the static sinkage of its ground type (design 5.8), eased in
+        over SINKAGE_EASE inside the type (a minimum filter, then a box blur
+        of the same size: never deeper than the type's own sinkage, nothing
+        outside it)."""
+        cut = np.array([t.traction.sinkage_m for t in self.legend.types], np.float32)[self.ground_map()]
+        k = 2 * int(round(SINKAGE_EASE / 2 / self.hf.res)) + 1
+        if k > 1:
+            cut = cv2.blur(cv2.erode(cut, np.ones((k, k), np.uint8)), (k, k))
+        return cut.astype(float)
+
+    def _write_ground(self):
+        """ground.png (the ground raster, 8-bit) and ground.json (legend,
+        traction, collision map: design 9.1) next to the heightmap."""
+        name, _, link = self._terrain
+        directory = self.models_dir / name
+        Image.fromarray(self.ground_map()).save(directory / "ground.png")  # uint8: 8-bit grey
+        base = next((rule.key for rule in reversed(self.paint_rules) if isinstance(rule, landscape.Base)),
+                    terrains.DEFAULT_GROUND)
+        collisions = {}
+        for c in link.findall("collision"):
+            key = c.get("name")
+            if key == "terrain_collision" or any(key.startswith(prefix) for prefix in landscape.PREFIXES):
+                continue
+            if key not in self._surfaces:
+                raise ValueError(f"the terrain's collision {key} has no ground type for ground.json")
+            collisions[key] = self._surfaces[key] or base
+        info = landscape.ground_json(self.legend, self.hf.size, self.hf.n, base, collisions)
+        (directory / "ground.json").write_text(json.dumps(info, indent=1) + "\n")
 
     # --- Friction zones ------------------------------------------------------------------
 
     def zone(self, key, kind, x, y, radius, irregularity=0.3):
-        """A zone of terrain type `kind` (terrains.TYPES, whose mu it has): an
-        irregular patch up to `radius` around layout (x, y). Below the
-        heightmap's mu 1.0 it is a friction zone, its tiles covering the cells
-        of a 1.5 m grid whose centres lie inside it; at mu 1.0 only its decal.
-        Declare zones before placing anything on them (place() sets objects on
-        the tiles, rock_field keeps colliding rocks off them)."""
+        """A zone of terrain type `kind` (terrains.TYPES): an irregular patch
+        up to `radius` around layout (x, y). It paints the ground raster and
+        has a decal; with terrains.FRICTION "tiles" and a mu below the
+        heightmap's 1.0 it is also a friction zone, its tiles covering the
+        cells of a 1.5 m grid whose centres lie inside it. Declare zones
+        before placing anything on them (place() sets objects on the tiles
+        and the carved ground, rock_field keeps colliding rocks off tiles)."""
         seed = int(self.rng.integers(1 << 30))
         return self._add_zone(terrains.blob(key, kind, x, y, radius, seed, irregularity))
 
@@ -238,11 +328,17 @@ class WorldBuilder:
     def _add_zone(self, zone):
         assert self._terrain is not None, "terrain() first"
         assert zone.key not in {z.key for z in self.zones}, zone.key
-        if zone.mu < terrains.HEIGHTMAP_MU:
+        self._raster = self._carved = None  # the ground changes
+        if terrains.FRICTION == "tiles" and zone.mu < terrains.HEIGHTMAP_MU:
             terrains.fit_tiles(self.hf, zone)
         for name, (x, y) in self._placed.items():
             if terrains.top_height(zone.tiles, x, y) is not None:
                 raise ValueError(f"zone {zone.key} lies under {name}, which was placed before it")
+        if self.sinkage and zone.kind.traction.sinkage_m:
+            for name, (x, y) in self._placed.items():
+                if terrains.inside(zone.outline, x, y):
+                    raise ValueError(f"zone {zone.key} would sink the ground under {name}, which was placed "
+                                     "before it")
         if zone.tiles:
             tiles = [(zone.tiles, *self._bounds(zone.tiles))]
             for xyz, size, variant, R, _, collides in self._rocks:
@@ -251,8 +347,9 @@ class WorldBuilder:
                                      "keeps them off zones declared first)")
         model, _, link = self._terrain
         for k, tile in enumerate(zone.tiles):
-            sdf.collision(link, f"zone_{zone.key}_{k}", sdf.box(tile.size),
-                          (*self.to_world(*tile.center), *sdf.matrix_to_rpy(tile.axes)), mu=zone.mu)
+            c = sdf.collision(link, f"zone_{zone.key}_{k}", sdf.box(tile.size),
+                              (*self.to_world(*tile.center), *sdf.matrix_to_rpy(tile.axes)), mu=zone.mu)
+            self._surfaces[c.get("name")] = zone.kind.key
         x0, y0, _ = zone.frame
         d = zone.decal
         if d["shape"] == "blob":
@@ -353,12 +450,14 @@ class WorldBuilder:
         """Line of sight between the C2 antenna and the rover at layout (x, y) (sheet.radio_los)."""
         return sheet.radio_los(self.hf, self._antenna, x, y, self.height(x, y))
 
-    def block(self, name, x, y, yaw, size, top, color):
+    def block(self, name, x, y, yaw, size, top, color, surface=terrains.TERRAIN_SURFACE):
         """A static box in the terrain's link (features.Step, features.Ledge):
         `size` (along yaw, across, height), its top face at layout height
-        `top` above layout (x, y)."""
+        `top` above layout (x, y); its ground type in ground.json is
+        `surface`."""
         sdf.shape(self._terrain[2], name, sdf.box(size), (*self.to_world(x, y, top - size[2] / 2), 0, 0, yaw),
                   color)
+        self._surfaces[f"{name}_collision"] = surface
 
     # --- Rocks -----------------------------------------------------------------------------
 
@@ -540,6 +639,7 @@ class WorldBuilder:
     def write(self):
         self._write_terrain()
         self._write_clutter()
+        self._write_ground()
         name, root, _ = self._terrain
         sdf.write_model(self.models_dir, name, root, f"Terrain for the URC {self.sheet['mission']} world.")
         self.worlds_dir.mkdir(parents=True, exist_ok=True)
