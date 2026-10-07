@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from simulate import cpu_time_per_step, gen_model, ground_row, ground_world, physical, simulate, spin_ratio, world_file
+from simulate import (cpu_time_per_step, diffdrive, gen_model, ground_row, ground_world, physical, simulate,
+                      spin_ratio, world_file)
 from worldfiles import WORLDS, temp_sdf, world_copy
 
 from gz.msgs10.boolean_pb2 import Boolean  # noqa: E402  (after simulate set the environment)
@@ -37,16 +38,14 @@ from urc import meshes, terrain, terrains  # noqa: E402
 P = gen_model.Params()
 A, C = P.wheel_dx, P.pivot_y  # half wheelbase, half track [m]
 T = terrains.Traction
-# The ground types of design spec 5.6 the tests stand on, as ground.json rows: index, traction, dust. Test data:
-# the same rows WS-T1 puts into terrains.TYPES and the worlds' ground.json.
+# The ground types the tests stand on, as ground.json rows: index, traction, dust. The catalogue's types are
+# the worlds' ground.json rows (terrains.TYPES, design spec 5.6, the strong dig-in preset).
 GROUND = {
-    "regolith": (3, T(mu_s=0.62, mu_k=0.52, crr=0.10, slip=0.3, sinkage_m=0.005), 0.4),
-    "sand": (7, T(mu_s=0.52, mu_k=0.52, crr=0.20, bulldoze=0.06, slip=1.0, sinkage_m=0.02, dig_rate=0.01,
-                  dig_max=1.25), 0.8),
-    "wash_sand": (8, T(mu_s=0.52, mu_k=0.52, crr=0.25, bulldoze=0.10, slip=1.2, sinkage_m=0.03, dig_rate=0.012,
-                       dig_max=1.15), 0.6),
-    "rock": (12, T(mu_s=1.0, mu_k=0.85, crr=0.015, slip=0.05), 0.1),
-    "manmade": (20, T(mu_s=0.80, mu_k=0.70, crr=0.015, slip=0.05), 0.0),
+    "regolith": (3, terrains.REGOLITH.traction, 0.4),
+    "sand": (7, terrains.SAND.traction, 0.8),
+    "wash_sand": (8, terrains.WASH_SAND.traction, 0.6),
+    "rock": (12, terrains.ROCK.traction, 0.1),
+    "manmade": (20, terrains.MANMADE.traction, 0.0),
     "test_mu020": (30, T.coulomb(0.2), 0.0),
     "test_mu080": (31, T.coulomb(0.8), 0.0),
     "test_mu095": (32, T.coulomb(0.95), 0.0),
@@ -94,11 +93,11 @@ class Run:
 
 def drive(seconds, cmd, ground="regolith", params=None, solver=None, hf=FLAT, raster=None, rover=(0.0, 0.0, 0.0),
           lift=0.02, extra="", terrain_extra="", trace_every=10, subscribe=(), publish_until=None,
-          gravity=(0.0, 0.0, -9.8)):
+          gravity=(0.0, 0.0, -9.8), rows=ROWS):
     """Run the physical rover on terrain hf with ground map `raster` (default: `ground` everywhere)."""
     raster = everywhere(ground, hf.n) if raster is None else raster
-    with ground_world(hf, raster, ROWS, rover, lift=lift, ground_options=OPTIONS, terrain_extra=terrain_extra,
-                      extra=extra, params=params or physical(dig="off"), solver=solver, gravity=gravity) as world:
+    with ground_world(hf, raster, rows, rover, lift=lift, ground_options=OPTIONS, terrain_extra=terrain_extra,
+                      extra=extra, params=params or physical(dig=False), solver=solver, gravity=gravity) as world:
         s = simulate(seconds, world=world, cmd=cmd, trace_every=trace_every, publish_until=publish_until,
                      subscribe=[(gen_model.DRIVETRAIN_TOPIC, StringMsg), *subscribe])
     return Run(s, [json.loads(m.data) for m in s.messages[gen_model.DRIVETRAIN_TOPIC]])
@@ -158,7 +157,7 @@ class SpinOnObjects(unittest.TestCase):
             with self.subTest(shape=name):
                 shape = self.BOX.format(name=name, surface="")
                 with ground_world(FLAT, everywhere("regolith"), ROWS, lift=0.12, ground_options=options,
-                                  terrain_extra=shape, params=physical(dig="off")) as world:
+                                  terrain_extra=shape, params=physical(dig=False)) as world:
                     s = simulate(6.0, world=world, cmd=SPIN, trace_every=10)
                 rate = Run(s, []).yaw_rate(3.0, 6.0)
                 self.assertAlmostEqual(rate, spin_ratio(kind(key)), delta=0.04)
@@ -174,7 +173,7 @@ class DiagonalLoads(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.runs = {key: drive(6.0, SPIN, key, solver="pgs", params=physical(dig="off", mu_noise=0.0))
+        cls.runs = {key: drive(6.0, SPIN, key, solver="pgs", params=physical(dig=False, mu_noise=0.0))
                     for key in ("test_mu100", "test_mu080")}
 
     def test_load_split(self):
@@ -209,7 +208,7 @@ class Stall(unittest.TestCase):
     def setUpClass(cls):
         def turned(limit):
             run = drive(6.0, [(0.0, 0.0, 0.0), (1.0, 0.0, 1.0)], "test_mu080", solver="pgs",
-                        params=physical(dig="off", current_limit=limit))
+                        params=physical(dig=False, current_limit=limit))
             return math.degrees(run.turned(1.0, 6.0))
         cls.yaw = {limit: turned(limit) for limit in (6.0, 6.8, 8.0, 10.0, 12.0, 12.6, 14.0, 20.0)}
 
@@ -244,13 +243,13 @@ class Response(unittest.TestCase):
     def test_with_the_ramp(self):
         """rise = setpoint / accel +- 20 %, 0.33 s at wz 1 (plumbing: the ramp
         is the controller's, an assumption, design spec 6.3)."""
-        rise, _ = self.times(physical(dig="off"))
+        rise, _ = self.times(physical(dig=False))
         setpoint = 1.0 * C / P.wheel_radius  # [rad/s] each wheel
         self.assertAlmostEqual(rise, setpoint / P.drive.accel, delta=0.2 * setpoint / P.drive.accel)
 
     def test_stop_without_the_ramp(self):
         """The motor, contact and tyre model alone stop the turn in < 40 ms (physics)."""
-        self.assertLess(self.times(physical(dig="off", accel=0.0))[1], 0.040)
+        self.assertLess(self.times(physical(dig=False, accel=0.0))[1], 0.040)
 
     @unittest.expectedFailure
     def test_rise_without_the_ramp(self):
@@ -260,7 +259,7 @@ class Response(unittest.TestCase):
         it the yaw rate reaches 0.77 of steady in 40 ms and 90 % only after
         113 ms: the PI's integral (time constant kp / ki = 0.1 s) has to supply
         the motors' IR drop under load (measured 2026-10-07)."""
-        self.assertLess(self.times(physical(dig="off", accel=0.0))[0], 0.060)
+        self.assertLess(self.times(physical(dig=False, accel=0.0))[0], 0.060)
 
 
 class SlowTurn(unittest.TestCase):
@@ -269,7 +268,7 @@ class SlowTurn(unittest.TestCase):
 
     @staticmethod
     def judder(ground, tire_compliance=False):
-        params = dataclasses.replace(physical(dig="off", accel=4.0), tire_compliance=tire_compliance)
+        params = dataclasses.replace(physical(dig=False, accel=4.0), tire_compliance=tire_compliance)
         run = drive(9.0, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.15)], ground, trace_every=1, params=params)
         rate = run.window(3.0, 9.0)[:, 7]
         spectrum = np.abs(np.fft.rfft((rate - rate.mean()) * np.hanning(len(rate)))) ** 2
@@ -316,10 +315,14 @@ class LooseSand(unittest.TestCase):
 
     @staticmethod
     def sandpit(seconds, cmd, dig):
-        """Sand within 3 m of the origin, rock around it; the rover at the origin."""
+        """Sand within 3 m of the origin, rock around it; the rover at the origin. dig: the catalogue's dig-in
+        preset the sand's row is written with (terrains.traction)."""
         X, Y = FLAT.grid()
         raster = np.where(np.hypot(X, Y) < 3.0, GROUND["sand"][0], GROUND["rock"][0]).astype(np.uint8)
-        return drive(seconds, cmd, raster=raster, params=physical(dig=dig))
+        index, _, dust = GROUND["sand"]
+        sand = ground_row(index, "sand", terrains.traction(terrains.SAND, dig), dust)
+        return drive(seconds, cmd, raster=raster, params=physical(), rows=[sand if r["key"] == "sand" else r
+                                                                             for r in ROWS])
 
     @staticmethod
     def spin_ratios(run):
@@ -357,7 +360,7 @@ class LooseSand(unittest.TestCase):
         self.assertTrue(0.6 * fresh <= ratios[-1] <= 0.8 * fresh, ratios)
 
     def test_no_dig_on_firm_ground(self):
-        run = drive(5.0, SPIN, "regolith", params=physical())  # the strong preset
+        run = drive(5.0, SPIN, "regolith", params=physical())  # dig-in on
         self.assertEqual(run.wheel("dig", 0.0, 5.0).max(), 1.0)
 
 
@@ -381,7 +384,7 @@ class Washboard(unittest.TestCase):
                      '</collision>')
             with ground_world(FLAT, everywhere("regolith"), ROWS, (-7.0, 0.0, 0.0), terrain_extra=shape,
                               ground_options=dict(OPTIONS, collisions={"washboard": "regolith"}),
-                              params=physical(dig="off", state_rate=1000.0)) as world:
+                              params=physical(dig=False, state_rate=1000.0)) as world:
                 s = simulate(20.0, world=world, cmd=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.0)], trace_every=10,
                              subscribe=[(gen_model.DRIVETRAIN_TOPIC, StringMsg)])
         cls.trip = Run(s, [json.loads(m.data) for m in s.messages[gen_model.DRIVETRAIN_TOPIC]])
@@ -482,7 +485,7 @@ class Slopes(unittest.TestCase):
             for heading in (0.0, 30.0, 45.0, 90.0):
                 with self.subTest(slope=round(degrees, 1), heading=heading):
                     run = drive(4.0, (0.0, 0.0), "regolith", rover=(0.0, 0.0, math.radians(heading)), lift=0.0,
-                                gravity=gravity, params=physical(dig="off", mu_noise=0.0, backlash=0.0))
+                                gravity=gravity, params=physical(dig=False, mu_noise=0.0, backlash=0.0))
                     moved = math.dist(run.window(1.0, 1.1)[0][1:4], run.window(3.9, 4.0)[-1][1:4])
                     if holds:
                         self.assertLess(moved, 0.02)
@@ -550,7 +553,7 @@ class Interfaces(unittest.TestCase):
         needs. Sim clock here; the default clock is wall time."""
         cmd = [(0.0, 0.0, 0.0), (0.2, 0.5, 0.0)]
         stops = drive(4.0, cmd, "rock", publish_until=1.0)
-        holds = drive(4.0, cmd, "rock", publish_until=1.0, params=physical(dig="off", cmd_timeout=0.0))
+        holds = drive(4.0, cmd, "rock", publish_until=1.0, params=physical(dig=False, cmd_timeout=0.0))
         self.assertEqual(stops.states[-1]["cmd"], [0.0, 0.0])
         self.assertEqual(holds.states[-1]["cmd"], [0.5, 0.0])
         self.assertLess(stops.state.poses["base_link"][0], 0.75)  # 1.0 s + 0.5 s of the last command, the ramps
@@ -585,7 +588,7 @@ class Interfaces(unittest.TestCase):
         surface, whose traction comes from the catalogue (terrains.TYPES)."""
         for key in ("regolith", "sand"):
             with self.subTest(surface=key):
-                s = simulate(6.0, cmd=SPIN, params=physical(dig="off"), default_surface=key, trace_every=10)
+                s = simulate(6.0, cmd=SPIN, params=physical(dig=False), default_surface=key, trace_every=10)
                 self.assertAlmostEqual(Run(s, []).yaw_rate(3.0, 6.0), spin_ratio(terrains.TYPES[key].traction),
                                        delta=0.04)
 
@@ -613,7 +616,7 @@ class Interfaces(unittest.TestCase):
         (held here: cmd_timeout 0), its odometry, motors and ramps. The rover
         stands still afterwards and its odometry starts again at 0."""
         with ground_world(FLAT, everywhere("rock"), ROWS, ground_options=OPTIONS,
-                          params=physical(dig="off", cmd_timeout=0.0)) as world:
+                          params=physical(dig=False, cmd_timeout=0.0)) as world:
             fixture = TestFixture(world)
             node = Node()
             publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
@@ -659,8 +662,9 @@ class Cost(unittest.TestCase):
             with self.subTest(world=world), world_copy(world) as copy:
                 text = re.sub(r"<real_time_factor>[^<]*</real_time_factor>", "<real_time_factor>0</real_time_factor>",
                               Path(copy).read_text())
-                with temp_sdf(text, WORLDS) as plain, world_file(plain, params=physical(cmd_timeout=0.0)) as torque:
-                    costs = cpu_time_per_step({"diffdrive": plain, "physical": torque}, iterations=20_000, runs=5)
+                with temp_sdf(text, WORLDS) as plain, world_file(plain, params=diffdrive()) as servo, \
+                        world_file(plain, params=physical(cmd_timeout=0.0)) as torque:
+                    costs = cpu_time_per_step({"diffdrive": servo, "physical": torque}, iterations=20_000, runs=5)
                 ratio = costs["physical"].per_step / costs["diffdrive"].per_step
                 print(f"{world}: physical / DiffDrive CPU time per step {ratio:.3f} ({costs})")
                 self.assertLessEqual(ratio, 1.25)

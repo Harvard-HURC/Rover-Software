@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ground types, friction zones, the ground map, rocks and the proving ground (pixi run sim-test).
+"""Ground types, zones, the ground map, sinkage, rocks and the proving ground (pixi run sim-test).
 
 The geometry tests need no Gazebo; the physics tests run proving-ground
 copies headless (Sensors stripped, the rover respawned), and a small world
@@ -25,14 +25,14 @@ from worldfiles import world_copy
 from worldfiles import terrain as world_terrain
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import features, geo, landscape, meshes, sdf, terrain, terrains  # noqa: E402
+from urc import dem, features, geo, landscape, meshes, terrain, terrains  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.media import Media  # noqa: E402
 from urc.missions import COURSES, MISSIONS, delivery, proving_ground  # noqa: E402
-from urc.world import MAX_SINKAGE, ROCK_BURY, Layer, WorldBuilder  # noqa: E402
+from urc.world import MAX_SINKAGE, ROCK_BURY, Layer, WorldBuilder, site  # noqa: E402
 
 WORLDS_WITH_ZONES = ("urc_delivery", "urc_astrobiology", "urc_equipment_servicing", "urc_autonomy", "proving_ground")
-CELL_REACH = terrains.TILE / math.sqrt(2)  # a used cell's centre is inside: its corners reach this far out
+SOLVERS = {"urc_equipment_servicing": "dantzig"}  # every other world: pgs (gates G2, G5)
 QUANTUM = 0.003  # [m] a generated world's 16-bit heightmap rounds heights by up to z_max / 131070 (< 1.5 mm)
 HALF_WHEELBASE, HALF_TRACK = 0.45, 0.40  # [m] the rover's wheels at (+-a, +-c) (design spec 5.6)
 # The traction table of the design (5.6): mu_s, mu_k, crr, bulldoze, slip, sinkage [m], the mild dig-in preset
@@ -87,115 +87,9 @@ def bumpy_slope(size=64.0, n=257, grade=20.0):
     return hf.noise(0.06, 3.0, seed=5, octaves=2)
 
 
-def distance_to_polygon(polygon, x, y):
-    """Distance from points to a polygon's edges."""
-    return terrain.path_distance(polygon, x, y, closed=True)[0]
-
-
-def sdf_tiles(world):
-    """The friction-zone tiles of a generated world, read from its terrain
-    model's zone_* boxes, in world coordinates."""
-    name = re.search(r"<uri>model://(urc_terrain_\w+)</uri>", (WORLDS / f"{world}.sdf").read_text()).group(1)
-    tiles = []
-    for c in model_root(name).iter("collision"):
-        if c.get("name").startswith("zone_"):
-            x, y, z, roll, pitch, yaw = vec(c.findtext("pose"))
-            size = tuple(vec(c.findtext("geometry/box/size")))
-            axes = np.array(sdf.rpy_to_matrix(roll, pitch, yaw))
-            n = axes[:, 2]
-            tiles.append(terrains.Tile(None, np.array([x, y, z]) + size[2] / 2 * n,
-                                       np.array([-n[0], -n[1]]) / n[2], axes, size))
-    return tiles
-
-
-def tile_samples(tile, n=9):
-    """Layout (x, y) of a grid over a tile's footprint."""
-    a, b, _, d = tile.footprint
-    s, t = (g.ravel() for g in np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n)))
-    p = a + s[:, None] * (b - a) + t[:, None] * (d - a)
-    return p[:, 0], p[:, 1]
-
-
-class Tiles(unittest.TestCase):
-    """Tile geometry on a bumpy 20 deg slope: a round zone on ground levelled
-    as features.Patch levels it, and a lane on a graded strip with a kink."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.hf = bumpy_slope()
-        features.Patch("sand", terrains.SAND, 2.0, -3.0, 12.0).shape(cls.hf)
-        lane = features.Lane("lane", (-5.0 - 12 * math.cos(0.3), 22.0 - 12 * math.sin(0.3)), 0.3, 5.0,
-                             ((7.0, 10.0), (17.0, 0.0)))
-        lane.shape(cls.hf)
-        cls.blob = terrains.blob("sand", terrains.SAND, 2.0, -3.0, 12.0, seed=3)
-        cls.rect = terrains.rect("lane", terrains.CLAY, -5.0, 22.0, 24.0, 5.0, yaw=0.3, breaks=(7.0,))
-        for zone in (cls.blob, cls.rect):
-            terrains.fit_tiles(cls.hf, zone)
-
-    def random_points(self, zone, count=4000):
-        rng = np.random.default_rng(1)
-        lo, hi = zone.outline.min(axis=0), zone.outline.max(axis=0)
-        x, y = rng.uniform(lo[0], hi[0], count), rng.uniform(lo[1], hi[1], count)
-        keep = terrains.inside(zone.outline, x, y)
-        return x[keep], y[keep], distance_to_polygon(zone.outline, x[keep], y[keep])
-
-    def test_tiles_cover_the_zone(self):
-        for zone, reach in ((self.blob, CELL_REACH), (self.rect, 1e-6)):
-            x, y, edge = self.random_points(zone)
-            for px, py in zip(x[edge > reach], y[edge > reach]):
-                self.assertIsNotNone(terrains.top_height(zone.tiles, px, py), (zone.key, px, py))
-            corners = np.concatenate([t.footprint for t in zone.tiles])
-            outside = ~terrains.inside(zone.outline, *corners.T)
-            self.assertLessEqual(distance_to_polygon(zone.outline, *corners[outside].T).max(initial=0.0),
-                                 reach + 1e-6, zone.key)
-        self.assertAlmostEqual(self.rect.tiled_area, self.rect.area, delta=1e-6)
-        self.assertAlmostEqual(self.blob.tiled_area, self.blob.area, delta=0.1 * self.blob.area)
-        self.assertLess(len(self.blob.tiles), 20)  # levelled ground: large tiles, not 200 single cells
-
-    def test_tile_tops_lie_just_above_the_surface(self):
-        """Wheels on a tile never reach the heightmap, and no tile floats or
-        leaves a kerb at its neighbours: it is TILE_CLEARANCE to
-        TILE_CLEARANCE + FLATNESS above the surface everywhere."""
-        for zone in (self.blob, self.rect):
-            for tile in zone.tiles:
-                x, y = tile_samples(tile)
-                top = tile.top[2] + tile.gradient[0] * (x - tile.top[0]) + tile.gradient[1] * (y - tile.top[1])
-                gap = top - self.hf.height(x, y)
-                # The fit samples the ground at half the grid spacing: along a tile edge that is not
-                # parallel to the grid the surface is quadratic between samples (< 1 mm off).
-                self.assertGreaterEqual(gap.min(), terrains.TILE_CLEARANCE - 0.001, zone.key)
-                self.assertLessEqual(gap.max(), terrains.TILE_CLEARANCE + terrains.FLATNESS + 0.001, zone.key)
-
-    def test_bumpy_ground_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "not planar"):
-            terrains.fit_tiles(bumpy_slope(), terrains.blob("sand", terrains.SAND, 2.0, -3.0, 12.0, seed=3))
-
-    def test_tops_is_top_height_vectorised(self):
-        rng = np.random.default_rng(2)
-        x, y = rng.uniform(-20, 20, 300), rng.uniform(-20, 20, 300)
-        tiles = self.blob.tiles + self.rect.tiles
-        z = terrains.tops(tiles, x, y)
-        self.assertTrue(np.isnan(z).any() and not np.isnan(z).all())
-        for px, py, pz in zip(x, y, z):
-            top = terrains.top_height(tiles, px, py)
-            self.assertTrue(math.isnan(pz) if top is None else math.isclose(pz, top), (px, py))
-
-    def test_box_pose_puts_the_top_face_on_the_plane(self):
-        """The SDF pose (centre, roll, pitch, yaw) of each tile box: its top
-        face's corners lie on the tile's top plane and cover its footprint."""
-        for zone in (self.blob, self.rect):
-            for tile in zone.tiles:
-                R = np.array(sdf.rpy_to_matrix(*sdf.matrix_to_rpy(tile.axes)))
-                np.testing.assert_allclose(R, tile.axes, atol=1e-9)
-                half = np.array(tile.size) / 2
-                for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-                    corner = tile.center + R @ (half * (sx, sy, 1))
-                    plane = tile.top[2] + tile.gradient @ (corner[:2] - tile.top[:2])
-                    self.assertAlmostEqual(corner[2], plane, delta=1e-9)
-                fx, fy = tile_samples(tile, 5)
-                self.assertIsNotNone(terrains.top_height([tile], fx.mean(), fy.mean()))
-                for px, py in zip(fx, fy):
-                    self.assertIsNotNone(terrains.top_height([tile], px, py))
+def _covers(d, lat, lon):
+    (south, west), (north, east) = d.bounds
+    return south < lat < north and west < lon < east
 
 
 class Features(unittest.TestCase):
@@ -219,8 +113,16 @@ class Features(unittest.TestCase):
     def test_wash_sand_stays_on_the_floor(self):
         path = ((-30.0, 0.0), (30.0, 0.0))
         with self.assertRaisesRegex(ValueError, "half-width"):
-            features.Wash("wash", path, depth=2.0, half_width=6.0, sand_radius=6.0).shape(bumpy_slope())
-        features.Wash("wash", path, depth=0.0, half_width=6.0, sand_radius=6.0).shape(bumpy_slope())  # no channel
+            features.Wash("wash", path, depth=2.0, half_width=6.0, sand_radius=6.5).shape(bumpy_slope())
+        features.Wash("wash", path, depth=2.0, half_width=6.0, sand_radius=6.0).shape(bumpy_slope())
+        features.Wash("wash", path, depth=0.0, half_width=6.0, sand_radius=6.5).shape(bumpy_slope())  # no channel
+
+    def test_patches_keep_the_ground(self):
+        """A zone only paints the ground: a patch leaves the terrain as it is."""
+        hf = bumpy_slope()
+        before = hf.z.copy()
+        features.Patch("sand", terrains.SAND, 2.0, -3.0, 12.0).shape(hf)
+        np.testing.assert_array_equal(hf.z, before)
 
 
 class Catalogue(unittest.TestCase):
@@ -230,7 +132,9 @@ class Catalogue(unittest.TestCase):
         types = list(terrains.TYPES.values())
         self.assertEqual(len({t.key for t in types}), len(types))
         self.assertEqual(len({t.rgb for t in types}), len(types))
-        self.assertTrue(all(0 < t.mu <= terrains.HEIGHTMAP_MU for t in types))
+        self.assertTrue(all(t.mu is None for t in types))  # each names its traction
+        with self.assertRaisesRegex(ValueError, "traction or a Coulomb mu"):
+            terrains.TerrainType("bare", "Bare", None, (1, 2, 3))
 
     def test_traction_is_the_design_table(self):
         """Every type's traction and dust is its row of the design table
@@ -336,8 +240,8 @@ class SmallWorld(unittest.TestCase):
     FEATURES = [features.Patch("sand", terrains.SAND, -14.0, -14.0, 8.0),
                 features.Lane("clay", (10.0 - 7 * math.cos(0.5), -18.0 - 7 * math.sin(0.5)), 0.5, 5.0,
                               ((14.0, 0.0),), (features.Surface("clay", terrains.CLAY, 5.0),)),
-                features.Patch("slab", terrains.SLICKROCK, -12.0, 15.0, 6.0, level=False)]
-    LATE = features.Patch("late", terrains.GRAVEL, 14.0, 2.0, 3.0)  # levelled; its zone comes too late
+                features.Patch("slab", terrains.SLICKROCK, -12.0, 15.0, 6.0)]
+    LATE = features.Patch("late", terrains.GRAVEL, 14.0, 2.0, 3.0)  # its zone comes too late
     MESA = (20.0, 20.0)
 
     @classmethod
@@ -347,7 +251,7 @@ class SmallWorld(unittest.TestCase):
         hf = bumpy_slope(size=64.0, n=129, grade=12.0).mesa(*cls.MESA, 5.0, 3.0, 4.0, seed=2)
         features.shape(hf, cls.FEATURES + [cls.LATE])
         w = WorldBuilder("test", "Test", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models", d / "worlds",
-                         Media(d / "models"), seed=1, name="test")
+                         Media(d / "models"), seed=1, name="test", solver="pgs")
         w.terrain([Layer("regolith"), Layer("caprock", start=4.0)])
         features.dress(w, cls.FEATURES)
         w.rover(-14.0, -14.0, 0.0)
@@ -368,65 +272,40 @@ class SmallWorld(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def test_heightmap_is_the_terrain(self):
-        """One heightmap, drawn and collided with alike, its lowest point at
-        world z = 0 and its highest at the image's maximum (Gazebo scales by
-        it)."""
-        uris = {h.findtext("uri") for h in self.model.iter("heightmap")}
-        self.assertEqual(uris, {"model://urc_terrain_test/heightmap.png"})
-        self.assertEqual(len({h.findtext("size") for h in self.model.iter("heightmap")}), 1)
-        image = np.asarray(Image.open(self.dir / "heightmap.png"), float)
-        self.assertEqual((image.min(), image.max()), (0, 65535))
-        z_max = self.sheet["terrain"]["z_max"]
-        self.assertAlmostEqual(float(self.model.find(".//heightmap/size").text.split()[2]), z_max, places=3)
-        self.assertEqual(self.w.shift[2], self.w.hf.z.min())
-        np.testing.assert_allclose(image / 65535 * z_max, self.w.hf.z - self.w.shift[2], atol=z_max / 65535 + 1e-6)
-
     def test_sheet_lists_the_zones(self):
+        """Zones and the traction of their types (no friction shapes: the
+        drivetrain reads the ground map)."""
         zones = self.sheet["terrain_zones"]
         self.assertEqual(set(zones), {"sand", "clay", "slab"})
         for key, kind in (("sand", terrains.SAND), ("clay", terrains.CLAY), ("slab", terrains.SLICKROCK)):
             self.assertEqual(zones[key]["type"], kind.key)
-            self.assertEqual(zones[key]["mu"], kind.mu)
             self.assertGreater(zones[key]["area_m2"], 10)
-            self.assertEqual(self.sheet["terrain_types"][kind.key]["mu"], kind.mu)
-        self.assertEqual(zones["slab"]["tiles"], 0)  # mu 1.0: only a decal
-        self.assertGreater(zones["sand"]["tiles"], 0)
-        boxes = [c for c in self.model.iter("collision") if c.get("name").startswith("zone_")]
-        self.assertEqual(len(boxes), zones["sand"]["tiles"] + zones["clay"]["tiles"])
-        for c in boxes:
-            self.assertIn(float(c.findtext("surface/friction/ode/mu")), (terrains.SAND.mu, terrains.CLAY.mu))
+            t = terrains.traction(kind)
+            self.assertEqual(self.sheet["terrain_types"][kind.key],
+                             dict(title=kind.title, mu_s=t.mu_s, mu_k=t.mu_k, climb_deg=round(t.climb_deg, 1),
+                                  hold_deg=round(t.hold_deg, 1), sinkage_m=t.sinkage_m, notes=kind.notes))
+        self.assertFalse([c for c in self.model.iter("collision") if c.get("name").startswith("zone_")])
+        self.assertFalse([e for e in self.model.iter("friction")])
 
-    def test_rover_starts_on_the_tiles(self):
-        start = self.sheet["rover_start"]
-        x, y = start["x"] + self.w.shift[0], start["y"] + self.w.shift[1]
-        top = terrains.top_height(self.w.zones[0].tiles, x, y)
-        self.assertGreaterEqual(self.w.ground(x, y), self.w.height(x, y) + terrains.TILE_CLEARANCE - 1e-9)
-        self.assertEqual(self.w.ground(x, y), top)
-        self.assertTrue(top + 0.02 - 1e-6 <= start["z"] + self.w.shift[2] <= top + 0.2)
+    def test_physics_and_ground_files_in_the_sheet(self):
+        self.assertEqual(self.sheet["physics"]["solver"], "pgs")
+        world_sdf = ET.parse(self.world_path).getroot()
+        self.assertEqual(world_sdf.findtext("world/physics/dart/solver/solver_type"), "pgs")
+        names = [p.get("name") for p in world_sdf.iter("plugin")]
+        self.assertIn("gz::sim::systems::ParticleEmitter", names)  # the drivetrain's wheel dust
+        for key, name in (("ground_map", "ground.png"), ("ground_legend", "ground.json")):
+            self.assertEqual((self.world_path.parent / self.sheet["terrain"][key]).resolve(), (self.dir / name).resolve())
 
     def test_zone_under_a_placed_model_is_refused(self):
+        """A zone whose ground sinks would sink the ground under it."""
         self.w.place("probe_model", "probe", self.LATE.x, self.LATE.y)
         with self.assertRaisesRegex(ValueError, "placed before"):
             self.w.zone_rect("late", self.LATE.kind, self.LATE.x, self.LATE.y, 4.0, 4.0)
 
-    def test_zone_over_earlier_rocks_is_refused(self):
-        """rock_field keeps colliding rocks off the zones declared so far; a
-        zone declared after them must not end up under one."""
-        x, y = self.LATE.x + 1.5, self.LATE.y  # on the levelled ground, clear of the probe model
-        self.w.rock_field("before_late", [(x, y, 0.3, 0.0)])
-        with self.assertRaisesRegex(ValueError, "colliding rocks"):
-            self.w.zone_rect("late_rect", self.LATE.kind, x, y, 1.5, 1.5)
-
-    def test_colliding_rocks_stay_off_the_tiles(self):
-        """A rock's mesh has mu 1: on a friction zone it would be a foothold."""
-        self.assertEqual(self.sheet["rocks"]["over_sand"], {"count": 3, "colliding": 0})
-        tiles = [t for zone in self.w.zones for t in zone.tiles]
-        shift = np.array(self.w.shift)
-        for xyz, size, variant, R, _, collides in self.w._rocks:
-            if collides:
-                V = meshes.rock_variant(variant)[0] * size @ R.T + xyz + shift
-                self.assertTrue(np.isnan(terrains.tops(tiles, V[:, 0], V[:, 1])).all())
+    def test_rocks_on_zones_collide(self):
+        """Rocks grip like rock (ground.json's prefixes) wherever they lie: on a
+        zone they collide like anywhere else."""
+        self.assertEqual(self.sheet["rocks"]["over_sand"], {"count": 6, "colliding": 3})
 
     def test_rocks_rest_in_the_ground(self):
         """Every rock's flat base is laid on the slope under it and sunk
@@ -466,42 +345,36 @@ class SmallWorld(unittest.TestCase):
 
     def test_collision_map_covers_every_collision(self):
         """Every collision of the terrain model besides the heightmap has a
-        ground type: by exact name (tiles: their zone's; blocks: rock; the
-        floor: the default ground) or by prefix (merged rocks)."""
+        ground type: by exact name (blocks: rock; the floor: the default
+        ground) or by prefix (merged rocks)."""
         info = json.loads((self.dir / "ground.json").read_text())
         names = [c.get("name") for c in self.model.iter("collision") if c.get("name") != "terrain_collision"]
         self.assertTrue(any(n.startswith("rocks_") for n in names))
         for name in names:
             covered = name in info["collisions"] or any(name.startswith(p) for p in info["prefixes"])
             self.assertTrue(covered, name)
-        for name, key in info["collisions"].items():
-            if name.startswith("zone_sand_"):
-                self.assertEqual(key, "sand")
         self.assertEqual(info["collisions"]["floor_collision"], "regolith")
         self.assertEqual(set(info["collisions"]) & set(names), set(info["collisions"]))
 
 
 class GroundWorld(unittest.TestCase):
-    """The small world again, built with the drivetrain's friction (no
-    tiles, terrains.FRICTION "ground") and sinkage (world.SINKAGE): the
-    collision heightmap carved by each type's static sinkage, objects on
-    it."""
+    """The small world again, with sinkage (world.SINKAGE): the collision
+    heightmap carved by each type's static sinkage, objects on it."""
 
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         d = Path(cls.tmp.name)
-        with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch("urc.world.SINKAGE", True):
-            hf = bumpy_slope(size=64.0, n=129, grade=12.0).mesa(*SmallWorld.MESA, 5.0, 3.0, 4.0, seed=2)
-            features.shape(hf, SmallWorld.FEATURES)
-            w = WorldBuilder("ground", "Ground", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
-                             d / "worlds", Media(d / "models"), seed=1, name="ground")
-            w.terrain([Layer("regolith")])
-            features.dress(w, SmallWorld.FEATURES)
-            sand = SmallWorld.FEATURES[0]
-            cls.probe_z = w.place("probe_model", "probe", sand.x, sand.y, record={})
-            w.rover(sand.x + 2.0, sand.y, 0.0)
-            cls.world_path, sheet_path = w.write()
+        hf = bumpy_slope(size=64.0, n=129, grade=12.0).mesa(*SmallWorld.MESA, 5.0, 3.0, 4.0, seed=2)
+        features.shape(hf, SmallWorld.FEATURES)
+        w = WorldBuilder("ground", "Ground", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
+                         d / "worlds", Media(d / "models"), seed=1, name="ground")
+        w.terrain([Layer("regolith")])
+        features.dress(w, SmallWorld.FEATURES)
+        sand = SmallWorld.FEATURES[0]
+        cls.probe_z = w.place("probe_model", "probe", sand.x, sand.y, record={})
+        w.rover(sand.x + 2.0, sand.y, 0.0)
+        cls.world_path, sheet_path = w.write()
         cls.w, cls.hf = w, hf
         cls.sheet = json.loads(sheet_path.read_text())
         cls.sheet_path = sheet_path
@@ -515,10 +388,29 @@ class GroundWorld(unittest.TestCase):
     def decode(self, name, z_max):
         return np.asarray(Image.open(self.dir / name), float) / 65535 * z_max
 
-    def test_no_tiles(self):
-        self.assertFalse([c for c in self.model.iter("collision") if c.get("name").startswith("zone_")])
-        self.assertEqual(self.sheet["terrain_zones"]["sand"]["tiles"], 0)
-        self.assertEqual(self.sheet["terrain_zones"]["clay"]["tiles"], 0)
+    def test_without_sinkage_one_heightmap_serves_both(self):
+        """world.SINKAGE off: one heightmap, drawn and collided with alike, its
+        lowest point at world z = 0 and its highest at the image's maximum
+        (Gazebo scales by it)."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("urc.world.SINKAGE", False):
+            d = Path(tmp)
+            hf = bumpy_slope(size=32.0, n=65, grade=6.0)
+            w = WorldBuilder("plain", "Plain", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
+                             d / "worlds", Media(d / "models"), seed=1, name="plain")
+            w.terrain([Layer("regolith")])
+            w.zone("sand", terrains.SAND, 0.0, 0.0, 5.0)
+            _, sheet_path = w.write()
+            model = ET.parse(d / "models" / "urc_terrain_plain" / "model.sdf").getroot()
+            image = np.asarray(Image.open(d / "models" / "urc_terrain_plain" / "heightmap.png"), float)
+            z_max = vec(model.find(".//heightmap/size").text)[2]  # the sheet's is rounded to 0.1 mm
+            self.assertAlmostEqual(json.loads(sheet_path.read_text())["terrain"]["z_max"], z_max, places=4)
+        self.assertEqual({h.findtext("uri") for h in model.iter("heightmap")},
+                         {"model://urc_terrain_plain/heightmap.png"})
+        self.assertEqual(len({h.findtext("size") for h in model.iter("heightmap")}), 1)
+        self.assertEqual((image.min(), image.max()), (0, 65535))
+        self.assertEqual(w.shift[2], w.hf.z.min())
+        np.testing.assert_allclose(image / 65535 * z_max, w.hf.z - w.shift[2], atol=z_max / 65535 + 1e-6)
+        self.assertEqual(w.ground(0.0, 0.0), w.height(0.0, 0.0))
 
     def test_collision_heightmap_is_the_carved_terrain(self):
         """Each PNG normalised to its own maximum (<size> z): the visual one is
@@ -565,16 +457,15 @@ class GroundWorld(unittest.TestCase):
         self.assertAlmostEqual(self.sheet["objects"]["probe"]["z"] + self.w.shift[2], self.probe_z, delta=0.001)
         start = self.sheet["rover_start"]
         x, y = self.w.to_layout(start["x"], start["y"])
-        ground = max(self.w.collision_height(x + dx, y + dy) for dx in (-0.5, 0.5) for dy in (-0.45, 0.45))
+        ground = max(self.w.ground(x + dx, y + dy) for dx in (-0.5, 0.5) for dy in (-0.45, 0.45))
         self.assertAlmostEqual(start["z"] + self.w.shift[2], ground + 0.02, delta=0.001)
         carved = sheets.terrain(self.sheet, self.sheet_path, collision=True)
         self.assertAlmostEqual(carved.height(start["x"], start["y"]) + self.w.shift[2],
-                               self.w.collision_height(x, y), delta=0.002)
+                               self.w.ground(x, y), delta=0.002)
 
     def test_a_sinking_zone_under_a_placed_model_is_refused(self):
-        with mock.patch.object(terrains, "FRICTION", "ground"):
-            with self.assertRaisesRegex(ValueError, "placed before"):
-                self.w.zone("late_sand", terrains.SAND, SmallWorld.FEATURES[0].x, SmallWorld.FEATURES[0].y, 3.0)
+        with self.assertRaisesRegex(ValueError, "placed before"):
+            self.w.zone("late_sand", terrains.SAND, SmallWorld.FEATURES[0].x, SmallWorld.FEATURES[0].y, 3.0)
 
 
 class SinkagePhysics(unittest.TestCase):
@@ -586,21 +477,20 @@ class SinkagePhysics(unittest.TestCase):
     def test_rover_sits_in_the_sand(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch("urc.world.SINKAGE", True):
-                hf = terrain.Heightfield(64.0, 257)
-                sand = features.Patch("sand", terrains.WASH_SAND, -10.0, 0.0, 8.0)
-                w = WorldBuilder("sink", "Sink", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
-                                 d / "worlds", Media(d / "models"), seed=1, name="sink")
-                w.terrain([Layer("regolith")])
-                features.dress(w, [sand])
-                w.rover(10.0, 0.0, 0.0)
-                world_path, _ = w.write()
+            hf = terrain.Heightfield(64.0, 257)
+            sand = features.Patch("sand", terrains.WASH_SAND, -10.0, 0.0, 8.0)
+            w = WorldBuilder("sink", "Sink", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
+                             d / "worlds", Media(d / "models"), seed=1, name="sink")
+            w.terrain([Layer("regolith")])
+            features.dress(w, [sand])
+            w.rover(10.0, 0.0, 0.0)
+            world_path, _ = w.write()
             text = SENSORS.sub("", world_path.read_text())
             rest = {}
             env = {"GZ_SIM_RESOURCE_PATH": f"{d / 'models'}:{os.environ['GZ_SIM_RESOURCE_PATH']}"}
             with mock.patch.dict(os.environ, env):
                 for name, (x, y) in (("sand", (sand.x, sand.y)), ("regolith", (10.0, 0.0))):
-                    wx, wy, wz = w.to_world(x, y, w.collision_height(x, y) + 0.05)
+                    wx, wy, wz = w.to_world(x, y, w.ground(x, y) + 0.05)
                     copy, count = ROVER_POSE.subn(rf"\g<1>{wx} {wy} {wz} 0 0 0\g<2>", text)
                     self.assertEqual(count, 1)
                     with temp_sdf(copy, d / "worlds") as path:
@@ -633,21 +523,58 @@ class GeneratedWorlds(unittest.TestCase):
                         self.assertTrue(n in ground.info["collisions"]
                                         or any(n.startswith(p) for p in ground.info["prefixes"]), n)
 
-    def test_sheets_list_zones_with_mu(self):
+    def test_sheets_list_zones_and_their_traction(self):
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
                 s = sheet(world)
                 zones = s["terrain_zones"]
                 self.assertTrue(zones)
+                ground = sheets.ground(s, sheets.path(world))
                 for key, zone in zones.items():
                     kind = s["terrain_types"][zone["type"]]
-                    self.assertEqual(zone["mu"], kind["mu"], key)
-                    self.assertEqual(zone["tiles"] > 0, zone["mu"] < terrains.HEIGHTMAP_MU, key)
-                    if zone["type"] in terrains.TYPES:
-                        self.assertEqual(zone["mu"], terrains.TYPES[zone["type"]].mu, key)
+                    t = ground.info["types"][[r["key"] for r in ground.info["types"]].index(zone["type"])]
+                    self.assertEqual((kind["mu_s"], kind["mu_k"]), (t["mu_s"], t["mu_k"]), key)
+                    self.assertAlmostEqual(kind["climb_deg"],
+                                           math.degrees(math.atan(max(t["mu_k"] - t["crr"], 0.0))), delta=0.05)
                     self.assertGreater(zone["area_m2"], 0, key)
                     self.assertGreaterEqual(len(zone["outline"]), 4, key)
                 self.assertTrue(s["rocks"])
+
+    def test_no_friction_shapes(self):
+        """The drivetrain grips by the ground map: no world carries friction
+        tiles or SDF friction in its terrain model."""
+        for world in WORLDS_WITH_ZONES:
+            with self.subTest(world=world):
+                name = re.search(r"<uri>model://(urc_terrain_\w+)</uri>", (WORLDS / f"{world}.sdf").read_text()).group(1)
+                model = model_root(name)
+                self.assertFalse([c for c in model.iter("collision") if c.get("name").startswith("zone_")])
+                self.assertFalse(list(model.iter("friction")))
+
+    def test_solver_per_world(self):
+        """PGS where gates G2 and G5 passed, Dantzig in Equipment Servicing
+        (design D4, the user's Q2), written to the world and its sheet."""
+        for world in WORLDS_WITH_ZONES:
+            with self.subTest(world=world):
+                solver = SOLVERS.get(world, "pgs")
+                root = ET.parse(WORLDS / f"{world}.sdf").getroot()
+                self.assertEqual(root.findtext("world/physics/dart/solver/solver_type"), solver)
+                self.assertEqual(sheet(world)["physics"]["solver"], solver)
+                names = [p.get("name") for p in root.iter("plugin")]
+                self.assertIn("gz::sim::systems::ParticleEmitter", names)
+
+    def test_altitudes_are_ellipsoidal(self):
+        """Every world's altitudes are WGS84 ellipsoidal (what NavSat reports):
+        the USGS DEM's NAVD88 elevation at a point plus dem.NAVD88_TO_WGS84,
+        through one helper (world.site)."""
+        for world in WORLDS_WITH_ZONES:
+            with self.subTest(world=world):
+                s = sheet(world)
+                p = s["c2"] if "c2" in s else s["rover_start"]  # at the layout origin, z 0 (a course: its entrance)
+                navd88 = next(dem._site_dem(path).height(p["lat"], p["lon"]) for path in dem.SITE_DEMS
+                              if _covers(dem._site_dem(path), p["lat"], p["lon"]))
+                self.assertAlmostEqual(p["alt"], navd88 + dem.NAVD88_TO_WGS84, delta=0.25, msg=world)
+        here = site(38.4040, -110.7935)
+        self.assertAlmostEqual(here.alt, dem.site_altitude(38.4040, -110.7935), places=9)
 
     def test_delivery_has_every_ground_of_rule_1_c_ii(self):
         # "soft sandy areas, gravel, rough stony areas, rock and boulder fields, vertical drops and steep
@@ -677,27 +604,6 @@ class GeneratedWorlds(unittest.TestCase):
             for u in (0.05, 1.0, 2.0):
                 self.assertAlmostEqual(ground(-depth - u), top, delta=QUANTUM, msg=(ledge.key, -u))
             self.assertLess(max(ground(-u) for u in np.linspace(0, depth, 41)), top + QUANTUM, ledge.key)
-
-    def test_tiles_lie_on_the_ground(self):
-        """Every friction-zone tile in a generated world is TILE_CLEARANCE to
-        TILE_CLEARANCE + FLATNESS above the terrain under it: wheels on it
-        never touch the heightmap, and it neither floats nor leaves kerbs."""
-        for world in WORLDS_WITH_ZONES:
-            with self.subTest(world=world):
-                hf = world_terrain(world)
-                for tile in sdf_tiles(world):
-                    hu, hv = np.array(tile.size[:2]) / 2 - terrains.TILE_OVERLAP
-                    U, V = (g.ravel() for g in np.meshgrid(np.linspace(-hu, hu, 7), np.linspace(-hv, hv, 7)))
-                    P = tile.top + np.outer(U, tile.axes[:, 0]) + np.outer(V, tile.axes[:, 1])
-                    gap = P[:, 2] - hf.height(P[:, 0], P[:, 1])
-                    self.assertGreater(gap.min(), terrains.TILE_CLEARANCE - QUANTUM)
-                    self.assertLess(gap.max(), terrains.TILE_CLEARANCE + terrains.FLATNESS + QUANTUM)
-
-    def test_colliding_rocks_stay_off_the_tiles(self):
-        for world in WORLDS_WITH_ZONES:
-            with self.subTest(world=world):
-                rocks = rock_vertices(world)
-                self.assertTrue(np.isnan(terrains.tops(sdf_tiles(world), rocks[:, 0], rocks[:, 1])).all())
 
     def test_shrubs_are_merged_into_the_terrain(self):
         """Shrubs are meshes of the terrain's link, not a model each."""
@@ -755,8 +661,11 @@ class ProvingGround(unittest.TestCase):
         self.assertEqual(set(self.sheet["points"]), expected)
 
     def test_friction_lanes(self):
-        mus = [self.sheet["terrain_zones"][f"lane_mu{m:03d}"]["mu"] for m in (20, 35, 50, 70, 95)]
-        self.assertEqual(mus, [0.2, 0.35, 0.5, 0.7, 0.95])
+        """Calibration lanes: plain Coulomb mu (design 5.6), in ground.json and the sheet."""
+        types = self.sheet["terrain_types"]
+        for m in (20, 35, 50, 70, 95):
+            lane = types[self.sheet["terrain_zones"][f"lane_mu{m:03d}"]["type"]]
+            self.assertEqual((lane["mu_s"], lane["mu_k"]), (m / 100, m / 100))
         hf = proving_ground.make_terrain()
         lane = proving_ground.FRICTION_HILL
         end = 0.0

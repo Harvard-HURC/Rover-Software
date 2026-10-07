@@ -11,6 +11,7 @@ from pathlib import Path
 
 SDF_VERSION = "1.11"
 WHITE = (1.0, 1.0, 1.0, 1.0)
+SOLVERS = ("dantzig", "pgs")  # DART's LCP solvers (dantzig is its default)
 
 
 def fmt(value):
@@ -197,6 +198,21 @@ def joint(model, name, kind, parent, child, axis=(0, 0, 1), lower=None, upper=No
         if stiffness is not None:
             sub(dynamics, "spring_stiffness", stiffness)
             sub(dynamics, "spring_reference", 0.0 if reference is None else reference)
+    return element
+
+
+def physics(world, step, real_time_factor, solver=None):
+    """A world's DART <physics>: `step` [s] per step, at real_time_factor
+    (0: as fast as it runs); solver: one of SOLVERS, None for DART's default.
+    Dantzig sizes the friction limits from the loads before friction; PGS
+    gives each wheel mu times its own load (realism design D4)."""
+    element = sub(world, "physics", name=f"{step * 1000:g}ms", type="dart")
+    sub(element, "max_step_size", step)
+    sub(element, "real_time_factor", real_time_factor)
+    if solver is not None:
+        if solver not in SOLVERS:
+            raise ValueError(f"solver {solver!r}: one of {SOLVERS}")
+        sub(sub(sub(element, "dart"), "solver"), "solver_type", solver)
     return element
 
 

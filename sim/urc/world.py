@@ -14,8 +14,8 @@ colours and the ground textures (terrains.py, urc_media), terrain features
 (features.py, terrain.py), and here zones, rocks (scatter, scatter_each,
 rock_garden, rock_field), blocks, shrubs, signs and stations. A mission
 module only says where and how much. A world's own model holds only what is
-unique to it: its heightmap, zone decal meshes and merged rock and shrub
-meshes.
+unique to it: its heightmaps, ground map, zone decal meshes and merged rock
+and shrub meshes.
 
 Gazebo spends time on every shape every step, touched or not: measured on
 the proving ground, 0.56-0.83 us per collision and 0.1-0.18 us per visual
@@ -27,10 +27,16 @@ The ground: every world paints a ground raster (landscape.paint: its paint
 rules, default DEFAULT_GROUND everywhere, then its zones) and writes it
 next to the heightmap as ground.png, with ground.json (legend, traction,
 and the collision map naming the ground type of every other shape of the
-terrain model), for the drivetrain, the sheet readers and the map. With
-SINKAGE the collision heightmap is the visual one carved down by each
-type's static sinkage (the wheels sit in sand), each PNG normalised to its
-own maximum, and objects stand on the carved surface.
+terrain model), for the drivetrain, the sheet readers and the map: the
+rover's drivetrain takes the friction of every wheel contact from them
+(design D1). The collision heightmap is the visual one carved down by each
+type's static sinkage (SINKAGE: the wheels sit 2-3 cm into sand), each PNG
+normalised to its own maximum, and objects stand on the carved surface.
+
+Physics: DART at 1 ms steps, its LCP solver chosen per world (design D4;
+gates G2 and G5 in sim/data/research): PGS gives each wheel mu times its own
+load, which the loaded diagonal of a turn needs, where it runs fast enough;
+Dantzig elsewhere, where per-wheel friction is approximate.
 """
 import json
 import math
@@ -53,15 +59,24 @@ SYSTEMS = (
     ("gz-sim-imu-system", "gz::sim::systems::Imu", {}),
     ("gz-sim-navsat-system", "gz::sim::systems::NavSat", {}),
     ("gz-sim-sensors-system", "gz::sim::systems::Sensors", {"render_engine": "ogre2"}),
+    ("gz-sim-particle-emitter-system", "gz::sim::systems::ParticleEmitter", {}),  # the drivetrain's wheel dust
 )
 ROCK_CHUNK = 128.0  # [m] rocks and shrubs are merged into one mesh per square this size
 ROCK_BURY = 0.08  # rocks sink this fraction of their size below the ground under their base
 SHRUB_SINK = 0.05  # [m] a shrub's origin below the ground
 ZONE_OUTLINE_POINTS = 64  # most outline vertices a zone records in the sheet
-SINKAGE = False  # carve the collision heightmap by each ground type's static sinkage (design 5.8; off in wave 1)
+SINKAGE = True  # carve the collision heightmap by each ground type's static sinkage (design 5.8)
 SINKAGE_EASE = 0.75  # [m] the carve eases in over this inside its type (A: design 0.5-1 m)
 MAX_SINKAGE = max(t.traction.sinkage_m for t in terrains.TYPES.values())  # [m] world z = 0 lies this far below
 # the lowest point when sinkage is on, so that any carve fits above it
+
+
+def site(lat, lon, paths=dem.SITE_DEMS):
+    """A world's layout origin at (lat, lon) with the ellipsoidal altitude of
+    the ground there (dem.site_altitude: the DEM's NAVD88 elevation made the
+    WGS84 height that NavSat and a receiver report), so that every world's
+    altitudes are ellipsoidal alike. paths: the DEMs to read."""
+    return geo.Origin(lat, lon, dem.site_altitude(lat, lon, paths))
 
 
 def garden_spacing(size):
@@ -85,10 +100,13 @@ class Layer:
 
 
 class WorldBuilder:
-    def __init__(self, key, title, rule, origin: geo.Origin, hf, models_dir, worlds_dir, media, seed, name=None):
-        """origin: WGS84 of the layout origin (the C2 station); hf: the terrain
-        in layout coordinates; rule: the URC rule the world stages (None for a
-        test course); name: the world's name (default urc_<key>)."""
+    def __init__(self, key, title, rule, origin: geo.Origin, hf, models_dir, worlds_dir, media, seed, name=None,
+                 solver=None):
+        """origin: WGS84 of the layout origin (the C2 station), its altitude
+        ellipsoidal (site()); hf: the terrain in layout coordinates; rule: the
+        URC rule the world stages (None for a test course); name: the world's
+        name (default urc_<key>); solver: DART's LCP solver (sdf.SOLVERS;
+        None: its default, Dantzig)."""
         self.key = key
         self.name = name or f"urc_{key}"
         self.hf = hf
@@ -100,6 +118,7 @@ class WorldBuilder:
         self.models_dir = Path(models_dir)
         self.worlds_dir = Path(worlds_dir)
         self.media = media
+        self.solver = solver
         self.rng = np.random.default_rng(seed)
         self.root = sdf.model_root("unused")[0]
         self.root.remove(self.root.find("model"))
@@ -114,7 +133,7 @@ class WorldBuilder:
         self.zones = []
         self._rocks = []  # (world xyz, size, variant, orientation, rgb, collides), merged by write()
         self._shrubs = []  # (world xyz, variant, orientation, rgb), merged by write()
-        self._placed = {}  # model name -> layout (x, y): zones may not be declared under them later
+        self._placed = {}  # model name -> layout (x, y): sinking zones may not be declared under them later
         self.legend = landscape.Legend()
         self.paint_rules = [landscape.Base(terrains.DEFAULT_GROUND)]
         self._surfaces = {}  # exact collision name in the terrain link -> ground type key (ground.json)
@@ -137,20 +156,15 @@ class WorldBuilder:
         which the sheet's heightmap and DEM give."""
         return self.hf.height(x, y)
 
-    def collision_height(self, x, y):
-        """Height of the collision heightmap at a layout point (layout z): the
-        terrain, carved by the sinkage of its ground with SINKAGE."""
+    def ground(self, x, y):
+        """What a wheel or an object rests on at a layout point (layout z): the
+        collision heightmap, the terrain carved by the static sinkage of its
+        ground (SINKAGE)."""
         if not self.sinkage:
             return self.height(x, y)
         if self._carved is None:
             self._carved = terrain.Heightfield(self.hf.size, self.hf.n, self.hf.z - self.carve(), self.hf.center)
         return self._carved.height(x, y)
-
-    def ground(self, x, y):
-        """What a wheel or an object rests on at layout (x, y): the top of a
-        friction zone's tiles, else the collision surface."""
-        tops = [terrains.top_height(zone.tiles, x, y) for zone in self.zones]
-        return max([self.collision_height(x, y)] + [t for t in tops if t is not None])
 
     def geo(self, x, y, z=None):
         """Sheet entry for a layout point: world x, y, z and WGS84."""
@@ -163,9 +177,11 @@ class WorldBuilder:
 
     def _setup(self):
         w = self.world
-        physics = sdf.sub(w, "physics", name="1ms", type="dart")
-        sdf.sub(physics, "max_step_size", 0.001)
-        sdf.sub(physics, "real_time_factor", 1.0)
+        sdf.physics(w, 0.001, 1.0, self.solver)
+        self.sheet["physics"] = {
+            "engine": "dart", "step_s": 0.001, "solver": self.solver or "dantzig",
+            "note": "pgs gives each wheel mu times its own load; dantzig, DART's default, sizes the friction limits "
+                    "from the loads before friction, so per-wheel friction is approximate (realism design D4)"}
         for filename, name, params in SYSTEMS:
             sdf.plugin(w, filename, name, **params)
         scene = sdf.sub(w, "scene")
@@ -281,7 +297,8 @@ class WorldBuilder:
         over SINKAGE_EASE inside the type (a minimum filter, then a box blur
         of the same size: never deeper than the type's own sinkage, nothing
         outside it)."""
-        cut = np.array([t.traction.sinkage_m for t in self.legend.types], np.float32)[self.ground_map()]
+        raster = self.ground_map()  # first: painting adds the types the catalogue lacks to the legend
+        cut = np.array([t.traction.sinkage_m for t in self.legend.types], np.float32)[raster]
         k = 2 * int(round(SINKAGE_EASE / 2 / self.hf.res)) + 1
         if k > 1:
             cut = cv2.blur(cv2.erode(cut, np.ones((k, k), np.uint8)), (k, k))
@@ -305,51 +322,37 @@ class WorldBuilder:
             collisions[key] = self._surfaces[key] or base
         info = landscape.ground_json(self.legend, self.hf.size, self.hf.n, base, collisions)
         (directory / "ground.json").write_text(json.dumps(info, indent=1) + "\n")
+        self.sheet["terrain"].update(ground_map=os.path.relpath(directory / "ground.png", self.worlds_dir),
+                                     ground_legend=os.path.relpath(directory / "ground.json", self.worlds_dir))
 
-    # --- Friction zones ------------------------------------------------------------------
+    # --- Zones -------------------------------------------------------------------------
 
     def zone(self, key, kind, x, y, radius, irregularity=0.3):
         """A zone of terrain type `kind` (terrains.TYPES): an irregular patch
-        up to `radius` around layout (x, y). It paints the ground raster and
-        has a decal; with terrains.FRICTION "tiles" and a mu below the
-        heightmap's 1.0 it is also a friction zone, its tiles covering the
-        cells of a 1.5 m grid whose centres lie inside it. Declare zones
-        before placing anything on them (place() sets objects on the tiles
-        and the carved ground, rock_field keeps colliding rocks off tiles)."""
+        up to `radius` around layout (x, y). It paints the ground raster,
+        which tells the drivetrain how the ground grips, and has a decal.
+        Declare zones before placing anything on them: a zone whose ground
+        sinks moves the ground under what stands there (place() sets objects
+        on the carved ground)."""
         seed = int(self.rng.integers(1 << 30))
         return self._add_zone(terrains.blob(key, kind, x, y, radius, seed, irregularity))
 
     def zone_rect(self, key, kind, x, y, length, width, yaw=0.0, breaks=()):
         """A rectangular zone (test lanes, aprons): `length` along yaw, `width`
         across, centred on layout (x, y); `breaks`: distances from its start
-        where the ground has a kink (tile edges go there)."""
+        where the ground has a kink (the decal follows it there)."""
         return self._add_zone(terrains.rect(key, kind, x, y, length, width, yaw, breaks))
 
     def _add_zone(self, zone):
         assert self._terrain is not None, "terrain() first"
         assert zone.key not in {z.key for z in self.zones}, zone.key
         self._raster = self._carved = None  # the ground changes
-        if terrains.FRICTION == "tiles" and zone.mu < terrains.HEIGHTMAP_MU:
-            terrains.fit_tiles(self.hf, zone)
-        for name, (x, y) in self._placed.items():
-            if terrains.top_height(zone.tiles, x, y) is not None:
-                raise ValueError(f"zone {zone.key} lies under {name}, which was placed before it")
         if self.sinkage and zone.kind.traction.sinkage_m:
             for name, (x, y) in self._placed.items():
                 if terrains.inside(zone.outline, x, y):
                     raise ValueError(f"zone {zone.key} would sink the ground under {name}, which was placed "
                                      "before it")
-        if zone.tiles:
-            tiles = [(zone.tiles, *self._bounds(zone.tiles))]
-            for xyz, size, variant, R, _, collides in self._rocks:
-                if collides and self._rock_on_tiles(tiles, *self.to_layout(*xyz[:2]), size, variant, R):
-                    raise ValueError(f"zone {zone.key} lies under colliding rocks placed before it (rock_field "
-                                     "keeps them off zones declared first)")
         model, _, link = self._terrain
-        for k, tile in enumerate(zone.tiles):
-            c = sdf.collision(link, f"zone_{zone.key}_{k}", sdf.box(tile.size),
-                              (*self.to_world(*tile.center), *sdf.matrix_to_rpy(tile.axes)), mu=zone.mu)
-            self._surfaces[c.get("name")] = zone.kind.key
         x0, y0, _ = zone.frame
         d = zone.decal
         if d["shape"] == "blob":
@@ -368,11 +371,12 @@ class WorldBuilder:
         self.zones.append(zone)
         stride = max(1, int(math.ceil(len(zone.outline) / ZONE_OUTLINE_POINTS)))
         self.sheet.setdefault("terrain_zones", {})[zone.key] = dict(
-            type=kind.key, title=kind.title, mu=kind.mu, center=self.geo(x0, y0), area_m2=round(zone.area, 1),
-            tiles=len(zone.tiles), tiled_area_m2=round(zone.tiled_area, 1),
+            type=kind.key, title=kind.title, center=self.geo(x0, y0), area_m2=round(zone.area, 1),
             outline=[[round(v, 2) for v in self.to_world(x, y, 0.0)[:2]] for x, y in zone.outline[::stride]])
+        traction = terrains.traction(kind)
         self.sheet.setdefault("terrain_types", {})[kind.key] = dict(
-            title=kind.title, mu=kind.mu, max_slope_deg=round(kind.max_slope_deg, 1), notes=kind.notes)
+            title=kind.title, mu_s=traction.mu_s, mu_k=traction.mu_k, climb_deg=round(traction.climb_deg, 1),
+            hold_deg=round(traction.hold_deg, 1), sinkage_m=traction.sinkage_m, notes=kind.notes)
         return zone
 
     # --- Models -----------------------------------------------------------------------
@@ -391,7 +395,7 @@ class WorldBuilder:
 
     def mark(self, name, x, y):
         """Reserve layout (x, y) as a placed model does: rocks keep clear of it
-        (keep_clear) and no zone may be declared over it."""
+        (keep_clear) and no sinking zone may be declared over it."""
         self._placed[name] = (x, y)
 
     def place(self, uri_name, name, x, y, yaw=0.0, dz=0.0, static=None, record=None):
@@ -466,9 +470,8 @@ class WorldBuilder:
         [(x, y, size [m], yaw)] in layout coordinates (from scatter or
         scatter_each); size is the long half-axis (about the rock's height);
         rocks smaller than colliding_size are visual only; each takes a colour
-        of the terrains.ROCKS palette. A colliding rock that would touch a
-        friction zone's tiles is left out: its mesh has mu 1.0 (terrains.py)
-        and would give the wheels a foothold there.
+        of the terrains.ROCKS palette. Rocks grip like rock (ground.json's
+        prefixes), wherever they lie.
 
         write() merges every group's rocks into meshes in the terrain's own
         link, one per ROCK_CHUNK square (and colour, for the visuals), as
@@ -476,20 +479,17 @@ class WorldBuilder:
         Collisions use a coarser mesh of each rock's surface
         (meshes.hull_faces)."""
         colors = terrains.ROCKS[palette]
-        zones = [(zone.tiles, *self._bounds(zone.tiles)) for zone in self.zones if zone.tiles]
-        kept = []
+        colliding = 0
         for x, y, size, yaw in rocks:
             variant = int(self.rng.integers(meshes.ROCK_VARIANTS))
             color = tuple(colors[int(self.rng.integers(len(colors)))])
             R, z = self._rock_pose(x, y, size, variant, yaw)
             collides = size >= colliding_size
-            if collides and zones and self._rock_on_tiles(zones, x, y, size, variant, R):
-                continue
-            kept.append(collides)
+            colliding += collides
             self._rocks.append((self.to_world(x, y, z), size, variant, R, color, collides))
         group = self.sheet.setdefault("rocks", {}).setdefault(name, {"count": 0, "colliding": 0})
-        group["count"] += len(kept)
-        group["colliding"] += sum(kept)
+        group["count"] += len(rocks)
+        group["colliding"] += colliding
 
     def _rock_pose(self, x, y, size, variant, yaw):
         """Orientation (3x3) and layout z of a rock at layout (x, y): its flat
@@ -504,25 +504,6 @@ class WorldBuilder:
         R = meshes.tilt(gx, gy) @ Rz
         P = base @ R.T
         return R, float(np.min(self.height(x + P[:, 0], y + P[:, 1]) - P[:, 2])) - ROCK_BURY * size
-
-    @staticmethod
-    def _bounds(tiles):
-        """Layout bounding box (lo, hi) of tiles, out to their overlap."""
-        corners = np.concatenate([t.footprint for t in tiles])
-        reach = terrains.TILE_OVERLAP + 1e-6
-        return corners.min(axis=0) - reach, corners.max(axis=0) + reach
-
-    @staticmethod
-    def _rock_on_tiles(zones, x, y, size, variant, R):
-        """True if any vertex of a rock at layout (x, y) (size, variant,
-        orientation R) lies over a tile of zones [(tiles, lo, hi)]."""
-        V = meshes.rock_variant(variant)[0] * size @ R.T
-        x, y = x + V[:, 0], y + V[:, 1]
-        for tiles, lo, hi in zones:
-            near = (x >= lo[0]) & (x <= hi[0]) & (y >= lo[1]) & (y <= hi[1])
-            if near.any() and not np.isnan(terrains.tops(tiles, x[near], y[near])).all():
-                return True
-        return False
 
     def _write_clutter(self):
         """Rocks and shrubs, merged into one mesh per ROCK_CHUNK square of the
