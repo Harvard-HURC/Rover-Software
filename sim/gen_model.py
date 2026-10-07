@@ -55,11 +55,11 @@ VIEWER_NAMES = ("CHASE_MODEL", "CHASE_IMAGE_TOPIC", "CHASE_CMD_TOPIC", "CHASE_MO
 
 @dataclass(frozen=True)
 class DriveParams:
-    """The drivetrain (design spec section 6). mode "diffdrive": Gazebo's
-    DiffDrive, every wheel a velocity servo, kept for A/B tests and cost
-    comparisons (D22); "physical": plugins/rover_drivetrain.cpp, a DC motor
-    per wheel driving it by torque, every wheel contact gripping like the
-    ground under it. Motor numbers are typical placeholders until the
+    """The drivetrain (design spec section 6). mode "physical", the default:
+    plugins/rover_drivetrain.cpp, a DC motor per wheel driving it by torque,
+    every wheel contact gripping like the ground under it; "diffdrive":
+    Gazebo's DiffDrive, every wheel a velocity servo, kept for A/B tests and
+    cost comparisons (D22). Motor numbers are typical placeholders until the
     drivetrain is chosen (D20, Q7: the prototype's validated set)."""
     mode: str = "physical"  # or "diffdrive"
     # A command older than cmd_timeout counts as zero, so a commander that died cannot leave the rover

@@ -11,21 +11,20 @@ elevations plus dem.NAVD88_TO_WGS84.
 - Route-Finding, north-west: START_POST (ArUco 0) on flat ground 412 m from
   C2, in radio line of sight (1.e.xii). POST1 (ArUco 1) on the crest of a
   narrow butte, 15 m above the start. The crest is gentle (< 8 deg) for its
-  last 85 m, but its west end is reached over an 8 m rim of 18-24 deg
-  ground, which the easy route switchbacks up at 16 deg over a rib of bare
-  caprock (EASY_ROUTE_RIB: that rim is 23-26 deg steep, more than packed
-  regolith lets a rover climb across, 23 deg). Driving straight at Post 1
-  the grade is 26-44 deg from 22 of 24 compass bearings, steeper than the
-  bare ground lets a rover climb.
-  Boulders of the broken caprock also line the butte's rim (routes.rim: round
-  the ground reached from Post 1 on slopes up to RIM_SLOPE, kept clear of
-  the easy route along the crest), too tall to climb (0.3 m rocks stop the
-  rover on the proving ground) and too close together to pass between,
-  everywhere but where the easy route climbs onto the butte: that climb is
-  the only way up (1.e.xv: not every approach is navigable). POST2 (ArUco 2)
-  on the plain 71 m north of Post 1, out of the C2 antenna's line of sight
-  behind the butte (1.e.xvi). judges_only holds the easy route, the butte's
-  rim and its approach grades.
+  last 85 m, but its west end is reached over a rim of 18-26 deg ground,
+  which the easy route switchbacks up at 16 deg on a rib of bare caprock
+  (EASY_ROUTE_RIB): across ground that steep, packed regolith (climb 23 deg)
+  does not carry the rover. Driving straight at Post 1 the grade is 26-44
+  deg from 22 of 24 compass bearings, steeper than the bare ground lets a
+  rover climb. Boulders of the broken caprock also line the butte's rim
+  (routes.rim: round the ground reached from Post 1 on slopes up to
+  RIM_SLOPE, kept clear of the easy route along the crest), too tall to
+  climb (0.3 m rocks stop the rover on the proving ground) and too close
+  together to pass between, everywhere but where the easy route climbs onto
+  the butte: that climb is the only way up (1.e.xv: not every approach is
+  navigable). POST2 (ArUco 2) on the plain 71 m north of Post 1, out of the
+  C2 antenna's line of sight behind the butte (1.e.xvi). judges_only holds
+  the easy route, the butte's rim and its approach grades.
 - Astronaut Assistance, south-east of C2 on gentle ground (< 6 deg), all in
   radio line of sight: the astronaut waits at ASTRONAUT_WAIT (1.e.v); Follow!
   along FOLLOW_PATH (1.e.vi); the rock pick hammer lies at HAMMER near its end;
@@ -37,12 +36,11 @@ the floors of the washes that drain past the butte (the north one runs
 between the start, Post 1 and Post 2), loose scree on the butte's north face
 where the straight line from the start crosses it, gravel on the aprons at its
 feet, bentonite clay on the plain the rover crosses from C2 and bare
-slickrock on its caprock crest. Rocks lie where the rover drives: a stony
-plain, two rock gardens, rubble, talus on the butte's faces, the boulders on
-its rim, and boulders below its cliff and the knoll by the astronaut. Rocks
-keep ROUTE_CLEARANCE from the easy route, the astronaut's walk and every
-target; slickrock, the best grip there is, lies on the crest the easy route
-follows.
+slickrock, the best grip there is, on its caprock crest and on the rib the
+easy route climbs. Rocks lie where the rover drives: a stony plain, two rock
+gardens, rubble, talus on the butte's faces, the boulders on its rim, and
+boulders below its cliff and the knoll by the astronaut. Rocks keep
+ROUTE_CLEARANCE from the easy route, the astronaut's walk and every target.
 """
 import json
 import math
