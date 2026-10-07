@@ -17,8 +17,8 @@ entry in the sheet:
 Sub-surface sampling (10 cm, 1.b.vi) is not simulated: the sheet gives each
 unit's notes instead.
 
-The ground the rover crosses (urc/terrains.py, urc/features.py): soft sand
-along the wash floor, bentonite clay aprons at the feet of the banded hills,
+The ground the rover crosses (urc/terrains.py, urc/features.py): loose wash
+sand along the wash floor, bentonite clay aprons at the feet of the banded hills,
 a loose scree chute up the east face of the small hill; talus on the hill
 slopes, two rock fields and the ledge's blocks. Around them the ground is
 painted (PAINT): packed regolith with patches of crusted sand sheet, wash

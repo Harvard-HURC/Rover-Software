@@ -19,7 +19,7 @@ line of sight):
 The ground (1.c.ii: "soft sandy areas, gravel, rough stony areas, rock and
 boulder fields, vertical drops and steep loosely consolidated slopes"): a
 soft sand flat in stage 1, a gravel plain on the way out, bentonite clay on
-the crate hill's flank, sand along the wash floor and a loose scree chute up
+the crate hill's flank, wash sand along the wash floor and a loose scree chute up
 the steep mesa are zones of their ground (urc/terrains.py, urc/features.py);
 two rough stony areas (rock gardens), the boulder field and the ledges.
 Around them the ground is painted (PAINT): packed regolith with patches of
@@ -69,11 +69,12 @@ ASTRONAUT_C = (760.0, 610.0)
 WASH = [(160.0, 560.0), (330.0, 470.0), (480.0, 360.0), (610.0, 400.0), (720.0, 420.0), (820.0, 330.0),
         (950.0, 320.0)]
 SPECTROMETER = (845.0, 333.0)
+SAND_FLAT = (150.0, 62.0)  # stage 1's soft sand flat
 
 LANDFORMS = [features.Mesa("crate_hill", *CRATE_HILL, 10.0, 6.0, 30.0, seed=44, irregularity=0.1),
              features.Mesa("steep_mesa", *STEEP_MESA, 18.0, 11.0, 20.0, seed=45)]
 FEATURES = [
-    features.Patch("sand_flat", terrains.SAND, 150.0, 62.0, 14.0),  # among astronauts A, B and the supply crate
+    features.Patch("sand_flat", terrains.SAND, *SAND_FLAT, 14.0),  # among astronauts A, B and the supply crate
     features.Patch("gravel_plain", terrains.GRAVEL, 285.0, 222.0, 18.0),  # on the way out to the field sign
     # On the crate hill's approach, ~15 deg: clay climbs 17 deg at most, and a spinning wheel digs in.
     features.Patch("clay_flank", terrains.CLAY, 225.0, 102.0, 9.0),
@@ -97,7 +98,9 @@ PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120
          landscape.Below("caprock", "block_field", reach_m=30.0)]
 PADS = [(*C2[:2], 30.0), (*GATE, 4.0), (*TOOLBOX, 5.0), (*ASTRONAUT_A, 4.0), (*ASTRONAUT_B, 4.0), (*WATER_JUG, 3.0),
         (*SUPPLY_CRATE, 3.0), (*CRATE_HILL, 5.0), (*FIELD_SIGN, 3.0), (*INSTRUMENT_CASE, 3.0), (*FIRST_AID, 3.0),
-        (*ASTRONAUT_C, 4.0), (*SPECTROMETER, 3.0)]  # x, y, radius: kept flat (design 5.4)
+        (*ASTRONAUT_C, 4.0), (*SPECTROMETER, 3.0),
+        (*SAND_FLAT, 14.0)]  # x, y, radius: kept flat (design 5.4); the sand flat too, which a dune of the sand's
+# lidar relief would make a 15-25 deg slope (measured)
 RELIEF = dict(features=FEATURES + BADLANDS, pads=PADS, paths=[(tuple(RIDGE_PASS), 7.0)])  # kept flat (design 5.4)
 COURSE = [GATE, TOOLBOX, ASTRONAUT_A, WATER_JUG, ASTRONAUT_B, SUPPLY_CRATE, CRATE_HILL, FIELD_SIGN, INSTRUMENT_CASE,
           FIRST_AID, RIDGE_PASS[0], RIDGE_PASS[1], ASTRONAUT_C, SPECTROMETER]  # the legs, in task order

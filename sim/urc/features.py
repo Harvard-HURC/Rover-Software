@@ -106,11 +106,11 @@ def along(key, kind, path, step, radius, skip=()):
 @dataclass(frozen=True)
 class Wash:
     """A dry wash along a polyline: a channel `depth` deep (0 for one the
-    terrain already has, as on a real DEM) whose floor has soft sand patches
-    `<key>_sand_<k>` every `sand_step` metres (along), but not at the indices
-    in `skip` (where it cuts through a ridge, say). A channel's sand stays on
-    its floor, within `half_width` of the path, not up its banks, which rise
-    no steeper than `bank` [deg]."""
+    terrain already has, as on a real DEM) whose floor has patches of loose
+    wash sand (terrains.WASH_SAND) `<key>_sand_<k>` every `sand_step` metres
+    (along), but not at the indices in `skip` (where it cuts through a ridge,
+    say). A channel's sand stays on its floor, within `half_width` of the
+    path, not up its banks, which rise no steeper than `bank` [deg]."""
     key: str
     path: tuple
     depth: float = 0.0
@@ -122,7 +122,7 @@ class Wash:
 
     @property
     def patches(self):
-        return along(f"{self.key}_sand", terrains.SAND, self.path, self.sand_step, self.sand_radius, self.skip)
+        return along(f"{self.key}_sand", terrains.WASH_SAND, self.path, self.sand_step, self.sand_radius, self.skip)
 
     def shape(self, hf):
         if self.depth:

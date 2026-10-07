@@ -220,13 +220,13 @@ class Autonomy(unittest.TestCase):
         washes = [[self.xy(p) for p in wash] for wash in self.sheet["judges_only"]["washes"].values()]
         easy = [self.xy(p) for p in self.sheet["judges_only"]["easy_route"]["points"]]
         c2_z = self.sheet["c2"]["z"]
-        self.assertEqual({z["type"] for z in zones.values()}, {"sand", "scree", "gravel", "clay", "slickrock"})
+        self.assertEqual({z["type"] for z in zones.values()}, {"wash_sand", "scree", "gravel", "clay", "slickrock"})
         rib = [key for key in zones if key.startswith("easy_route_rib_")]
         self.assertTrue(rib)
         for key, zone in zones.items():
             c = zone["center"]
             slope = self.terrain.slope_deg(c["x"], c["y"])
-            if zone["type"] == "sand":
+            if zone["type"] == "wash_sand":
                 self.assertLess(min(self.distance(w, c["x"], c["y"]) for w in washes), 1.0, key)
             if zone["type"] == "scree":
                 self.assertGreater(slope, terrains.SCREE.traction.hold_deg + 5.0, key)

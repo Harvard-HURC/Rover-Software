@@ -77,6 +77,7 @@ STEPS = [Step(f"step_{round(top * 100)}cm", 16.0, y, EAST, 4.0, 3.0, top) for to
 NATURAL = [Natural("natural_sand_sheet", terrains.SAND_SHEET, (-8.0, 132.0), WEST, 40.0, 12.0),
            Natural("natural_badland", terrains.BADLAND_SLOPE, (-8.0, 150.0), WEST, 40.0, 16.0, grade=12.0),
            Natural("natural_block_field", terrains.BLOCK_FIELD, (-8.0, 170.0), WEST, 40.0, 14.0)]
+NATURAL_EASE = 2.0  # [m] (A: the strips are 12-16 m wide; the worlds' 5 m would leave them little full relief)
 FEATURES = [FRICTION_HILL, SAND_PIT, CLAY_PATCH, SLICKROCK_SLAB, *SIDE_SLOPES, BUMPS, TWIST_DITCH, WASHBOARD, *STEPS,
             *NATURAL]
 
@@ -99,8 +100,9 @@ def make_terrain():
 
 
 def natural(hf):
-    """Where the course has natural micro-relief (landscape.only): the natural strips."""
-    return landscape.only(hf, [strip.polygon() for strip in NATURAL])
+    """Where the course has natural micro-relief (landscape.only): the natural strips, easing in over
+    NATURAL_EASE."""
+    return landscape.only(hf, [strip.polygon() for strip in NATURAL], NATURAL_EASE)
 
 
 def lane_info(lane, v=0.0):
