@@ -719,7 +719,7 @@ NAD83(2011) to WGS84(G2139) at epoch 2027.4, −0.79 m; NOAA VDatum,
   ground (4 % of the commanded yaw rate on 25° slickrock): a driver should
   arc, not spin.
 - Measured (`pixi run sim-slow`): pure pursuit along the easy route at 1 m/s
-  with a 4 m look-ahead reaches Post 1 in 332 s of sim time (the design
+  with a 4 m look-ahead reaches Post 1 in 337 s of sim time (the design
   allows 6 min). Post 2 is
   reachable across the plain and the wash sand.
 
@@ -1348,9 +1348,9 @@ build and the generation): 8 skipped (the opt-in performance and slow tests), 2
 expected failures (the slow-turn judder, dust in depth); `ctest --test-dir
 sim/build` 2 C++ programs; `sim-slow` (the mission routes)
 41 min for its 6 tests, all arriving: Autonomy's easy route
-(233 m in 332 s of sim time, of 360 allowed), start → Post 2 (235 m in 319 s)
-and the astronaut walk (76 m in 100 s); Delivery's 11 legs (1823 m in
-2429 s); Astrobiology C2 → wash → gypsum → C2 (547 m); Equipment Servicing's
+(233 m in 337 s of sim time, of 360 allowed), start → Post 2 (235 m in 319 s)
+and the astronaut walk (76 m in 100 s); Delivery's 11 legs (1824 m in
+2484 s); Astrobiology C2 → wash → gypsum → C2 (547 m); Equipment Servicing's
 gate → lander (84 m in 107 s). The driver is pure pursuit on ground truth at
 0.8 m/s (Autonomy's easy route 1 m/s), arcs of at least 1.5 m radius, never a
 spin.

@@ -1543,7 +1543,7 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 | Stick-slip judder on rock | **Not met** | 0.012 peak-to-peak/mean (target ≥ 0.8); 17.4 |
 | Stall at 0.7× / no stall at 1.3× the analytic current | **Met** | 6.8 A: 7.5° in 5 s (6.5 % of unlimited); 12.6 A: ≥ 85 %; monotonic |
 | Dig-in on loose sand | **Met** (strong default) | as above |
-| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); after the review fixes 460 (17.6); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach) |
+| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); after the review fixes 460 (17.6); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed, 337 s after the review fixes; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach; all 6 again after them) |
 | One catalogue, shared assets | **Met** | `terrains.TYPES`, `landscape` recipes, `urc_media`, `WorldBuilder`; missions say where and how much |
 
 ### 17.4 Status against §6.9
