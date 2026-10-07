@@ -9,11 +9,12 @@ real_time_factor 0.
 
 The floor is judged on the wall-clock real-time factor, which an otherwise
 idle machine shows: the design's CPU-time measure also counts the server's
-helper threads and reads 25-40 % lower (sim/data/research/gates.json, G5);
+helper threads and reads 13-29 % lower (sim/data/research/gates.json, G5);
 it is printed beside it. Slow (several minutes) and sensitive to load: it
-runs only with ROVER_PERF=1 (pixi run sim-perf), and a world measured at a
-1-minute load average of 4 or more (the server itself adds about 1.3) is
-skipped with its numbers, not failed.
+runs only with ROVER_PERF=1 (pixi run sim-perf), and a world measured while
+other processes kept the 1-minute load average at 4 or more (the load minus
+the cores the measured server itself keeps busy, CPU over wall time, about
+1.3) is skipped with its numbers, not failed.
 """
 import os
 import re
@@ -28,7 +29,7 @@ FLOOR = 1.1  # x real time, every world (section 10.3)
 TARGET = 1.3  # x real time, reported only
 STARTUP_S = 30.0  # wall time to the first step (a one-step run: load, step, exit)
 MEMORY_B = 3.5 * 2**30  # peak resident size of a server
-MAX_LOAD = 4.0
+MAX_LOAD = 4.0  # from other processes
 ITERATIONS = 20_000  # 20 s of sim time: the schedule's straight, turns and arc
 RUNS = 5
 
@@ -43,16 +44,17 @@ class Budgets(unittest.TestCase):
                               text, count=1)
                 with temp_sdf(text, WORLDS) as path:  # beside the original, as worldfiles.world_copy does
                     cost = cpu_time_per_step({name: path}, ITERATIONS, RUNS)[name]
-                rtf, load = cost.wall_real_time_factor, statistics.median(cost.load)
+                rtf = cost.wall_real_time_factor
+                load = statistics.median(cost.load) - cost.per_step / cost.wall_per_step  # others' share
                 print(f"{name}: {rtf:.2f}x real time ({'meets' if rtf >= TARGET else 'misses'} the {TARGET}x "
                       f"target; CPU time {cost.per_step * 1e3:.3f} ms/step = {cost.real_time_factor:.2f}x), "
-                      f"start-up {cost.startup_wall:.1f} s, peak {cost.peak_rss / 2**20:.0f} MB, load {load:.1f}",
+                      f"start-up {cost.startup_wall:.1f} s, peak {cost.peak_rss / 2**20:.0f} MB, other load {load:.1f}",
                       flush=True)
                 self.assertLess(cost.startup_wall, STARTUP_S)
                 self.assertLess(cost.peak_rss, MEMORY_B)
                 if load >= MAX_LOAD:
-                    self.skipTest(f"{name}: load average {load:.1f} >= {MAX_LOAD}, {rtf:.2f}x not judged")
-                self.assertGreaterEqual(rtf, FLOOR, f"{name}: {rtf:.2f}x real time at load {load:.1f}")
+                    self.skipTest(f"{name}: other load {load:.1f} >= {MAX_LOAD}, {rtf:.2f}x not judged")
+                self.assertGreaterEqual(rtf, FLOOR, f"{name}: {rtf:.2f}x real time at other load {load:.1f}")
 
 
 if __name__ == "__main__":

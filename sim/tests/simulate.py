@@ -278,7 +278,7 @@ class Cost:
         """Sim seconds per CPU second at 1 ms steps, the design's measure (it
         holds on a loaded machine). A lower bound: the server's helper threads
         (gz-transport, /clock sent every step) add CPU time beside the step;
-        on this machine it is 25-40 % below wall_real_time_factor
+        on this machine it is 13-29 % below wall_real_time_factor
         (sim/data/research/gates.json, G5)."""
         return 0.001 / self.per_step
 

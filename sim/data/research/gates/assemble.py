@@ -103,18 +103,25 @@ g5 = load("g5_joint")
 table = {}
 for key, v in g5.items():
     world, variant = key.split("/")
+    wall = (v["full_wall_s"] - v["startup_wall_s"]) / 19_999  # difference of the median wall times
     table.setdefault(world, {})[variant] = cost(v, "cpu_ms_per_step", "real_time_factor_cpu", "cpu_ms_per_step_runs") | {
-        "vs_diffdrive_dantzig": v["vs_diffdrive_dantzig"]}
+        "vs_diffdrive_dantzig": v["vs_diffdrive_dantzig"], "wall_ms_per_step": round(wall * 1e3, 4),
+        "real_time_factor_wall": round(0.001 / wall, 2)}
 for world, row in table.items():
-    row["pgs_passes_1_1x"] = row["proto_pgs"]["real_time_factor_cpu"] >= 1.1
-    row["dantzig_passes_1_1x"] = row["proto_dantzig"]["real_time_factor_cpu"] >= 1.1
+    for solver in ("pgs", "dantzig"):
+        row[f"{solver}_passes_by_cpu_time"] = row[f"proto_{solver}"]["real_time_factor_cpu"] >= 1.1
+        row[f"{solver}_passes_by_wall_clock"] = row[f"proto_{solver}"]["real_time_factor_wall"] >= 1.1
 previous = load("prev_g5_joint")
 gates["G5"] = dict(
     script="g5.py joint 5 (sensors stripped, RTF 0, 20,000 steps of simulate.DRIVE_SCHEDULE, interleaved)",
     measured=table,
-    earlier_runs_at_load_6_to_14={k: dict(cpu_ms_per_step=v["cpu_ms_per_step"], rtf=v["real_time_factor_cpu"])
+    earlier_runs_at_load_6_to_14={k: dict(cpu_ms_per_step=v["cpu_ms_per_step"], rtf_cpu=v["real_time_factor_cpu"])
                                   for k, v in (previous or {}).items()},
-    verdict="pass" if all(r["pgs_passes_1_1x"] for r in table.values()) else "fail in some worlds")
+    verdict=("pass" if all(r["pgs_passes_by_cpu_time"] for r in table.values()) else
+             "fail by CPU time in " + ", ".join(w for w, r in table.items() if not r["pgs_passes_by_cpu_time"])
+             + "; pass by wall clock" + ("" if all(r["pgs_passes_by_wall_clock"] for r in table.values()) else
+                                         " except " + ", ".join(w for w, r in table.items()
+                                                                if not r["pgs_passes_by_wall_clock"]))))
 
 # G6 ---------------------------------------------------------------------------------------------
 g6 = {}
@@ -135,11 +142,12 @@ def watched_fps(d):
 main = {k: v for k, v in g6.items() if k.endswith("_rgbd1280")}
 flare = {k: v["lens_flare_pass_added"] for k, v in g6.items() if "flare" in k}
 gates["G6"] = dict(
-    script="g6.py <world> rgbd1280|fallback|chase_flare|rgbd1280_dd 10",
+    script="run_g6.sh (g6.py <world> rgbd1280|fallback|chase_flare|rgbd1280_dd 10)",
     measured=g6,
+    watched_fps_full_config={k: watched_fps(v) for k, v in main.items()},
     earlier_runs_at_load_6_to_14=previous6,
-    verdict="pass" if main and all(watched_fps(v) >= 15 for v in main.values()) and flare and all(flare.values())
-    else "fail")
+    verdict="pass" if len(main) == 2 and all(watched_fps(v) >= 15 for v in main.values()) and len(flare) == 2
+    and all(flare.values()) else "fail")
 
 # G7 ---------------------------------------------------------------------------------------------
 g7, inv = load("g7_cost"), load("g7_invariants")
@@ -201,9 +209,56 @@ DECISIONS = {
                "1.64 M visual triangles in 16 chunks, all in view of a watched 1280 x 720 camera: peak 512 MB with "
                "GLB, 801 MB with OBJ, 314 MB without them, so GLB needs 0.41x the memory of OBJ (198 vs 487 MB); "
                "files 37.5 vs 110 MB, server wall time 3.8 vs 5.5 s."]),
+    "G4": dict(
+        decision="Shrub cards may use alpha cut-outs (alpha-tested at 0.5). Soft-edged decals are not available: "
+                 "the spec's fallback for them applies (no detail decals), or decals whose edge is a hard, "
+                 "irregular (noise-cut) alpha-test edge.",
+        notes=["Cut-out: the transparent texels of an albedo map vanish (the wall behind shows through), with no "
+               "<transparency> needed: gz-sim gives every albedo map an alpha test at 0.5.",
+               "Feathering: an alpha ramp 0 -> 1 renders as a hard edge where alpha = 0.5. With <transparency> "
+               "0.001 the material blends, so opacity follows the texture alpha from 1 down to 0.5, but the alpha "
+               "test still removes everything below 0.5: the edge steps from 50 % opacity to nothing.",
+               "Not measured: sorting and depth of blended (transparent-queue) materials over the Terra terrain."]),
+    "G5": dict(
+        decision="PGS in Delivery, the proving ground, Astrobiology, Autonomy (and rover_test); Dantzig in "
+                 "Equipment Servicing (the user's Q2 answer: Dantzig with approximate per-wheel friction, no lander "
+                 "optimisation).",
+        notes=["Measured on an otherwise idle machine: load 1.6-5.5, of which the server under test adds about "
+               "1.3 (it runs 1.3 cores); run spread 1-3 %.",
+               "By the spec's CPU-time method the prototype with PGS reaches 1.29x real time in Delivery (Dantzig "
+               "1.61x), 4.8x on the proving ground, 3.7x in Astrobiology and 3.4x in Autonomy (3DEP 2049^2; G1 "
+               "adds 3 % for the lidar), but only 0.86x in Equipment Servicing (Dantzig 0.97x, today's DiffDrive "
+               "rover 1.07x): the lander's 101 joints dominate (spec 10.1).",
+               "CPU time counts the server's helper threads (gz-transport, /clock published every step) beside the "
+               "physics step: the wall-clock step is 13-29 % shorter on this machine. By wall clock Equipment "
+               "Servicing reaches 1.35x with Dantzig and 1.16x with PGS, Delivery 1.68x with PGS; G6 ran "
+               "Equipment Servicing at RTF 0.985 of a requested 1.0 while rendering four cameras. "
+               "simulate.Cost now reports both (wall_real_time_factor); sim-perf judges the wall clock.",
+               "Drivetrain cost (prototype, joint loads, against DiffDrive, both Dantzig): +4.7 % to +10.8 % in "
+               "every world, inside the +25 % budget. PGS over Dantzig with the prototype: +25 % in Delivery, "
+               "+12 % in Equipment Servicing, 0-4 % elsewhere.",
+               "Earlier runs of this gate at load 6-14 (earlier_runs_at_load_6_to_14) read up to 60 % higher and "
+               "are superseded."]),
+    "G6": dict(
+        decision="Full config as planned: fly camera 1280 x 720, rover RGB-D 1280 x 720, shrub and pebble budgets "
+                 "of the spec, lens flare allowed. Re-run this gate in WS-V with the real assets.",
+        notes=["Eye and fly views 18.5 fps in both worlds (RTF 0.985-0.99 of a requested 1.0), the rover's RGB-D "
+               "subscribed at 14 Hz of its 15 Hz; with the chase camera and lens flare as well 17.0-17.7 fps.",
+               "The frame rate is set by rendering, not physics: the same scene with today's DiffDrive rover gives "
+               "the same 18.4-18.5 fps, and the fallback (half the shrubs, no pebbles, fly 960 x 540) 18.3-18.5 fps.",
+               "LensFlare logged 'Render pass added' in both worlds; its PostRender connection is reset right after "
+               "(gz-sim 8 LensFlare.cc), so it costs nothing per frame afterwards. Its first message prints the "
+               "camera name before it is set, hence 'named []'. The earlier run that missed the message lost the "
+               "server's buffered output (killed after 15 s); the server now writes to a pseudo-terminal.",
+               "Stand-ins, not the real config: 1.47 M shrub and 0.8 M pebble triangles (merged GLB chunks), a "
+               "0.72 M-triangle far-field grid, a 4096^2 colour map as terrain layer 0, 80 km far clip. Not "
+               "included: the patched terrain shader, sky and haze (spec 10.2: +0.7 to +4.7 ms per 1280 x 720 "
+               "frame), real textures, dust. 18.5 fps leaves 3.5 fps of margin above the 15 fps floor."]),
     "G7": dict(
         decision="Delivery and Astrobiology at 2049^2.",
-        notes=["Generation 11.7 s (Delivery) and 7.4 s (Astrobiology), under the 2 min limit.",
+        notes=["Generation 6.6 s (Delivery) and 4.5 s (Astrobiology), far under the 2 min limit.",
+               "No measurable RTF loss: CPU time per step +0.2 % (Delivery) and -0.7 % (Astrobiology), run spread "
+               "about 2 %, load 2.4-4.9. (An earlier pair of runs at load 8-12 read -17 % and -2 %: noise.)",
                "The mission and terrain tests without physics (55) pass on the 2049^2 tree; the largest sheet "
                "changes are 1.2 cm in a zone centre height, 1.4 cm in z_max and 1 cm in an altitude."]),
     "G8": dict(
