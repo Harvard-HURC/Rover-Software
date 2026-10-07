@@ -1,6 +1,6 @@
 """Small helpers for writing SDF 1.11 with xml.etree: every generated model
-(the rover and its cameras in gen_model.py, the URC worlds and models) is
-written with them.
+(the rover in gen_model.py, the driver station's cameras in viewers.py, the
+URC worlds and models) is written with them.
 
 Geometry builders (box, cylinder, ...) return a function that fills a
 <geometry> element, so one shape can be used for a collision and a visual.
@@ -197,6 +197,23 @@ def joint(model, name, kind, parent, child, axis=(0, 0, 1), lower=None, upper=No
         if stiffness is not None:
             sub(dynamics, "spring_stiffness", stiffness)
             sub(dynamics, "spring_reference", 0.0 if reference is None else reference)
+    return element
+
+
+def camera(sensor, hfov, size, clip, image_format=None):
+    """A sensor's <camera>: horizontal field of view [rad], picture (width,
+    height) [px] and clip planes (near, far) [m] (the rover's RGB-D camera,
+    the driver station's viewers)."""
+    element = sub(sensor, "camera")
+    sub(element, "horizontal_fov", hfov)
+    image = sub(element, "image")
+    sub(image, "width", size[0])
+    sub(image, "height", size[1])
+    if image_format is not None:
+        sub(image, "format", image_format)
+    planes = sub(element, "clip")
+    sub(planes, "near", clip[0])
+    sub(planes, "far", clip[1])
     return element
 
 

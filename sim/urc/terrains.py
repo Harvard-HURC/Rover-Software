@@ -36,6 +36,14 @@ type's mu is a tuning knob standing in for its traction (a rover holds or
 climbs a slope up to about atan(mu)), not a measured property. The tyres have
 mu 1.0 along the tread and 0.5 across it (gen_model.Params), so a zone mu
 above 1.0 changes nothing, and one above 0.5 only the grip along the tread.
+
+Each type also carries four groups of fields, the structure of the realism
+design (docs/superpowers/specs/2026-10-06-urc-realism-design.md, sections
+5.1 and 9.1): Traction (what a wheel feels), Appearance (colour and dust),
+Relief (micro-relief added to a synthetic heightmap) and Clutter (slabs,
+rocks, shrubs, risers placed on it). Recipes are small frozen dataclasses
+that types share by reference. The defaults are today's worlds: Coulomb
+traction at the type's mu, its texture colour, no dust, relief or clutter.
 """
 import math
 import zlib
@@ -58,6 +66,121 @@ DECAL_MARGIN = 0.2  # [m] the decal reaches this far past the zone outline
 DECAL_STEP = 0.5  # [m] decal mesh spacing (and a round zone's outline spacing)
 DECAL_TILE = 4.0  # [m] decal texture repeat
 NORMAL_STRENGTH = 2.0  # bumpiness of the ground normal maps
+DUST_RGB = (0.80, 0.70, 0.56)  # dust puff colour of the tuned particle emitter (design spec 6.5, M)
+
+
+@dataclass(frozen=True)
+class Traction:
+    """How the ground grips and resists a wheel; the field names are the keys
+    of ground.json's traction table (design spec 5.6, 9.1). mu is the
+    Coulomb limit of the gross tyre force: static below the Stribeck speed,
+    kinetic above it. Rolling resistance and bulldozing are hub forces
+    (fractions of the wheel's load), not friction."""
+    mu_s: float = 1.0  # static friction coefficient
+    mu_k: float = 1.0  # kinetic friction coefficient
+    crr: float = 0.0  # rolling resistance along the heading, x load
+    bulldoze: float = 0.0  # sideways resistance in loose soil, along the axle, x load
+    slip: float = 0.0  # force-dependent slip: steady slip ratio = slip x traction / load
+    sinkage_m: float = 0.0  # [m] static sinkage (the collision carve under the type)
+    dig_rate: float = 0.0  # [m/m] extra sinkage per metre of slip while a wheel spins
+    dig_max: float = 1.0  # cap on the dig factor D = sinkage / static sinkage
+
+    @classmethod
+    def coulomb(cls, mu):
+        """Plain Coulomb friction, nothing else: what DART gives a ground today."""
+        return cls(mu_s=mu, mu_k=mu)
+
+
+@dataclass(frozen=True)
+class Palette:
+    """A ground's colour [sRGB 0-255]: the median and, where measured, the
+    10th and 90th percentile of its texels (design spec 5.7)."""
+    base: tuple
+    p10: tuple = None
+    p90: tuple = None
+
+
+@dataclass(frozen=True)
+class Appearance:
+    """How the ground looks: its colour-map palette, the shared detail
+    texture laid over it (None: none) and the dust its wheels raise."""
+    palette: Palette
+    detail: str = None  # key of a shared detail texture in urc_media
+    dust: float = 0.0  # dust factor: scales the emitters' rate behind the wheels (0: none)
+    dust_rgb: tuple = DUST_RGB  # [0-1]
+
+
+@dataclass(frozen=True)
+class Haystacks:
+    """Rounded badland knobs (a Heightfield op, design spec 5.4)."""
+    diameter_m: tuple = (10.0, 40.0)  # (T: Mancos Shale near Hanksville [9])
+    flank_deg: float = 37.5  # steepest flank, 35-40 deg (T [9])
+    floor: float = 0.5  # fraction of a badland belt left flat (M: 47 % of the Badland-Rock outcrop unit < 5 deg)
+
+
+@dataclass(frozen=True)
+class Rills:
+    """Downslope rill traces carved into slopes (a Heightfield op, design spec 5.4)."""
+    depth_m: tuple = (0.05, 0.20)  # deepening downslope (M: lidar rill lines; T: 7.9 cm mean [8])
+    width_m: tuple = (0.5, 1.0)  # (A)
+    spacing_m: tuple = (10.0, 30.0)  # between seeds (A)
+
+
+@dataclass(frozen=True)
+class Relief:
+    """Micro-relief a synthetic world adds to its macro shape under this
+    type (design spec 5.4): a real lidar residual ("swatch",
+    sim/data/relief/<swatch>.npz) scaled by amplitude, plus haystacks and
+    rills. The default adds nothing."""
+    swatch: str = None
+    swatch_sigma_m: float = 0.0  # [m] the Gaussian high-pass the swatch was cut with
+    amplitude: float = 0.0  # x the swatch's own heights
+    haystacks: Haystacks = None
+    rills: Rills = None
+
+
+@dataclass(frozen=True)
+class Slabs:
+    """Tabular blocks (design spec 5.5): D drawn from tabulated cumulative
+    counts, interpolated log-log, extrapolated below the table as
+    N(>=D) = N(>=D_0) (D / D_0)^-exponent."""
+    counts: tuple  # ((D [m], N(>=D) per 100 m2), ...) ascending in D
+    d_min: float = 0.3  # [m] (A: below the 1 m the measurements resolve)
+    d_max: float = 7.0  # [m] larger features are ledges or macro shape (M)
+    exponent: float = 1.1  # local exponent at 1-2 m (M), used below the table (A)
+
+
+@dataclass(frozen=True)
+class Rocks:
+    """Rocks and cobbles: sizes log-uniform in sizes_m, density by the
+    cumulative fractional area k (design spec 5.5, A: no local data)."""
+    k: float
+    sizes_m: tuple = (0.04, 0.3)
+
+
+@dataclass(frozen=True)
+class Shrubs:
+    """Visual-only shrubs (design spec 5.5)."""
+    per_ha: float
+    height_m: tuple
+    diameter_m: tuple = (0.4, 1.0)  # (A: NAIP's 0.6 m pixels cannot resolve it)
+
+
+@dataclass(frozen=True)
+class Risers:
+    """Sub-metre ledges along contours (design spec 5.5, A: below lidar resolution)."""
+    height_m: tuple = (0.1, 1.0)
+    segment_m: tuple = (20.0, 40.0)
+    spacing_m: tuple = (10.0, 30.0)
+
+
+@dataclass(frozen=True)
+class Clutter:
+    """What is placed on the ground (design spec 5.5); None: none of that kind."""
+    slabs: Slabs = None
+    rocks: Rocks = None
+    shrubs: Shrubs = None
+    risers: Risers = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +192,16 @@ class TerrainType:
     pebbles: float = 0.001  # texture: pebbles per pixel
     variation: float = 0.25  # texture: mottling
     notes: str = ""
+    traction: Traction = None  # default: Traction.coulomb(mu)
+    appearance: Appearance = None  # default: the texture colour, no detail, no dust
+    relief: Relief = Relief()
+    clutter: Clutter = Clutter()
+
+    def __post_init__(self):
+        if self.traction is None:
+            object.__setattr__(self, "traction", Traction.coulomb(self.mu))
+        if self.appearance is None:
+            object.__setattr__(self, "appearance", Appearance(Palette(tuple(self.rgb))))
 
     @property
     def max_slope_deg(self):

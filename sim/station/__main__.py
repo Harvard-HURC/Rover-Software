@@ -27,6 +27,7 @@ sys.path.insert(0, str(SIM_DIR))
 
 from aiohttp import web  # noqa: E402
 
+import gzenv  # noqa: E402
 from station import link, server  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 
@@ -55,21 +56,11 @@ def resolve_world(arg):
     return path.resolve(), ET.parse(path).getroot().find("world").get("name")
 
 
-def gz_environment():
-    """sim/run.sh's environment: our models and plugins, and the real OGRE paths."""
-    env = os.environ.copy()
-    for key, value in (("GZ_SIM_RESOURCE_PATH", SIM_DIR / "models"), ("GZ_SIM_SYSTEM_PLUGIN_PATH", SIM_DIR / "build")):
-        env[key] = os.pathsep.join(filter(None, (str(value), env.get(key))))
-    prefix = Path(env.get("CONDA_PREFIX", sys.prefix))
-    env.setdefault("OGRE2_RESOURCE_PATH", str(prefix / "lib" / "OGRE-Next"))
-    env.setdefault("OGRE_RESOURCE_PATH", str(prefix / "lib" / "OGRE"))
-    return env
-
-
 def start_simulation(path):
+    """The world headless, in sim/run.sh's environment (gzenv)."""
     gz = shutil.which("gz") or str(Path(sys.prefix) / "bin" / "gz")
     print(f"starting {path.name} headless: gz sim -s -r", flush=True)
-    return subprocess.Popen([gz, "sim", "-s", "-r", str(path)], env=gz_environment(), start_new_session=True)
+    return subprocess.Popen([gz, "sim", "-s", "-r", str(path)], env=gzenv.environment(), start_new_session=True)
 
 
 def interrupt(signum, frame):
