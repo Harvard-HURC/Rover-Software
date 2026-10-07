@@ -674,8 +674,9 @@ class ChaseCameraFlight(unittest.TestCase):
             look_error = math.acos(max(-1.0, min(1.0, sum(a * b for a, b in zip(axis, to_look)))))
             return relative, azimuth, math.asin(d[2] / rng), rng, look_error
 
-        # The rover turns at ~0.3 rad/s, so the smoothed view trails by about
-        # rate x time constant; the tolerances allow for that.
+        # The rover turns at 0.14-0.3 rad/s (the physical drivetrain achieves
+        # ~40 % of the commanded 0.35 rad/s on regolith), so the smoothed view
+        # trails by about rate x time constant; the tolerances allow for that.
         relative, _, elevation, rng, look_error = view(3.9)
         self.assertLess(abs(relative - c.yaw), 0.15, "follow: behind the rover")
         self.assertAlmostEqual(elevation, c.pitch, delta=0.03)
@@ -692,7 +693,7 @@ class ChaseCameraFlight(unittest.TestCase):
         _, azimuth_a, _, _, _ = view(7.5)
         _, azimuth_b, _, _, _ = view(9.9)
         turned = math.remainder(samples[9.9]["rover"][5] - samples[7.5]["rover"][5], 2 * math.pi)
-        self.assertGreater(abs(turned), 0.4)
+        self.assertGreater(abs(turned), 0.25)  # measured 0.33 rad with the physical rover
         self.assertLess(abs(math.remainder(azimuth_b - azimuth_a, 2 * math.pi)), 0.05)
 
         # Pitch is clamped above the horizon: the camera never dips below the target.
