@@ -169,15 +169,18 @@ def haystack_heights(n, size, mask, seed, recipe):
     inside = np.flatnonzero(np.asarray(mask) > 0.5)
     out = np.zeros((n, n))
     target = (1 - recipe.floor) * len(inside) * res * res
-    knobs, cover, tries = [], 0.0, 0
-    while cover < target and tries < 50 * max(1, int(target / 100)) and len(inside):
+    knobs = np.zeros((max(1, int(target / (math.pi * (recipe.diameter_m[0] / 2) ** 2)) + 1), 3))  # x, y, radius
+    count, cover, tries = 0, 0.0, 0
+    while cover < target and tries < 50 * max(1, int(target / 100)) and len(inside) and count < len(knobs):
         tries += 1
         k = inside[int(rng.integers(len(inside)))]
         x, y = (k % n) * res, (k // n) * res  # metres east and south of the north-west corner
         radius = rng.uniform(*recipe.diameter_m) / 2
-        if any(math.hypot(x - a, y - b) < 0.8 * (radius + r) for a, b, r in knobs):
+        a, b, r = knobs[:count].T
+        if np.any(np.hypot(a - x, b - y) < 0.8 * (r + radius)):
             continue
-        knobs.append((x, y, radius))
+        knobs[count] = x, y, radius
+        count += 1
         cover += math.pi * radius * radius
         height = math.tan(math.radians(rng.uniform(recipe.min_flank_deg, recipe.flank_deg))) * 2 * radius / math.pi
         c0, c1 = max(int((x - radius) / res), 0), min(int(math.ceil((x + radius) / res)), n - 1)

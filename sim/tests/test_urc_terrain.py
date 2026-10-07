@@ -20,15 +20,16 @@ import numpy as np
 from PIL import Image
 
 from simulate import simulate
-from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_vertices, sheet, temp_sdf, vec, world_copy
+from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_vertices, sheet, temp_sdf, vec
+from worldfiles import world_copy
 from worldfiles import terrain as world_terrain
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import features, geo, landscape, meshes, sdf, terrain, terrains, world  # noqa: E402
+from urc import features, geo, landscape, meshes, sdf, terrain, terrains  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.media import Media  # noqa: E402
 from urc.missions import COURSES, MISSIONS, delivery, proving_ground  # noqa: E402
-from urc.world import ROCK_BURY, Layer, WorldBuilder  # noqa: E402
+from urc.world import MAX_SINKAGE, ROCK_BURY, Layer, WorldBuilder  # noqa: E402
 
 WORLDS_WITH_ZONES = ("urc_delivery", "urc_astrobiology", "urc_equipment_servicing", "urc_autonomy", "proving_ground")
 CELL_REACH = terrains.TILE / math.sqrt(2)  # a used cell's centre is inside: its corners reach this far out
@@ -282,8 +283,8 @@ class Catalogue(unittest.TestCase):
         median, p10 and p90 darker and lighter (design 5.7)."""
         p = terrains.Palette.survey(terrains.MUNSELL["sheppard"], terrains.NAIP["sheppard"],
                                     terrains.WINDOWS["sand_sheet_D"])
-        base, munsell, naip = (terrains._lab(c) for c in (p.base, terrains.MUNSELL["sheppard"],
-                                                           terrains.NAIP["sheppard"]))
+        base, munsell, naip = (terrains._lab(c)
+                               for c in (p.base, terrains.MUNSELL["sheppard"], terrains.NAIP["sheppard"]))
         self.assertAlmostEqual(base[0], naip[0], delta=1.0)
         self.assertAlmostEqual(math.atan2(base[2], base[1]), math.atan2(munsell[2], munsell[1]), delta=0.05)
         self.assertTrue(terrains._lab(p.p10)[0] < base[0] < terrains._lab(p.p90)[0])
@@ -490,7 +491,7 @@ class GroundWorld(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         d = Path(cls.tmp.name)
-        with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch.object(world, "SINKAGE", True):
+        with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch("urc.world.SINKAGE", True):
             hf = bumpy_slope(size=64.0, n=129, grade=12.0).mesa(*SmallWorld.MESA, 5.0, 3.0, 4.0, seed=2)
             features.shape(hf, SmallWorld.FEATURES)
             w = WorldBuilder("ground", "Ground", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",
@@ -514,14 +515,10 @@ class GroundWorld(unittest.TestCase):
     def decode(self, name, z_max):
         return np.asarray(Image.open(self.dir / name), float) / 65535 * z_max
 
-    def test_no_tiles_no_levelling(self):
+    def test_no_tiles(self):
         self.assertFalse([c for c in self.model.iter("collision") if c.get("name").startswith("zone_")])
         self.assertEqual(self.sheet["terrain_zones"]["sand"]["tiles"], 0)
-        with mock.patch.object(terrains, "FRICTION", "ground"):
-            hf = bumpy_slope(size=64.0, n=129, grade=12.0)
-            before = hf.z.copy()
-            SmallWorld.FEATURES[0].shape(hf)  # a Patch levels only for tiles
-            np.testing.assert_array_equal(hf.z, before)
+        self.assertEqual(self.sheet["terrain_zones"]["clay"]["tiles"], 0)
 
     def test_collision_heightmap_is_the_carved_terrain(self):
         """Each PNG normalised to its own maximum (<size> z): the visual one is
@@ -558,8 +555,8 @@ class GroundWorld(unittest.TestCase):
         self.assertAlmostEqual(vec(visual.findtext("size"))[2], t["z_max"], places=3)
 
     def test_world_zero_lies_below_the_deepest_carve(self):
-        self.assertAlmostEqual(self.w.shift[2], self.w.hf.z.min() - world.MAX_SINKAGE, places=9)
-        self.assertEqual(world.MAX_SINKAGE, terrains.WASH_SAND.traction.sinkage_m)
+        self.assertAlmostEqual(self.w.shift[2], self.w.hf.z.min() - MAX_SINKAGE, places=9)
+        self.assertEqual(MAX_SINKAGE, terrains.WASH_SAND.traction.sinkage_m)
 
     def test_objects_stand_on_the_collision_surface(self):
         sand = SmallWorld.FEATURES[0]
@@ -589,7 +586,7 @@ class SinkagePhysics(unittest.TestCase):
     def test_rover_sits_in_the_sand(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch.object(world, "SINKAGE", True):
+            with mock.patch.object(terrains, "FRICTION", "ground"), mock.patch("urc.world.SINKAGE", True):
                 hf = terrain.Heightfield(64.0, 257)
                 sand = features.Patch("sand", terrains.WASH_SAND, -10.0, 0.0, 8.0)
                 w = WorldBuilder("sink", "Sink", None, geo.Origin(38.4, -110.79, 1370.0), hf, d / "models",

@@ -65,26 +65,22 @@ def _rect(start, yaw, u0, u1, v0, v1):
 @dataclass(frozen=True)
 class Patch:
     """A natural zone of `kind`: an irregular patch up to `radius` around
-    (x, y). With friction tiles (terrains.FRICTION "tiles") it lies on
-    ground levelled to its plane out to where its tiles end
+    (x, y), on ground levelled to its plane out to where its tiles end
     (terrains.TILE_REACH past the outline: fit_tiles needs planar ground
     under every tile), easing back over `falloff`; level=False keeps the
-    ground (a decal-only crust on a mound), level=True levels it anyway."""
+    ground (a decal-only crust on a mound, or any zone once its friction is
+    not tiles: terrains.FRICTION "ground")."""
     key: str
     kind: TerrainType
     x: float
     y: float
     radius: float
     irregularity: float = 0.3
-    level: bool = None  # None: level where the zone's friction is tiles
+    level: bool = True
     falloff: float = 6.0
 
-    @property
-    def levels(self):
-        return terrains.FRICTION == "tiles" if self.level is None else self.level
-
     def shape(self, hf):
-        if self.levels:
+        if self.level:
             hf.level(self.x, self.y, self.radius + terrains.TILE_REACH, self.falloff)
 
     def dress(self, w):
@@ -104,9 +100,9 @@ class Wash:
     """A dry wash along a polyline: a channel `depth` deep (0 for one the
     terrain already has, as on a real DEM) whose floor has soft sand patches
     `<key>_sand_<k>` every `sand_step` metres (along), but not at the indices
-    in `skip` (where it cuts through a ridge, say). With friction tiles a
-    channel's sand stays on its floor, `half_width` either side of the path:
-    levelling a patch that reached up the banks would cut them down."""
+    in `skip` (where it cuts through a ridge, say). A channel's sand stays on
+    its floor, `half_width` either side of the path: levelling a patch that
+    reached up the banks would cut them down."""
     key: str
     path: tuple
     depth: float = 0.0
@@ -122,7 +118,7 @@ class Wash:
 
     def shape(self, hf):
         if self.depth:
-            if terrains.FRICTION == "tiles" and self.sand_radius + terrains.TILE_REACH > self.half_width:
+            if self.sand_radius + terrains.TILE_REACH > self.half_width:
                 raise ValueError(f"{self.key}: sand patches of radius {self.sand_radius} m reach past the "
                                  f"{self.half_width} m half-width of the wash floor")
             hf.channel(self.path, self.depth, self.half_width, self.falloff)

@@ -220,7 +220,8 @@ class WorldBuilder:
         # each step.
         sdf.visual(link, "horizon", sdf.plane((8000, 8000)), (0, 0, -0.3),
                    tuple(0.8 * c / 255 for c in layers[0].kind.rgb), cast_shadows=False)
-        self._surfaces[sdf.collision(link, "floor", sdf.box((8000, 8000, 1.0)), (0, 0, -2.5)).get("name")] = None
+        floor = sdf.collision(link, "floor", sdf.box((8000, 8000, 1.0)), (0, 0, -2.5))
+        self._surfaces[floor.get("name")] = None  # the world's base ground, known at write()
         # Zones, blocks and decals join this link, rocks and shrubs in write().
         self._terrain = (name, root, link)
         self._heightmaps = (collision, visual)
@@ -290,7 +291,7 @@ class WorldBuilder:
         traction, collision map: design 9.1) next to the heightmap."""
         name, _, link = self._terrain
         directory = self.models_dir / name
-        Image.fromarray(self.ground_map(), mode="L").save(directory / "ground.png")
+        Image.fromarray(self.ground_map()).save(directory / "ground.png")  # uint8: 8-bit grey
         base = next((rule.key for rule in reversed(self.paint_rules) if isinstance(rule, landscape.Base)),
                     terrains.DEFAULT_GROUND)
         collisions = {}
@@ -335,7 +336,8 @@ class WorldBuilder:
         if self.sinkage and zone.kind.traction.sinkage_m:
             for name, (x, y) in self._placed.items():
                 if terrains.inside(zone.outline, x, y):
-                    raise ValueError(f"zone {zone.key} would sink the ground under {name}, which was placed before it")
+                    raise ValueError(f"zone {zone.key} would sink the ground under {name}, which was placed "
+                                     "before it")
         if zone.tiles:
             tiles = [(zone.tiles, *self._bounds(zone.tiles))]
             for xyz, size, variant, R, _, collides in self._rocks:

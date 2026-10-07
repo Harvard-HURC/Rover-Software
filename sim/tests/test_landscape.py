@@ -112,8 +112,8 @@ class Painting(unittest.TestCase):
         dust, the collision map, prefixes and defaults; the dig-in preset."""
         lane = terrains.calibration_surface(0.5)
         self.legend.index(lane)
-        info = landscape.ground_json(self.legend, 256.0, 1025, "regolith", {"zone_lane_0_collision": lane.key,
-                                                                             "step_10cm_collision": "rock"})
+        collisions = {"zone_lane_0_collision": lane.key, "step_10cm_collision": "rock"}
+        info = landscape.ground_json(self.legend, 256.0, 1025, "regolith", collisions)
         self.assertEqual(info["format"], "rover-ground/2")
         self.assertEqual((info["size_m"], info["samples"]), (256.0, 1025))
         self.assertEqual(info["types"][info["default"]]["key"], "regolith")
