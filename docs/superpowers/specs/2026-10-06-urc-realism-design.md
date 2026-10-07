@@ -659,7 +659,8 @@ under the wheel's deepest contact.
   - Spinning stops entirely once Crr·D·c + k_b·D²·a ≥ μk·c: on sand near D ≈ 1.7. A "strong" preset (D_max 2.0,
     dig_rate 0.05) reproduces Anveshak's stuck zero-radius turn [14]; choosing it is Q12. *As built: the
     strong preset is the default (§17.1), kept with its straight-climb stalls (§17.7).*
-  - The state is not geometric: the wheel does not visibly sink further (§4).
+  - The state is not geometric: the wheel does not visibly sink further (§4). *As built: physics still never
+    sinks it, but its tyre is drawn z_d lower, a visual only (`DriveParams.dig_sink`, §17.8).*
 - **Slip**: from slip compliance (§6.4). On flat sand at 0.5 m/s it gives slip × Crr = 20 % (M), which restates
   the parameters (§6.9).
 - **Sinkage**: static, from the collision carve under the type (§5.8). It is what makes wheels look sunk in sand.
@@ -1695,3 +1696,45 @@ and keeps its dust tests as the record for the switch (dust in depth still an ex
 sim-test`: 468 tests OK in 750 s (8 opt-in skipped; 2 expected failures: the slow-turn judder and dust in depth);
 `ctest` 2 of 2.
 
+### 17.8 The dig-in made visible: the tyre sink and the tread tyres (2026-10-07)
+
+The user found that "dig is not really visible": nothing on screen changed when a wheel dug in, and physics
+cannot sink a wheel (DART's per-contact data has no normal offset; a research workflow measured it and
+prototyped visual-only cues). On 2026-10-07 the user chose ruts and pits, the tyre sink at true scale and tread
+tyres; no station badge and no ruts in the Gazebo GUI. Every cue is visual only, behind its own switch (on by
+default), leaves trajectories and drivetrain states bit for bit the same on both solvers, draws the same pictures
+every run and is cleared by a world reset. This section records the tyre sink and the tread tyres; the ruts are
+their own build.
+
+| Cue | Decision | Built as |
+|---|---|---|
+| Tyre sink | True scale: the extra sink is (D − 1) × sinkage_m (2 cm on sand and clay at D_max 2.0, 3 cm on wash sand), not the research's ×3 | `DriveParams.dig_sink` (gain 1, at most 6 cm, lag 0.1 s), written as `<dig_sink>`. The drivetrain's `ShowSink` moves each wheel link's visuals, never its collision, straight down in the world: the offset is written in the spinning link's frame, its rotation predicted to the end of the step, only when it changes, compared exactly and marked `PeriodicChange` (Pose3d's `==` has a 1 mm tolerance, under which the GUI got nothing). 0 while the wheel is off the ground; 0 on ground without sinkage, so a dug wheel rolling onto rock rises within about 0.5 s. `Reset()` puts the SDF poses back. The rule is `drive::VisualSink` and `drive::SinkLag` in `rover_drivetrain.hh`, unit-tested. Off: no `<dig_sink>`, nothing written |
+| Tread tyres | Build them (one ochre spoke, so a wheel spinning in place shows) | `Params.tread_tyre`: each wheel's visual is `model://rover/meshes/wheel.glb` (written by `gen_model.main` with `urc.meshes.write_glb_parts`, tracked), a unit cylinder scaled to the wheel, 384 triangles: the plain tyre's dark, 16 light tread bars, a light hub and four spokes, one in the chassis' ochre; no SDF `<material>`, which would replace the mesh's. The collision stays the cylinder. The bars alias above about 3.9 rad/s in a 20 Hz view; the one ochre spoke only above 63 rad/s, past the 20 rad/s top speed. Off: the plain black cylinder |
+
+With both switches off the model is the one before them, byte for byte (`model.sdf` of b124f7d). Measured:
+- *Pictures* (`test_render.DigCues`; a camera on the rover's base_link, 1.5 m beside its left tyres; the rover
+  spinning in place on strong-preset sand, every wheel at D 2.0 within 3 s): the tyres' top edges drop 13 px
+  (2 cm at a 998 px focal length); every depth pixel that changes lies on a tyre, farther in the band its top
+  left and nearer at its lower outline, and colour changes off the tyres are their shadows on the ground. A
+  tyre drawn lower cannot only bring depth closer: what it uncovers at its old top edge is farther. On rock
+  the pictures with the sink are those without it, bit for bit, and so are both 1.5 s after a world reset.
+  The tread tyre's ochre spoke turns between two frames 0.1 s apart by the wheel's own angle (−0.265 rad for
+  −0.267), while the plain tyre's frames are identical and uniform.
+- *GUI* (`test_drivetrain.DigSink`): `/world/<w>/state` carries each tyre visual's pose while it sinks, as
+  deep as 2.0000 cm, and its SDF pose exactly once it is back on rock; with the sink off it carries none.
+  Physics: the same spin, drive-out and every-step base_link trace on both solvers with the cues on and off.
+- *Cost*: CPU time per step with both cues on against both off, 5 interleaved runs of 20,000 steps, Sensors
+  stripped, the rover driving `simulate.DRIVE_SCHEDULE`: 1.014 on sand everywhere (the sink drawn through
+  every spin; 0.106 → 0.108 ms), 0.993 on Delivery (0.688 → 0.683 ms), both within the runs' noise (0.92–1.08)
+  and under the 5 % budget. Rendering: the same sand spin with the station's chase and eye cameras and the
+  rover's RGB-D subscribed, 4 interleaved runs, wall time 0.990 of the plain rover's and the same frame count:
+  RenderUtil re-poses every visual each frame anyway, and a tread tyre is 384 triangles.
+- At the station's 5 m chase camera 2 cm is about 3 px: the sink reads in close and fly views, the tread
+  tyres in every view of the wheels; the default eye view does not see the wheels.
+
+Tests: `test_rover_drivetrain` `TyreSink` (ctest: the rule and the lag), `test_gen_model.DigCues` (both on by
+default, generated and tracked; each switch takes away only its cue; the mesh, byte for byte),
+`test_drivetrain.DigSink` (physics unchanged on both solvers; the GUI's state stream) and `test_render.DigCues`
+(the sink in the picture, only the tyres change, nothing on rock, the reset, the tread tyre showing the spin).
+Mutation checks: with either default off, `test_gen_model` fails; with the pose written through
+`SetComponentData` (its own change flag), the GUI test fails.
