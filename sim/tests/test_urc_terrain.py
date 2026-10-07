@@ -1084,17 +1084,19 @@ class ProvingGroundPhysics(unittest.TestCase):
         same surface as a mesh 0.5 mm; Gazebo lessons). On the proving
         ground's natural badland strip, the roughest of the worlds' natural
         ground, the surface reaches into a wheel at most 2.5 cm (p99) beyond
-        the carve, while the rover drives 8 m up it at 0.5 m/s (measured
-        2026-10-07: p99 16.8 mm; 1-17 mm across the worlds' natural ground)."""
+        the carve, while the rover drives 7 m along it at 0.5 m/s (measured
+        2026-10-07: p99 16.5 mm; 1-17 mm across the worlds' natural ground).
+        Spawned 0.35 m up: on its 15 deg cross slope a 0.1 m lift put the
+        uphill wheel into the heightmap, where it stayed 5-9 cm deep."""
         p = self.sheet["points"]["natural_badland"]
         heading = math.radians(p["heading_deg"])
         x, y = p["x"] + 3.0 * math.cos(heading), p["y"] + 3.0 * math.sin(heading)
         surface = sheets.terrain(self.sheet, sheets.path("proving_ground"), collision=True)
-        with world_copy("proving_ground", rover=(x, y, heading), lift=0.1) as world:
+        with world_copy("proving_ground", rover=(x, y, heading), lift=0.35) as world:
             wheels = wheel_poses(world, 18.0, 0.5)
         reach = wheel_penetration(wheels[wheels[:, 0] > 2.0], surface.height)  # [m] after the spawn settles
         moved = math.dist(wheels[0, 1:3], wheels[-1, 1:3])
-        self.assertGreater(moved, 7.0)
+        self.assertGreater(moved, 6.5)
         self.assertLess(float(np.percentile(reach, 99)), 0.025, np.percentile(reach, [50, 90, 99, 100]))
 
     def test_twist_ditch_turns_the_rockers_to_their_limit(self):

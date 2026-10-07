@@ -566,11 +566,12 @@ drivetrain on every wheel contact, terrain or object.
   sand, 0.5 cm on regolith); dig-in raises resistance, not sinkage.
 - DART's cylinder–heightmap collision lets wheels into rough relief beyond
   the carve: driving 10 m at 0.5 m/s the surface reaches into a wheel by
-  1–17 mm (p99) on the worlds' natural ground (the proving ground's badland
-  strip 16.8 mm, Astrobiology's roughest 11.4 mm, Delivery 8.2 mm, Autonomy
-  5.6 mm, sand sheet 1.4 mm), 2–3 cm on 5 cm RMS relief at any sample spacing;
-  the same surface as a mesh 0.5 mm. `test_urc_terrain` holds the badland
-  strip under 2.5 cm.
+  1–17 mm (p99) on the worlds' natural ground (measured by the review,
+  2026-10-07: the proving ground's badland strip 16.8 mm, Astrobiology's
+  roughest 11.4 mm, Delivery 8.2 mm, Autonomy 5.6 mm, sand sheet 1.4 mm),
+  2–3 cm on 5 cm RMS relief at any sample spacing; the same surface as a mesh
+  0.5 mm. `test_urc_terrain` holds the badland strip under 2.5 cm (16.5 mm
+  with its knobs faded whole).
 - No stick-slip judder in slow turns on rock: a rigid rover turning in place
   slips at the yaw ratio where its slip is least, so the Stribeck drop has no
   first-order effect (design spec 6.9 target not met; tyre compliance gives
@@ -1197,7 +1198,10 @@ cost a wrong first attempt.
 - **`gz::math::SpeedLimiter` cannot be copied or moved**: keep it in place
   (a `std::deque`).
 - **A rover spawned on a sloped heightmap lands on its uphill wheels first**;
-  that jolt can start a slide on slopes between atan(μk) and atan(μs).
+  that jolt can start a slide on slopes between atan(μk) and atan(μs). A
+  wheel spawned inside the heightmap stays inside it: on a 15° cross slope a
+  0.1 m lift left the uphill wheel 9 cm deep, easing out over metres of
+  driving (spawn high enough to clear every wheel).
 - **Gazebo's GUI Teleop sends one message per button press**: a drivetrain
   with a command timeout stops after the timeout; it needs `cmd_timeout` 0.
 - **OdometryPublisher's twist can spike** (one yaw rate of 4π/dt in 1233
