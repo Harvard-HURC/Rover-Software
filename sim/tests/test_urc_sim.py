@@ -239,7 +239,7 @@ class DeliveryGround(unittest.TestCase):
     """The ground of Delivery's rule 1.c.ii with the physical drivetrain
     (design spec 11): the sand flat crossed straight, a spin in it digging in
     (the strong preset, the user's choice), the crate hill climbable round its
-    clay flank, the scree chute up the steep mesa not."""
+    clay flank but not up it, the scree chute up the steep mesa not."""
 
     @classmethod
     def setUpClass(cls):
@@ -285,6 +285,17 @@ class DeliveryGround(unittest.TestCase):
         self.assertIsNotNone(route)
         d = drive_route("urc_delivery", route, 120.0, tolerance=2.5, skip=1.0)
         self.assertIsNotNone(d.arrived, f"{d.gap(top):.1f} m short")
+
+    def test_clay_flank_stops_a_straight_climb(self):
+        """Straight up the ~15 deg clay flank at astronaut D: clay climbs 17 deg
+        fresh, but the slipping wheels dig in (strong preset) and the rover
+        stalls on the flank, short of the hilltop."""
+        z = self.zones["clay_flank"]["center"]
+        top = self.sheet["points"]["astronaut_d"]
+        yaw = math.atan2(top["y"] - z["y"], top["x"] - z["x"])
+        with fast_copy("urc_delivery", (z["x"] - 12.0 * math.cos(yaw), z["y"] - 12.0 * math.sin(yaw), yaw)) as world:
+            s = simulate(60.0, world=world, cmd=(0.5, 0.0))
+        self.assertGreater(math.dist(s.poses["base_link"][:2], (top["x"], top["y"])), 10.0, s.poses["base_link"])
 
     def test_scree_chute_is_not_climbable(self):
         """Straight up the ~26 deg chute (scree climbs 19 deg): the rover stays
