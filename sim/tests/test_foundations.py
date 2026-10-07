@@ -41,7 +41,7 @@ class Environment(unittest.TestCase):
         self.assertEqual(env["OGRE2_RESOURCE_PATH"], "/env/lib/OGRE-Next")
         self.assertEqual(env["OGRE_RESOURCE_PATH"], "/env/lib/OGRE")
         self.assertEqual(env["PATH"], "/usr/bin")
-        for key in ("GZ_PARTITION", "GZ_IP", "GZ_RENDERING_RESOURCE_PATH"):
+        for key in ("GZ_PARTITION", "GZ_IP"):  # media path: test_patched_media_only_once_complete
             self.assertNotIn(key, env)
 
     def test_applying_it_twice_changes_nothing(self):
@@ -147,7 +147,8 @@ class Raster(unittest.TestCase):
 
 class Catalogue(unittest.TestCase):
     def test_defaults_are_todays_worlds(self):
-        for t in list(terrains.TYPES.values()) + [terrains.calibration_surface(0.35)]:
+        """A type that names no recipe behaves as before WS-T1 (the catalogue's own types now carry recipes)."""
+        for t in (terrains.TerrainType("plain", "Plain", 0.35, (10, 20, 30)), terrains.calibration_surface(0.35)):
             self.assertEqual(t.traction, terrains.Traction.coulomb(t.mu), t.key)
             self.assertEqual(t.appearance.palette.base, tuple(t.rgb), t.key)
             self.assertEqual((t.appearance.detail, t.appearance.dust), (None, 0.0), t.key)
@@ -201,7 +202,8 @@ class SimulateHelpers(unittest.TestCase):
         world = ET.fromstring(world_sdf(rover_uri="file:///tmp/rover", default_surface="clay", solver="pgs"))
         self.assertEqual(world.findtext("world/physics/dart/solver/solver_type"), "pgs")
         ode = world.find("world/model/link/collision/surface/friction/ode")
-        self.assertEqual((float(ode.findtext("mu")), float(ode.findtext("mu2"))), (terrains.CLAY.mu,) * 2)
+        mu = terrains.CLAY.traction.mu_k  # the plane gets the kinetic mu (simulate.world_sdf)
+        self.assertEqual((float(ode.findtext("mu")), float(ode.findtext("mu2"))), (mu, mu))
         self.assertEqual(world.findtext("world/include/uri"), "file:///tmp/rover")
         plain = ET.fromstring(world_sdf())
         self.assertIsNone(plain.find("world/physics/dart"))

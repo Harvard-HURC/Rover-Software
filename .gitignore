@@ -16,6 +16,7 @@ __pycache__/
 sim/models/urc_*/
 sim/worlds/urc_*
 sim/worlds/proving_ground.*
+sim/worlds/*_map.*
 # world copies the tests run (worldfiles.temp_sdf), left behind by a killed run
 sim/worlds/tmp*.sdf
 
