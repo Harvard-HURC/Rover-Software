@@ -8,7 +8,8 @@ the wall clock) or one built from gen_model Params (physical(): the same
 with the timeout on sim time, so runs repeat exactly; diffdrive(): Gazebo's
 DiffDrive), on flat ground (world_sdf) or on a synthetic terrain with a
 ground map (ground_world: heightmap, ground.png and ground.json as the
-drivetrain reads them, design spec 9.1).
+drivetrain reads them, design spec 9.1). follow() drives a route instead
+of a schedule: a pure-pursuit driver on the rover's ground truth (pursue).
 
 cpu_time_per_step() measures what a world costs instead (the realism design's
 section 10.3): plain `gz sim -s -r --iterations N` processes, their CPU time
