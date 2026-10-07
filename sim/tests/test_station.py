@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Tests of the driver station (sim/station) and its cameras
-(plugins/chase_camera.cpp): the drive and look mappings, the web app against
-a fake transport, the chase camera flying after a driving rover in Gazebo,
-and the rover eye riding on it."""
+(plugins/chase_camera.cpp; the fly camera's own tests are in
+test_fly_camera.py): the drive, look and fly mappings and the fly camera's
+gotos, the web app against a fake transport, the chase camera flying after a
+driving rover in Gazebo and keeping above the ground, the rover eye riding
+on it, the drivetrain readout of a physical rover, and the station as a
+process, flown from a WebSocket client."""
 import asyncio
+import contextlib
+import io
 import json
 import math
 import os
@@ -12,21 +17,27 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
+import aiohttp
 import cv2
 import numpy as np
 from aiohttp import WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase
 
+import simulate
 from simulate import gen_model, world_sdf
 from worldfiles import SENSORS, SIM_DIR, WORLDS, temp_sdf
 
-from station import drive, minimap, server, video  # noqa: E402  (worldfiles puts sim/ on the path)
+import viewers  # noqa: E402  (worldfiles puts sim/ on the path)
+from station import drive, minimap, server, video  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
+from urc import terrain as terrains  # noqa: E402
 
 import gz.math7  # noqa: E402
 from gz.msgs10.image_pb2 import Image  # noqa: E402
@@ -37,8 +48,12 @@ from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa
 from gz.transport13 import Node  # noqa: E402
 
 from station import link as gz_link  # noqa: E402
+from test_fly_camera import heightmap_model, write_hill  # noqa: E402
+import render_map  # noqa: E402  (server.py puts sim/tools on the path)
 
 P = gen_model.Params()
+FLY = viewers.FlyParams()
+ASPECT = FLY.size[0] / FLY.size[1]
 
 
 def command(*keys, axes=(0.0, 0.0)):
@@ -197,6 +212,151 @@ class LookMapping(unittest.TestCase):
         self.assertEqual(link.of("head") + link.of("twist"), [])  # released: the head is autonomy's
 
 
+def fly_command(*keys, axes=(0.0, 0.0)):
+    return drive.fly_command(drive.Command(frozenset(keys), axes))
+
+
+class FlyMapping(unittest.TestCase):
+    """The Fly view's keys and sticks (drive.Fly): the fly camera's command."""
+
+    def test_keys_move_and_turn(self):
+        self.assertEqual(fly_command("KeyW"), ((1.0, 0.0, 0.0), (0.0, 0.0)))
+        self.assertEqual(fly_command("KeyS", "KeyA", "KeyE"), ((-1.0, 1.0, 1.0), (0.0, 0.0)))
+        self.assertEqual(fly_command("KeyD", "KeyQ"), ((0.0, -1.0, -1.0), (0.0, 0.0)))
+        rate = drive.FLY_TURN_RATE
+        self.assertEqual(fly_command("ArrowLeft", "ArrowUp")[1], (rate, -rate))  # yaw left +, pitch down +
+        self.assertEqual(fly_command("KeyL", "KeyK")[1], (-rate, rate))
+        self.assertEqual(fly_command("KeyW", "KeyS", "ArrowLeft", "KeyJ"), ((0.0, 0.0, 0.0), (rate, 0.0)))  # clipped
+
+    def test_shift_is_fast_and_the_stick_turns(self):
+        self.assertEqual(fly_command("KeyW", "KeyE", "ShiftLeft")[0], (FLY.fast, 0.0, FLY.fast))
+        self.assertEqual(fly_command("ShiftRight", "ArrowLeft")[1], (drive.FLY_TURN_RATE, 0.0))  # turning is not
+        _, (yaw, pitch) = fly_command(axes=(0.5, -1.0))  # stick right and up: turn right, look up
+        self.assertAlmostEqual(yaw, -drive.stick(0.5) * drive.FLY_TURN_RATE)
+        self.assertAlmostEqual(pitch, -drive.FLY_TURN_RATE)
+        self.assertEqual(fly_command(axes=(drive.DEADZONE * 0.9, 0.0))[1], (0.0, 0.0))
+        self.assertEqual(fly_command("KeyQ", "Space", "KeyR"), ((0.0, 0.0, -1.0), (0.0, 0.0)))  # only flight keys
+
+    def test_silent_page_stops_publishing(self):
+        f = drive.Fly()
+        self.assertIsNone(f.step(0.0))
+        f.input(drive.Command(frozenset({"KeyW"})), 1.0)
+        self.assertEqual(f.step(1.0 + drive.DEADMAN - 0.01), ((1.0, 0.0, 0.0), (0.0, 0.0)))
+        self.assertIsNone(f.step(1.0 + drive.DEADMAN + 0.01))
+
+    def test_speed_multiplier_stays_in_range(self):
+        f = drive.Fly()
+        self.assertEqual(f.speed(2.0), 2.0)
+        self.assertEqual(f.speed(10.0), FLY.speed_scales[1])
+        self.assertEqual(f.speed(1e-3), FLY.speed_scales[0])
+        for bad in (0.0, -1.0):
+            with self.assertRaises(ValueError):
+                f.speed(bad)
+        self.assertEqual(f.scale, FLY.speed_scales[0])
+
+
+def ramp(x, y):
+    """Ground rising 0.1 m per m to the east, vectorised (a ground(x, y) for the gotos)."""
+    return 0.1 * np.asarray(x, float) + 0 * np.asarray(y, float)
+
+
+class FlyGotos(unittest.TestCase):
+    """Where the fly camera's gotos put it (drive.*_view), and the ray through a picture point."""
+
+    def assert_looks_at(self, view, point, msg=None):
+        forward = view.axes()[0]
+        to_point = np.subtract(point, (view.x, view.y, view.z))
+        self.assertAlmostEqual(float(forward @ to_point / np.linalg.norm(to_point)), 1.0, places=9, msg=msg)
+
+    def test_view_turns_as_the_plugin(self):
+        view = drive.View(1.0, 2.0, 3.0, 0.7, 0.4)
+        q = gz.math7.Quaterniond(0.0, 0.4, 0.7)
+        np.testing.assert_allclose(view.quaternion(), (q.w(), q.x(), q.y(), q.z()), atol=1e-12)
+        rotated = q.rotate_vector(gz.math7.Vector3d(1, 0, 0))
+        np.testing.assert_allclose(view.axes()[0], (rotated.x(), rotated.y(), rotated.z()), atol=1e-12)
+        self.assertEqual(drive.View.of(fly_state(view)), view)
+
+    def test_behind_the_rover_looking_at_it(self):
+        pose = {"x": 10.0, "y": -4.0, "z": 0.3, "yaw": math.pi / 2}
+        view = drive.rover_view(pose, drive.flat_ground)
+        behind, above = drive.ROVER_VIEW
+        self.assertAlmostEqual(view.x, 10.0)
+        self.assertAlmostEqual(view.y, -4.0 - behind)
+        self.assertAlmostEqual(view.z, 0.3 + above)
+        self.assertEqual(view.yaw, math.pi / 2)
+        self.assert_looks_at(view, (10.0, -4.0, 0.3 + viewers.ChaseParams.look_height))
+        # A hill behind the rover lifts the camera, which still looks at it.
+        wall = lambda x, y: np.where(np.asarray(y) < -5.0, 10.0, 0.0)  # noqa: E731
+        lifted = drive.rover_view(pose, wall)
+        self.assertAlmostEqual(lifted.z, 10.0 + FLY.clearance)
+        self.assert_looks_at(lifted, (10.0, -4.0, 0.3 + viewers.ChaseParams.look_height))
+
+    def test_point_and_top(self):
+        view = drive.point_view(100.0, 50.0, 0.3, 400.0, ramp)
+        self.assertEqual(view.yaw, 0.3)
+        self.assertAlmostEqual(view.pitch, drive.POINT_PITCH)
+        self.assertAlmostEqual(math.dist((view.x, view.y, view.z), (100.0, 50.0, 10.0)), 100.0)  # span / 4
+        self.assert_looks_at(view, (100.0, 50.0, 10.0))
+        near, far = drive.point_view(0, 0, 0, 1.0, ramp), drive.point_view(0, 0, 0, 1e6, ramp)
+        self.assertAlmostEqual(math.dist((near.x, near.y, near.z), (0, 0, 0)), drive.POINT_DISTANCE[0])
+        self.assertAlmostEqual(math.dist((far.x, far.y, far.z), (0, 0, 0)), drive.POINT_DISTANCE[1])
+        top = drive.top_view(20.0, 30.0, 140.0, ramp)
+        np.testing.assert_allclose((top.x, top.y, top.z, top.yaw, top.pitch),
+                                   (20.0, 30.0, 2.0 + 100.0, math.pi / 2, math.pi / 2))  # north up
+        # From span / 1.4 up, the picture is about as wide as the map was.
+        self.assertAlmostEqual(2 * (top.z - 2.0) * math.tan(FLY.hfov / 2), 140.0, delta=0.03 * 140)
+
+    def test_ray_through_a_picture_point(self):
+        view = drive.View(0.0, 0.0, 10.0, 0.0, 0.0)
+        origin, centre = drive.pixel_ray(view, 0.5, 0.5, FLY.hfov, ASPECT)
+        np.testing.assert_allclose(origin, (0, 0, 10))
+        np.testing.assert_allclose(centre, (1, 0, 0), atol=1e-12)
+        _, right = drive.pixel_ray(view, 1.0, 0.5, FLY.hfov, ASPECT)
+        self.assertAlmostEqual(math.atan2(-right[1], right[0]), FLY.hfov / 2)  # the right edge, hfov / 2 to the right
+        _, low = drive.pixel_ray(view, 0.5, 1.0, FLY.hfov, ASPECT)
+        self.assertAlmostEqual(-low[2] / low[0], math.tan(FLY.hfov / 2) / ASPECT)  # the bottom edge
+        down = drive.View(5.0, 5.0, 50.0, math.pi / 2, math.pi / 2)  # orthographic, north up
+        origin, direction = drive.pixel_ray(down, 1.0, 0.0, FLY.hfov, ASPECT, ortho=32.0)
+        np.testing.assert_allclose(direction, (0, 0, -1), atol=1e-12)
+        np.testing.assert_allclose(origin, (5.0 + 16.0, 5.0 + 9.0, 50.0), atol=1e-9)  # top right: east and north
+
+    def test_march_meets_the_ground(self):
+        origin = np.array((0.0, 0.0, 10.0))
+        direction = np.array((1.0, 0.0, -1.0)) / math.sqrt(2)
+        self.assertAlmostEqual(drive.march(origin, direction, drive.flat_ground), 10 * math.sqrt(2), delta=1e-3)
+        self.assertAlmostEqual(drive.march(origin, direction, ramp), 10 / 1.1 * math.sqrt(2), delta=1e-3)
+        self.assertIsNone(drive.march(origin, np.array((1.0, 0.0, 0.0)), drive.flat_ground))  # the sky
+        self.assertEqual(drive.march(np.array((0.0, 0.0, -1.0)), direction, drive.flat_ground), 0.0)
+        # On a real heightmap: Equipment Servicing's.
+        path = WORLDS / "urc_equipment_servicing.json"
+        hf = sheets.terrain(sheets.load(path), path)
+        t = drive.march(np.array((-30.0, 20.0, 40.0)), direction, hf.height)
+        hit = np.array((-30.0, 20.0, 40.0)) + t * direction
+        self.assertAlmostEqual(hit[2], hf.height(hit[0], hit[1]), delta=2e-3)
+
+    def test_double_click_flies_short_of_the_spot(self):
+        view = drive.View(0.0, 0.0, 20.0, 0.0, 0.5)
+        hit = 20 / math.tan(0.5)
+        target = drive.pixel_view(view, 0.5, 0.5, FLY.hfov, ASPECT, drive.flat_ground)
+        self.assertAlmostEqual(math.dist((target.x, target.y, target.z), (hit, 0.0, 0.0)), drive.PIXEL_STANDOFF,
+                               delta=1e-3)
+        self.assertAlmostEqual(target.pitch, 0.5)
+        self.assertAlmostEqual(target.yaw, 0.0)
+        self.assertIsNone(drive.pixel_view(drive.View(0, 0, 20, 0, -0.5), 0.5, 0.5, FLY.hfov, ASPECT,
+                                           drive.flat_ground))  # sky
+        close = drive.pixel_view(drive.View(0, 0, 2, 0, math.pi / 4), 0.5, 0.5, FLY.hfov, ASPECT, drive.flat_ground)
+        np.testing.assert_allclose((close.x, close.z), (0.0, 2.0), atol=1e-9)  # nearer than the standoff: only turn
+        # Looking straight down it moves over the spot, as high above the ground as before.
+        down = drive.View(0.0, 0.0, 30.0, math.pi / 2, math.pi / 2)
+        over = drive.pixel_view(down, 1.0, 0.5, FLY.hfov, ASPECT, ramp)
+        self.assertAlmostEqual(over.y, 0.0, places=6)
+        self.assertGreater(over.x, 0.0)
+        self.assertAlmostEqual(over.z - ramp(over.x, over.y), 30.0, places=6)
+        self.assertEqual((over.yaw, over.pitch), (down.yaw, down.pitch))
+        ortho = drive.pixel_view(down, 0.0, 0.5, FLY.hfov, ASPECT, drive.flat_ground, ortho=40.0)
+        np.testing.assert_allclose((ortho.x, ortho.y, ortho.z), (-20.0, 0.0, 30.0), atol=1e-9)  # north up: west left
+
+
 def image(pixel_format, width=32, height=24):
     msg = Image()
     msg.width, msg.height, msg.pixel_format_type = width, height, pixel_format
@@ -285,6 +445,21 @@ class FakeLink:
     def head(self, pan, tilt):
         self.sent.append(("head", pan, tilt))
 
+    def fly(self, move, turn):
+        self.sent.append(("fly", move, turn))
+
+    def fly_speed(self, scale):
+        self.sent.append(("fly_speed", scale))
+
+    def fly_look(self, yaw, pitch):
+        self.sent.append(("fly_look", yaw, pitch))
+
+    def fly_goto(self, view):
+        self.sent.append(("fly_goto", view))
+
+    def fly_mode(self, mode):
+        self.sent.append(("fly_mode", mode))
+
     def announce(self, url):
         self.sent.append(("announce", url))
 
@@ -298,11 +473,23 @@ class FakeLink:
         self.sent.append(("ensure_cameras",))
         return ["eye_camera: spawned", "chase_camera: spawned"]
 
+    def ensure_fly(self, view):
+        """Spawns the fly camera where asked: its state appears."""
+        self.sent.append(("ensure_fly", view))
+        self.state["fly"] = fly_state(view)
+        return "fly_camera: spawned"
+
     def snapshot(self):
         return dict(self.state)
 
     def of(self, kind):
         return [s for s in self.sent if s[0] == kind]
+
+
+def fly_state(view, ortho=0.0, speed=1.0, ground=0.0):
+    """The fly camera's state message (plugins/fly_camera.cpp) at drive.View `view`."""
+    return {"t": 1.0, "mode": "free", "x": view.x, "y": view.y, "z": view.z, "yaw": view.yaw, "pitch": view.pitch,
+            "agl": view.z - ground, "ground": ground, "speed": speed, "v": 0.0, "ortho": ortho, "goto": False}
 
 
 class Telemetry(unittest.TestCase):
@@ -346,6 +533,120 @@ class Telemetry(unittest.TestCase):
             link.state = {"stats": {}} if online else {}
             seen.append(station.world_returned())
         self.assertEqual(seen, [False, False, False, False, True, False, False, True])
+
+    def test_fly_camera_and_drivetrain_states_pass_through(self):
+        link = FakeLink()
+        wheel = {"sp": 2.6, "w": 2.5, "i": 6.2, "tau": 9.8, "u": 14.1, "sat": False, "slip": 0.12, "load": 113.0,
+                 "surface": "sand", "dig": 1.08}
+        link.state["drivetrain"] = {"t": 1.0, "cmd": [0.0, 0.8], "wheels": dict.fromkeys(("fl", "rl", "fr", "rr"), wheel)}
+        link.state["fly"] = fly_state(drive.View(1, 2, 30, 0, 0.5))
+        t = server.Station(link, "test").telemetry(0.0)
+        self.assertEqual(t["drivetrain"], link.state["drivetrain"])
+        self.assertEqual(t["fly"]["z"], 30)
+        self.assertIsNone(t["fly_note"])
+        json.dumps(t)
+        t = server.Station(FakeLink(), "test").telemetry(0.0)
+        self.assertEqual((t["fly"], t["drivetrain"]), (None, None))  # not spawned; a DiffDrive rover
+
+
+class StationFly(unittest.TestCase):
+    """The station's side of the Fly and Map views against a fake transport."""
+
+    def setUp(self):
+        self.link = FakeLink()
+        path = WORLDS / "urc_equipment_servicing.json"
+        self.hf = sheets.terrain(sheets.load(path), path)
+        self.station = server.Station(self.link, "urc_equipment_servicing", sheets.load(path), path)
+
+    def test_flies_while_the_page_sends_released_too(self):
+        s, link = self.station, self.link
+        s.set_control(False)  # the operator may watch autonomy from the air
+        link.sent.clear()
+        s.handle({"t": "fly", "keys": ["KeyW", "KeyE", "ShiftLeft"], "axes": [0, 0]}, 0.0)
+        for k in range(12):  # 0.55 s of control ticks
+            s.tick(k * server.CONTROL_PERIOD)
+        flights = link.of("fly")
+        self.assertEqual(flights[0], ("fly", (FLY.fast, 0.0, FLY.fast), (0.0, 0.0)))
+        self.assertEqual(len(flights), 11, "published until the page has been silent for the deadman")
+        self.assertEqual(link.of("twist"), [])
+
+    def test_modes_speed_look_and_bad_input(self):
+        s, link = self.station, self.link
+        for mode in (*viewers.FLY_MODES, "ortho 50", "upside-down"):
+            s.handle({"t": "fly_mode", "mode": mode}, 0.0)
+        self.assertEqual([m for _, m in link.of("fly_mode")], list(viewers.FLY_MODES))
+        s.handle({"t": "fly_speed", "factor": 2.0}, 0.0)
+        s.handle({"t": "fly_speed", "factor": 100.0}, 0.0)
+        self.assertEqual(link.of("fly_speed"), [("fly_speed", 2.0), ("fly_speed", FLY.speed_scales[1])])
+        s.handle({"t": "fly_look", "yaw": 0.1, "pitch": -0.2}, 0.0)
+        self.assertEqual(link.of("fly_look"), [("fly_look", 0.1, -0.2)])
+        for msg in ({"t": "fly_look", "yaw": float("nan")}, {"t": "fly_speed", "factor": 0.0},
+                    {"t": "fly_speed", "factor": float("inf")}, {"t": "fly", "keys": [], "axes": [float("nan"), 0]},
+                    {"t": "fly_goto", "kind": "point", "x": 1.0, "y": float("inf")},
+                    {"t": "fly_goto", "kind": "pixel", "u": 0.5, "v": 0.5},  # no fly camera yet
+                    {"t": "fly_goto", "kind": "rover"},  # no rover pose yet
+                    {"t": "fly_goto", "kind": "moon"}):
+            with self.assertRaises(ValueError, msg=msg):
+                s.handle(msg, 0.0)
+        self.assertEqual(len(link.of("fly_look")) + len(link.of("fly_goto")), 1)
+
+    def test_speed_given_back_to_a_camera_spawned_again(self):
+        s, link = self.station, self.link
+        s.handle({"t": "fly_speed", "factor": 2.0}, 0.0)
+        link.state["fly"] = fly_state(drive.View(0, 0, 10, 0, 0), speed=1.0)  # a new camera starts at 1
+        for k in range(41):  # 2 s
+            s.tick(k * server.CONTROL_PERIOD)
+        self.assertEqual(link.of("fly_speed")[1:], [("fly_speed", 2.0)] * 3)  # at 0, 1 and 2 s
+        link.sent.clear()
+        link.state["fly"]["speed"] = 2.0
+        s.tick(3.0)
+        self.assertEqual(link.of("fly_speed"), [])
+
+    def test_gotos_use_the_rover_the_fly_camera_and_the_terrain(self):
+        s, link = self.station, self.link
+        link.state["pose"] = {"x": 20.0, "y": -10.0, "z": self.hf.height(20, -10), "yaw": 0.0, "roll": 0.0,
+                              "pitch": 0.0, "speed": 0.0, "yaw_rate": 0.0}
+        s.handle({"t": "fly_goto", "kind": "rover"}, 0.0)
+        self.assertEqual(link.of("fly_goto")[-1][1], drive.rover_view(link.state["pose"], self.hf.height))
+        s.handle({"t": "fly_goto", "kind": "point", "x": 5.0, "y": 6.0, "span": 120.0}, 0.0)
+        self.assertEqual(link.of("fly_goto")[-1][1], drive.point_view(5.0, 6.0, 0.0, 120.0, self.hf.height))
+        link.state["fly"] = fly_state(drive.View(0.0, 0.0, 40.0, 1.0, 0.6))
+        s.handle({"t": "fly_goto", "kind": "point", "x": 5.0, "y": 6.0}, 0.0)  # keeps the camera's yaw
+        self.assertEqual(link.of("fly_goto")[-1][1],
+                         drive.point_view(5.0, 6.0, 1.0, server.DEFAULT_SPAN, self.hf.height))
+        s.handle({"t": "fly_goto", "kind": "top", "x": 5.0, "y": 6.0, "span": 70.0}, 0.0)
+        self.assertEqual(link.of("fly_goto")[-1][1], drive.top_view(5.0, 6.0, 70.0, self.hf.height))
+        s.handle({"t": "fly_goto", "kind": "pixel", "u": 0.3, "v": 0.7}, 0.0)
+        self.assertEqual(link.of("fly_goto")[-1][1],
+                         drive.pixel_view(drive.View(0.0, 0.0, 40.0, 1.0, 0.6), 0.3, 0.7, FLY.hfov, ASPECT,
+                                          self.hf.height))
+        count = len(link.of("fly_goto"))
+        link.state["fly"] = fly_state(drive.View(0.0, 0.0, 40.0, 1.0, -0.5))  # looking up
+        s.handle({"t": "fly_goto", "kind": "pixel", "u": 0.5, "v": 0.5}, 0.0)  # the sky: nowhere to go
+        self.assertEqual(len(link.of("fly_goto")), count)
+        with self.assertRaises(ValueError):
+            s.handle({"t": "fly_goto", "kind": "pixel", "u": 1.5, "v": 0.5}, 0.0)
+
+    def test_spawned_when_an_inspection_view_wants_it(self):
+        s, link = self.station, self.link
+        self.assertFalse(s.fly_spawn_due(0.0), "the eye view does not need it")
+        s.handle({"t": "view", "view": "sideways"}, 0.0)  # ignored
+        self.assertEqual(s.view, "eye")
+        s.handle({"t": "view", "view": "map"}, 0.0)
+        link.state = {}  # the world is gone
+        self.assertFalse(s.fly_spawn_due(0.1))
+        link.state = {"stats": {}, "pose": {"x": 3.0, "y": 4.0, "z": 0.2, "yaw": 1.0}}
+        self.assertTrue(s.fly_spawn_due(0.2))
+        self.assertFalse(s.fly_spawn_due(0.25), "one try at a time")
+        self.assertEqual(s.spawn_fly(), "fly_camera: spawned")
+        self.assertEqual(link.of("ensure_fly"), [("ensure_fly", drive.rover_view(link.state["pose"], s.ground))])
+        self.assertFalse(s.fly_spawn_due(server.FLY_SPAWN_RETRY + 1), "it reports")
+        del link.state["fly"]  # it does not report (any more)
+        self.assertFalse(s.fly_spawn_due(server.FLY_SPAWN_RETRY))
+        self.assertTrue(s.fly_spawn_due(server.FLY_SPAWN_RETRY + 0.3))
+        link.ensure_fly = lambda view: "fly_camera: not spawned, the world has no /world/w/create (UserCommands system)"
+        s.spawn_fly()
+        self.assertIn("UserCommands", s.telemetry(0.0)["fly_note"])
 
 
 class Unplugged:
@@ -411,7 +712,7 @@ class Minimap(unittest.TestCase):
     def test_hillshade_and_places(self):
         path = WORLDS / "urc_equipment_servicing.json"
         sheet = sheets.load(path)
-        png = minimap.hillshade_png(sheet, path)
+        png = minimap.hillshade_png(sheets.terrain(sheet, path))
         picture = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
         self.assertLessEqual(max(picture.shape[:2]), minimap.MAX_PIXELS)
         self.assertGreater(picture.std(), 2)  # shaded, not flat
@@ -421,12 +722,34 @@ class Minimap(unittest.TestCase):
         self.assertEqual(sheets.find("urc_equipment_servicing"), path)
         self.assertIsNone(sheets.find("rover_test"))
 
+    def test_relief_colour_is_metres_not_the_world_range(self):
+        """Tinted by height on one scale for every world: a 1.3 m rise stays
+        near the lowest colour (stretched over its own range, Equipment
+        Servicing's 1.1 m looked like mountains), a 90 m one spans them all,
+        and a height has the same colour in every world."""
+        def picture(height):
+            X, _ = terrains.Heightfield(128.0, 129).grid()
+            hf = terrains.Heightfield(128.0, 129, height * (X + 64) / 128)  # a uniform ramp up to the east
+            return cv2.cvtColor(cv2.imdecode(np.frombuffer(minimap.hillshade_png(hf), np.uint8), cv2.IMREAD_COLOR),
+                                cv2.COLOR_BGR2RGB).astype(float)
+
+        low, high = picture(1.3), picture(90.0)
+        # The shade is the same all along a uniform ramp: only the tint changes from west to east.
+        low_range, high_range = np.abs(low[64, -2] - low[64, 1]).max(), np.abs(high[64, -2] - high[64, 1]).max()
+        self.assertGreater(high_range, 80.0, "90 m: lowest to highest tint")
+        self.assertLess(low_range, 0.1 * high_range, "1.3 m: hardly a change of colour")
+        np.testing.assert_allclose(minimap.tint(np.array([0.0, 90.0])), minimap.TINT[[0, -1]])
+        np.testing.assert_allclose(minimap.tint(np.array([200.0])), minimap.TINT[[-1]])  # flat beyond the top
+
 
 class App(AioHTTPTestCase):
     async def get_application(self):
         self.link = FakeLink()
         path = WORLDS / "urc_equipment_servicing.json"
-        self.station = server.Station(self.link, "urc_equipment_servicing", sheets.load(path), path)
+        self.maps = tempfile.TemporaryDirectory()  # no photo map here; PhotoMap has one
+        self.addCleanup(self.maps.cleanup)
+        self.station = server.Station(self.link, "urc_equipment_servicing", sheets.load(path), path,
+                                      maps_dir=self.maps.name)
         return server.make_app(self.station)
 
     async def test_page_and_assets(self):
@@ -442,15 +765,20 @@ class App(AioHTTPTestCase):
             info = await response.json()
         self.assertEqual(info["world"], "urc_equipment_servicing")
         self.assertEqual(info["map"]["size"], [256.0, 256.0])
+        self.assertEqual(info["map"]["photo"], {"status": "missing", "changed": [], "url": None})
         self.assertEqual(info["rover"]["wheel_dx"], P.wheel_dx)
         self.assertEqual(sorted(info["presets"]), ["1", "2", "3"])
         self.assertEqual(info["hfov"], {"eye": gen_model.EyeParams().hfov, "chase": gen_model.ChaseParams().hfov,
-                                        "rgb": P.camera_hfov, "depth": P.camera_hfov})
+                                        "rgb": P.camera_hfov, "depth": P.camera_hfov, "fly": FLY.hfov})
+        self.assertEqual(info["fly"]["aspect"], ASPECT)
+        self.assertEqual(info["drivetrain"]["current_limit"], P.drive.current_limit)
 
     async def test_minimap(self):
         async with self.client.get("/minimap.png") as response:
             self.assertEqual(response.status, 200)
             self.assertTrue((await response.read()).startswith(b"\x89PNG"))
+        async with self.client.get("/map.jpg") as response:  # none rendered
+            self.assertEqual(response.status, 404)
 
     async def test_frames_are_jpegs_and_stop_when_nobody_watches(self):
         for camera in ("eye", "chase", "rgb", "depth"):
@@ -588,6 +916,102 @@ class NoMap(AioHTTPTestCase):
             self.assertEqual(response.status, 404)
         async with self.client.get("/api/info") as response:
             self.assertIsNone((await response.json())["map"])
+        async with self.client.get("/map.jpg") as response:
+            self.assertEqual(response.status, 404)
+
+
+class PhotoMap(AioHTTPTestCase):
+    """The orthophoto (tools/render_map.py) served to the page, and whether it is current."""
+
+    async def get_application(self):
+        self.maps = tempfile.TemporaryDirectory()
+        self.addCleanup(self.maps.cleanup)
+        path = WORLDS / "urc_equipment_servicing.json"
+        self.world = path.with_suffix(".sdf")
+        self.image, self.meta = render_map.map_paths(self.world, self.maps.name)
+        self.jpeg = cv2.imencode(".jpg", np.full((8, 8, 3), 120, np.uint8))[1].tobytes()
+        self.image.write_bytes(self.jpeg)
+        self.inputs = render_map.inputs(self.world)
+        self.meta.write_text(json.dumps({"format": render_map.FORMAT, "inputs": self.inputs}))
+        self.station = server.Station(FakeLink(), "urc_equipment_servicing", sheets.load(path), path,
+                                      maps_dir=self.maps.name)
+        return server.make_app(self.station)
+
+    async def photo(self):
+        async with self.client.get("/api/info") as response:
+            return (await response.json())["map"]["photo"]
+
+    async def test_current_stale_and_served(self):
+        photo = await self.photo()
+        self.assertEqual((photo["status"], photo["changed"]), ("current", []))
+        self.assertTrue(photo["url"].startswith("/map.jpg?v="))
+        async with self.client.get(photo["url"]) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+            self.assertEqual(await response.read(), self.jpeg)
+        self.assertEqual(self.station.photo_line(), "map: photo map current")
+        key = "models/urc_terrain_equipment_servicing/heightmap.png"
+        self.meta.write_text(json.dumps({"format": render_map.FORMAT, "inputs": {**self.inputs, key: "0" * 40}}))
+        photo = await self.photo()
+        self.assertEqual((photo["status"], photo["changed"]), ("stale", [key]))
+        self.assertIsNotNone(photo["url"], "an old photo still shows, marked out of date")
+        self.assertIn("out of date", self.station.photo_line())
+        self.image.unlink()
+        self.assertEqual((await self.photo())["status"], "missing")
+        self.assertIn("sim-maps urc_equipment_servicing", self.station.photo_line())
+
+
+class FlyOverTheSocket(AioHTTPTestCase):
+    """The Fly view from the page's side: the view spawns the camera, and the fly messages reach it."""
+
+    async def get_application(self):
+        self.link = FakeLink()
+        path = WORLDS / "urc_equipment_servicing.json"
+        self.station = server.Station(self.link, "urc_equipment_servicing", sheets.load(path), path)
+        return server.make_app(self.station)
+
+    async def test_view_spawns_and_flies(self):
+        self.link.state["pose"] = {"x": 0.0, "y": 0.0, "z": 0.1, "yaw": 0.0}
+        async with self.client.ws_connect("/ws") as ws:
+            await ws.send_json({"t": "view", "view": "fly"})
+            for _ in range(50):
+                if self.link.of("ensure_fly"):
+                    break
+                await asyncio.sleep(0.02)
+            self.assertEqual(len(self.link.of("ensure_fly")), 1, "spawned once, off the event loop")
+            for _ in range(4):
+                await ws.send_json({"t": "input", "keys": [], "axes": [0, 0]})  # the page keeps the deadman fed
+                await ws.send_json({"t": "fly", "keys": ["KeyA"], "axes": [0, 0]})
+                await asyncio.sleep(0.05)
+            await ws.send_json({"t": "fly_goto", "kind": "top", "x": 10, "y": 20, "span": 50})
+            await ws.send_json({"t": "fly_mode", "mode": "ortho"})
+            await asyncio.sleep(0.1)
+        self.assertIn(("fly", (0.0, 1.0, 0.0), (0.0, 0.0)), self.link.of("fly"))
+        self.assertEqual(self.link.of("fly_goto")[-1][1].pitch, math.pi / 2)
+        self.assertEqual(self.link.of("fly_mode"), [("fly_mode", "ortho")])
+        self.assertEqual(self.link.of("twist")[-1], ("twist", 0.0, 0.0), "the rover holds still")
+
+
+class ViewerModels(unittest.TestCase):
+    """The station's camera models (sim/viewers.py) as checked in."""
+
+    def test_far_clip_reaches_the_far_field(self):
+        """Eye, chase and fly cameras see to 80 km (decision D14)."""
+        for name in (viewers.EYE_MODEL, viewers.CHASE_MODEL, viewers.FLY_MODEL):
+            camera = ET.parse(SIM_DIR / "models" / name / "model.sdf").find("model/link/sensor/camera")
+            self.assertEqual(float(camera.findtext("clip/far")), 80_000.0, name)
+
+    def test_chase_camera_keeps_clear_of_the_ground(self):
+        plugin = ET.fromstring(viewers.build_chase_sdf(viewers.ChaseParams())).find("model/plugin")
+        self.assertEqual(float(plugin.findtext("clearance")), viewers.ChaseParams.clearance)
+
+    def test_write_all_writes_the_checked_in_models(self):
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            viewers.write_all(d)
+            for name in (viewers.EYE_MODEL, viewers.CHASE_MODEL):
+                for file in ("model.sdf", "model.config"):
+                    self.assertEqual((Path(d) / name / file).read_text(),
+                                     (SIM_DIR / "models" / name / file).read_text(), f"{name}/{file}")
 
 
 def unit(x, y, z):

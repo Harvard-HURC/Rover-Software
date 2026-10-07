@@ -28,7 +28,7 @@
           </image>
           <clip>
             <near>0.1</near>
-            <far>2000</far>
+            <far>80000</far>
           </clip>
         </camera>
       </sensor>
@@ -44,6 +44,7 @@
       <min_distance>1.5</min_distance>
       <max_distance>80</max_distance>
       <time_constant>0.25</time_constant>
+      <clearance>0.5</clearance>
       <cmd_topic>/chase_camera/cmd</cmd_topic>
       <mode_topic>/chase_camera/mode</mode_topic>
       <state_topic>/chase_camera/state</state_topic>

@@ -10,7 +10,12 @@
 // and the view stays put while the target turns. The view approaches its
 // target with a first-order lag (<time_constant>), angles the short way round,
 // so it moves smoothly. Pitch is clamped above the horizon: the camera never
-// dips below the target.
+// dips below the target. Nor below the ground: where the sphere would put it
+// less than <clearance> above the world's visual heightmap (behind a rover
+// driving downhill), it is lifted to that height and still looks at the point.
+// The heightmap is read once (terrain_heightmap.hh, as the fly camera reads
+// it), which stalls the world 20-100 ms for a 1025-2049 sample heightmap when
+// the camera is spawned; rocks and objects are not avoided.
 //
 // Eye (<mount> given), a first-person camera. The model rides on the target at
 // <mount>, a point in the target's frame (the rover's camera pivot), and only
@@ -36,7 +41,8 @@
 // <yaw>, <pitch> [rad], <distance> [m], limits <min_pitch>, <max_pitch> [rad]
 // (elevation of a chase camera, pitch of an eye), <min_yaw>, <max_yaw> [rad]
 // (eye only: a chase camera's yaw goes all the way round), <min_distance>,
-// <max_distance> [m], <time_constant> [s], <mount> [m].
+// <max_distance> [m], <time_constant> [s], <clearance> [m] (chase only),
+// <mount> [m].
 
 #include <algorithm>
 #include <chrono>
@@ -60,6 +66,8 @@
 #include <gz/sim/World.hh>
 #include <gz/transport/Node.hh>
 #include <sdf/Element.hh>
+
+#include "terrain_heightmap.hh"
 
 namespace rover_sim {
 
@@ -98,6 +106,7 @@ class ChaseCamera : public gz::sim::System,
     min_distance_ = sdf->Get<double>("min_distance", min_distance_).first;
     max_distance_ = sdf->Get<double>("max_distance", max_distance_).first;
     time_constant_ = sdf->Get<double>("time_constant", time_constant_).first;
+    clearance_ = sdf->Get<double>("clearance", clearance_).first;
     eye_ = sdf->HasElement("mount");
     mount_ = sdf->Get<gz::math::Vector3d>("mount", mount_).first;
     min_yaw_ = sdf->Get<double>("min_yaw", min_yaw_).first;
@@ -141,6 +150,10 @@ class ChaseCamera : public gz::sim::System,
       PublishState(info.simTime);
       return;
     }
+    if (!terrain_read_) {
+      terrain_read_ = true;
+      terrain_ = FindTerrainHeightmap(ecm, HeightmapGeometry::kVisual);
+    }
     const double heading = target_pose.Rot().Yaw();
     ApplyCommands(heading);
 
@@ -162,10 +175,15 @@ class ChaseCamera : public gz::sim::System,
     }
     const gz::math::Vector3d offset(std::cos(elevation_) * std::cos(azimuth_),
                                     std::cos(elevation_) * std::sin(azimuth_), std::sin(elevation_));
-    // Camera x points from the camera to the look-at point: pitched down by the
-    // elevation, turned to the opposite azimuth.
-    model_.SetWorldPoseCmd(ecm, gz::math::Pose3d(look_ + range_ * offset,
-                                                 gz::math::Quaterniond(0, elevation_, azimuth_ + GZ_PI)));
+    auto position = look_ + range_ * offset;
+    if (terrain_) {  // Height() is -infinity off the heightmap: no floor there
+      position.Z(std::max(position.Z(), terrain_->Height(position.X(), position.Y()) + clearance_));
+    }
+    // Camera x points from the camera to the look-at point (the opposite
+    // azimuth, pitched down by the elevation, more where it was lifted).
+    const auto to_look = look_ - position;
+    const double pitch = std::atan2(-to_look.Z(), std::hypot(to_look.X(), to_look.Y()));
+    model_.SetWorldPoseCmd(ecm, gz::math::Pose3d(position, gz::math::Quaterniond(0, pitch, azimuth_ + GZ_PI)));
     PublishState(info.simTime);
   }
 
@@ -261,12 +279,15 @@ class ChaseCamera : public gz::sim::System,
   double min_distance_ = 1.5;
   double max_distance_ = 80.0;
   double time_constant_ = 0.25;
+  double clearance_ = 0.5;
   bool eye_ = false;
   gz::math::Vector3d mount_;  // eye: the camera's point in the target's frame
   double min_yaw_ = -GZ_PI;
   double max_yaw_ = GZ_PI;
   bool enabled_ = false;
   bool warned_ = false;
+  bool terrain_read_ = false;
+  std::optional<TerrainHeightmap> terrain_;  // the visual heightmap; none in a world without one
 
   // Commanded view (follow_: yaw relative to the heading; eye: the look) and
   // the smoothed one (chase only).

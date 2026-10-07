@@ -1,7 +1,9 @@
 """Driver station: pixi run drive [world] [--port N] [--no-browser].
 
 Drive the rover and look from it (the rover eye at its camera pivot), follow
-it with the chase camera and see its own camera from one browser page. With a world (a path to an .sdf, or a name in
+it with the chase camera and see its own camera from one browser page; fly
+over the world (the fly camera, spawned when first used) and see it on a map,
+two views only a simulation has. With a world (a path to an .sdf, or a name in
 sim/worlds such as urc_autonomy) and no simulation running, it starts the
 world headless (`gz sim -s -r`, the environment of sim/run.sh), stops it on
 exit (Ctrl-C, kill, or closing the terminal) and exits with it; without one
@@ -184,7 +186,9 @@ def main():
         sheet_path = sheets.find(name, path)
         sheet = sheets.load(sheet_path) if sheet_path else None
         station = server.Station(gz, name, sheet, sheet_path, control=not args.released)
-        ports = [args.port] if args.port else list(range(PORT, PORT + PORT_TRIES))
+        if sheet is not None:
+            print(station.photo_line(), flush=True)
+        ports =[args.port] if args.port else list(range(PORT, PORT + PORT_TRIES))
         asyncio.run(serve(server.make_app(station), args.host, ports, not args.no_browser, process))
     except KeyboardInterrupt:
         pass

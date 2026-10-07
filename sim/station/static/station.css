@@ -106,6 +106,20 @@ kbd {
   cursor: pointer;
 }
 
+/* Fly and Map: inspection views a real rover does not have, in sage. */
+.views { display: flex; gap: 6px; }
+.view-button {
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--rule);
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 10px 4px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.view-button:hover { border-color: var(--sage); }
+.view-button[aria-pressed="true"] { border-color: var(--sage); color: var(--sage); }
+
 /* --- Deck: the picture and the instrument rail ---------------------------------- */
 
 .deck {
@@ -144,8 +158,50 @@ kbd {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 .view-name { font-weight: 600; font-size: 15px; }
+.view-title { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.sim-only {
+  padding: 1px 7px;
+  border: 1px solid var(--sage);
+  border-radius: 4px;
+  color: var(--sage);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: none;
+  background: rgba(13, 18, 25, 0.6);
+}
+.sim-only[hidden] { display: none; }
 .heading { font-size: 26px; text-align: center; color: var(--bone); }
-.view-hint { text-align: right; color: var(--bone); opacity: 0.75; font-size: 13px; }
+.view-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.view-hint { text-align: right; color: var(--bone); opacity: 0.75; font-size: 13px; max-width: 46ch; }
+
+/* The map view: a canvas in place of the picture. */
+.map-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+.map-view[hidden] { display: none; }
+.view[data-view="map"].dragging .map-view { cursor: grabbing; }
+
+.layers { display: flex; pointer-events: auto; text-shadow: none; }
+.layers[hidden] { display: none; }
+.layer {
+  border: 1px solid var(--rule);
+  background: rgba(21, 28, 39, 0.85);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--dust);
+}
+.layer:first-child { border-radius: 5px 0 0 5px; }
+.layer:last-child { border-radius: 0 5px 5px 0; border-left: 0; }
+.layer[aria-pressed="true"] { color: var(--bone); border-color: var(--sage); }
+.layers.small .layer { padding: 1px 7px; font-weight: 400; }
 
 .no-picture {
   position: absolute;
@@ -218,8 +274,14 @@ body.unfocused .focus-veil { display: grid; }
 .unit { color: var(--dust); font-size: 13px; }
 .gauge-cmd { color: var(--dust); font-size: 12px; margin-top: 4px; }
 .gauge-cmd .num { color: var(--ochre); font-size: 16px; }
+.gauge-cmd .ratio { color: var(--sky); margin-left: 6px; }
+.gauge-cmd .ratio:empty { display: none; }
 
 .stick { width: 72px; height: 72px; flex: none; }
+.motors { margin: 0; flex: none; text-align: center; }
+.motors[hidden] { display: none; }
+.motors-canvas { width: 72px; height: 58px; display: block; }
+.motors figcaption { color: var(--dust); font-size: 11px; margin-top: 2px; }
 
 .presets { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .preset {
@@ -266,9 +328,27 @@ body.unfocused .focus-veil { display: grid; }
 
 .swatch { display: inline-block; width: 10px; height: 3px; margin-right: 5px; vertical-align: 3px; }
 .swatch.left { background: var(--bone); }
-.swatch.right { background: var(--sky); }
+.swatch.right, .swatch.got { background: var(--sky); }
+.swatch.asked { background: var(--ochre); }
 
 .motion-grid { display: flex; gap: 14px; align-items: center; }
+
+/* Drivetrain: one row per wheel, the current as a bar against the limit. */
+.motor-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+.motor-table[hidden] { display: none; }
+.motor-table th { color: var(--dust); font-weight: 400; text-align: right; padding: 0 0 4px 6px; }
+.motor-table th:first-child, .motor-table td:first-child { text-align: left; padding-left: 0; }
+.motor-table td { font-family: var(--numerals); font-size: 15px; text-align: right; padding: 2px 0 2px 6px; white-space: nowrap; }
+.motor-table td.ground { font-family: var(--text); font-size: 12px; color: var(--dust); max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+.motor-table td.current { width: 38%; }
+.current-cell { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.current-bar { flex: 1; height: 6px; background: var(--dusk); border-radius: 3px; overflow: hidden; }
+.current-bar > i { display: block; height: 100%; background: var(--sky); }
+.motor-table tr[data-sat="true"] .current-bar > i { background: var(--signal); }
+.motor-table tr[data-sat="true"] td.current { color: var(--signal); }
+.motor-table td[data-dug="true"] { color: var(--ochre); }
+
+.map-tools { display: flex; align-items: center; gap: 10px; }
 
 .map-zoom {
   border: 0;

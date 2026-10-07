@@ -55,7 +55,8 @@ FLY_STATE_TOPIC = "/fly_camera/state"
 class ChaseParams:
     """The driver station's third-person camera (plugins/chase_camera.cpp):
     a massless-looking body without gravity or collisions that the plugin
-    places on a sphere around a point above the target every step."""
+    places on a sphere around a point above the target every step, lifted
+    where that would put it under the world's visual heightmap."""
     target: str = "rover"
     look_height: float = 0.5  # [m] look-at point above the target's origin
     # Start offset: azimuth from behind the target, elevation above the horizon, range.
@@ -69,7 +70,11 @@ class ChaseParams:
     rate: float = 20.0  # [Hz]
     size: tuple[int, int] = (960, 540)
     hfov: float = 1.2  # [rad]
-    clip: tuple[float, float] = (0.1, 2000.0)  # [m]
+    clip: tuple[float, float] = (0.1, 80_000.0)  # [m] far: the far-field ring (decision D14)
+    # [m] never closer to the visual heightmap than this; behind a rover going
+    # downhill the sphere would put the camera inside the slope (A: above the
+    # 0.1 m near clip with margin, low enough to keep the view behind the rover).
+    clearance: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -83,8 +88,9 @@ class EyeParams:
     size: tuple[int, int] = (960, 540)
     hfov: float = Params.camera_hfov  # [rad] as wide as the sensor
     # The near clip also hides the camera's own housing and yoke, all within
-    # 0.1 m of the pivot; far reaches the horizon (the sensor stops at 40 m).
-    clip: tuple[float, float] = (Params.camera_clip[0], 2000.0)  # [m]
+    # 0.1 m of the pivot; far reaches the far-field ring (decision D14; the
+    # sensor's depth stops at 40 m).
+    clip: tuple[float, float] = (Params.camera_clip[0], 80_000.0)  # [m]
 
 
 @dataclass(frozen=True)
@@ -143,7 +149,7 @@ def build_chase_sdf(c: ChaseParams) -> str:
         ("yaw", c.yaw), ("pitch", c.pitch), ("distance", c.distance),
         ("min_pitch", c.pitch_limits[0]), ("max_pitch", c.pitch_limits[1]),
         ("min_distance", c.distance_limits[0]), ("max_distance", c.distance_limits[1]),
-        ("time_constant", c.time_constant),
+        ("time_constant", c.time_constant), ("clearance", c.clearance),
         ("cmd_topic", CHASE_CMD_TOPIC), ("mode_topic", CHASE_MODE_TOPIC), ("state_topic", CHASE_STATE_TOPIC)))
 
 
