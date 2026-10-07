@@ -19,6 +19,6 @@
   "north": 33.3
  },
  "crs": "EPSG:4326 PixelIsArea, row 0 north",
- "use": "albedo of the far-field ring mesh (prototype/far.py); same bounds as ../research/render/data/far_dem_3dep_60km.tif",
+ "use": "albedo of the far-field ring mesh (sim/urc/farfield.py); same bounds as ../dem/far_dem_3dep_60km.tif",
  "size_bytes": 18681182
 }
