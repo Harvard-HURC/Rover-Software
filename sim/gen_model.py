@@ -84,7 +84,9 @@ class DriveParams:
     driveline_damping: float = 2.0  # [N m s/rad] (A)
     backlash: float = 0.026  # [rad] 1.5 deg (A: IMS 0.8-2.5 deg [22])
     kp: float = 4.0  # [V/(rad/s)] (M: prototype tuning)
-    ki: float = 40.0  # [V/rad] (M: prototype tuning)
+    # [V/rad] integral time kp / ki 25 ms (A: retuned from the prototype's 40, whose 0.1 s left a turn without the
+    # ramp at 90 % only after 118 ms; at 160 it takes 53 ms, design spec 6.9: < 60 ms; measured 2026-10-07).
+    ki: float = 160.0
     speed_filter: float = 0.005  # [s] measured-speed time constant, also the contact rule's (A)
     substeps: int = 4  # motor integration steps per 1 ms physics step
     # Wheel contacts (design spec 6.4): friction circle while sliding, an aligned box while sticking.

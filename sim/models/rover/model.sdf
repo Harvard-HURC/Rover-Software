@@ -823,7 +823,7 @@
       </driveline>
       <controller>
         <kp>4</kp>
-        <ki>40</ki>
+        <ki>160</ki>
         <speed_filter>0.005</speed_filter>
         <accel>8</accel>
         <max_speed>10</max_speed>

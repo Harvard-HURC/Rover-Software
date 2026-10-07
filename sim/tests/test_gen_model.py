@@ -205,7 +205,7 @@ class PhysicalVariant(unittest.TestCase):
             self.assertEqual(self.plugin.findtext(tag), value, tag)
         numbers = {"cmd_timeout": 0.5, "track": 2 * P.pivot_y, "radius": P.wheel_radius, "track_multiplier": 1.0,
                    "motor/gear": 50.0, "motor/efficiency": 0.8, "motor/current_limit": 20.0, "motor/voltage": 24.0,
-                   "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 40.0,
+                   "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 160.0,
                    "controller/accel": d.accel, "controller/max_speed": P.wheel_speed,
                    "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0,
                    "dust_rule/max_rate": d.dust_max}

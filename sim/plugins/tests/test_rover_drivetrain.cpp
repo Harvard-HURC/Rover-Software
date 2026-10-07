@@ -79,25 +79,28 @@ void Backlash() {
   CHECK(direct.Step(tight, 1.0, 0.0, kDt) > 0.0);
 }
 
-/// Dig-in: grows with slip at gain x dig_rate / sinkage per metre, stops at the capped D_max, heals by
-/// exp(-travel / heal_length) on ground that does not dig.
+/// Dig-in: grows with slip at dig_rate / sinkage per metre, stops at D_max, heals by exp(-travel / heal_length)
+/// on ground that does not dig.
 void DigIn() {
   const Traction sand = Sand();
   drive::Dig mild;
-  for (int k = 0; k < 500; ++k) mild.Step(sand, 1.0, 1.0, 0.4, 0.0, 0.3, kDt);
+  for (int k = 0; k < 500; ++k) mild.Step(sand, 0.4, 0.0, 0.3, kDt);
   CHECK_NEAR(mild.factor, 1.0 + 0.5 * 0.4 * 0.01 / 0.02, 1e-9);  // 0.5 s of slipping at 0.4 m/s
-  for (int k = 0; k < 5000; ++k) mild.Step(sand, 1.0, 1.0, 0.4, 0.0, 0.3, kDt);
+  for (int k = 0; k < 5000; ++k) mild.Step(sand, 0.4, 0.0, 0.3, kDt);
   CHECK_NEAR(mild.factor, 1.25, 1e-12);
+  Traction loose = sand;  // sand's strong preset: D_max 2.0, dig_rate 0.05 (spec 6.5)
+  loose.dig_rate = 0.05;
+  loose.dig_max = 2.0;
   drive::Dig strong;
-  for (int k = 0; k < 5000; ++k) strong.Step(sand, 5.0, 4.0, 0.4, 0.0, 0.3, kDt);
-  CHECK_NEAR(strong.factor, 2.0, 1e-12);  // sand's strong preset: D_max 2.0, dig_rate 0.05 (spec 6.5)
+  for (int k = 0; k < 5000; ++k) strong.Step(loose, 0.4, 0.0, 0.3, kDt);
+  CHECK_NEAR(strong.factor, 2.0, 1e-12);
   const Traction rock;  // digs nothing
   drive::Dig heal = strong;
-  for (int k = 0; k < 2000; ++k) heal.Step(rock, 5.0, 4.0, 0.4, 0.5, 0.3, kDt);  // 1 m at 0.5 m/s
+  for (int k = 0; k < 2000; ++k) heal.Step(rock, 0.4, 0.5, 0.3, kDt);  // 1 m at 0.5 m/s
   CHECK_NEAR(heal.factor - 1.0, std::exp(-1.0 / 0.3), 0.002);
   CHECK(heal.factor < 1.05);
   drive::Dig still;
-  for (int k = 0; k < 1000; ++k) still.Step(rock, 5.0, 4.0, 0.4, 0.0, 0.3, kDt);
+  for (int k = 0; k < 1000; ++k) still.Step(rock, 0.4, 0.0, 0.3, kDt);
   CHECK(still.factor == 1.0);
 }
 

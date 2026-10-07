@@ -33,7 +33,7 @@ struct MotorParams {
   double damping = 2.0;           ///< [N m s/rad] driveline (A)
   double backlash = 0.026;        ///< [rad] total, 1.5 deg (A: IMS 0.8-2.5 deg [22])
   double kp = 4.0;                ///< [V/(rad/s)] (M: prototype tuning)
-  double ki = 40.0;               ///< [V/rad] (M: prototype tuning)
+  double ki = 160.0;              ///< [V/rad] integral time 25 ms (A: retuned, gen_model.DriveParams.ki)
   double speed_filter = 0.005;    ///< [s] time constant of the measured speed (A)
   int substeps = 4;               ///< motor integration steps per physics step
 };
@@ -93,19 +93,18 @@ class WheelMotor {
 
 /// A wheel's dig factor D (spec 6.5, D21): how far it has dug into loose ground, as total over static sinkage.
 /// It scales that wheel's rolling resistance by D and its bulldozing by D^2.
-///   dD/dt = gain x dig_rate / sinkage_m x slip speed - (D - 1) x hub speed / heal_length
-/// On ground that digs D stays within [1, gain-scaled dig_max]; elsewhere it only heals. Within one ground this
-/// is the spec's extra sinkage z_d = (D - 1) sinkage_m; across grounds the factor carries over (A).
+///   dD/dt = dig_rate / sinkage_m x slip speed - (D - 1) x hub speed / heal_length
+/// On ground that digs D stays within [1, dig_max]; elsewhere it only heals. Within one ground this is the
+/// spec's extra sinkage z_d = (D - 1) sinkage_m; across grounds the factor carries over (A). How strongly a
+/// ground digs (the strong or the mild preset) is its traction row's, as the world's ground.json writes it.
 struct Dig {
   double factor = 1.0;
 
-  /// rate_gain, max_gain: the preset (mild 1, 1; strong 5, 4: sand at D_max 2.0, dig_rate 0.05, spec 6.5).
-  void Step(const Traction& ground, double rate_gain, double max_gain, double slip, double hub_speed,
-            double heal_length, double dt) {
-    const double grow = ground.Digs() ? rate_gain * ground.dig_rate / ground.sinkage_m * slip : 0.0;
+  void Step(const Traction& ground, double slip, double hub_speed, double heal_length, double dt) {
+    const double grow = ground.Digs() ? ground.dig_rate / ground.sinkage_m * slip : 0.0;
     // Implicit in the healing term: stable for any step and travel speed.
     factor = 1.0 + ((factor - 1.0) + dt * grow) / (1.0 + dt * hub_speed / heal_length);
-    if (ground.Digs()) factor = std::min(factor, 1.0 + max_gain * (ground.dig_max - 1.0));
+    if (ground.Digs()) factor = std::min(factor, ground.dig_max);
   }
 };
 

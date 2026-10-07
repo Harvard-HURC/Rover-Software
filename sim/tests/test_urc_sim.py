@@ -86,9 +86,9 @@ def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0, res=1.
     over the 2 m the paint rules judge, as the rover feels them, not the
     0.5 m micro-relief, whose own steps are a rock's): the search sees those
     as walls in the terrain. Ground that digs in climbs as with its wheels
-    half dug in (DUG): a pure-pursuit driver's corrections spin them in (on
-    the strong preset a rover stalls on 13 deg of sand sheet it entered dug
-    in, measured on Delivery's crate hill). The search grid is `res`
+    half dug in (DUG): a pure-pursuit driver's corrections spin them in
+    (when the sand sheet still carried the strong preset, a rover stalled on
+    13 deg of it, entered dug in, on Delivery's crate hill). The search grid is `res`
     metres (routes.easy_route): on 2 m the micro-relief's blocked spots,
     blurred, close passages the rover fits through. None if there is
     none."""

@@ -152,8 +152,9 @@ class Catalogue(unittest.TestCase):
     def test_traction_is_the_design_table(self):
         """Every type's traction and dust is its row of the design table
         (5.6), or the row of the type it borrows from; the catalogue carries
-        the strong dig-in preset (the user's choice, Q12) and the mild one is
-        a switch away."""
+        the strong dig-in preset on loose ground (the user's choice, Q12) and
+        the mild one is a switch away; the crusted sand sheet digs in mildly
+        under both."""
         self.assertEqual(set(DESIGN_TRACTION) | set(VISUAL_TYPES), set(terrains.TYPES))
         for key, kind in terrains.TYPES.items():
             mu_s, mu_k, crr, bulldoze, slip, sinkage, mild, dust, _, _ = DESIGN_TRACTION[VISUAL_TYPES.get(key, key)]
@@ -161,7 +162,8 @@ class Catalogue(unittest.TestCase):
             with self.subTest(type=key):
                 self.assertEqual((t.mu_s, t.mu_k, t.crr, t.bulldoze, t.slip, t.sinkage_m),
                                  (mu_s, mu_k, crr, bulldoze, slip, sinkage))
-                self.assertEqual((t.dig_rate, t.dig_max), terrains.STRONG_DIG if mild else (0.0, 1.0))
+                strong = terrains.STRONG_DIG if key in terrains.MILD_DIG else mild
+                self.assertEqual((t.dig_rate, t.dig_max), strong or (0.0, 1.0))
                 gentle = terrains.traction(kind, "mild")
                 self.assertEqual((gentle.dig_rate, gentle.dig_max), mild or (0.0, 1.0))
                 self.assertEqual(terrains.traction(kind), t)

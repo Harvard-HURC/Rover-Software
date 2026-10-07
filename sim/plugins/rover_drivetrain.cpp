@@ -185,8 +185,6 @@ class RoverDrivetrain : public gz::sim::System,
     c.mu_noise = Child(sdf, "contact", "mu_noise", c.mu_noise);
     c.mu_noise_length = Child(sdf, "contact", "mu_noise_length", c.mu_noise_length);
     rr_speed_ = Child(sdf, "contact", "rr_w0", 0.05) * radius_;
-    dig_rate_gain_ = Child(sdf, "contact", "dig_rate_gain", 1.0);
-    dig_max_gain_ = Child(sdf, "contact", "dig_max_gain", 1.0);
     dig_heal_length_ = Child(sdf, "contact", "dig_heal_length", 0.3);
     if (sdf->HasElement("contact")) {
       const auto contact = sdf->FindElement("contact");
@@ -314,8 +312,8 @@ class RoverDrivetrain : public gz::sim::System,
       const Vector3d normal = w.last.touched ? w.last.normal : Vector3d::UnitZ;
       const double hub_speed = (w.velocity - normal * w.velocity.Dot(normal)).Length();
       if (dig_) {
-        w.dig.Step(w.last.touched ? *w.last.ground : kCoulomb, dig_rate_gain_, dig_max_gain_, w.last.slip, hub_speed,
-                   dig_heal_length_, dt);  // in the air: heal only
+        w.dig.Step(w.last.touched ? *w.last.ground : kCoulomb, w.last.slip, hub_speed, dig_heal_length_,
+                   dt);  // in the air: heal only
       }
       w.hub_force = Vector3d::Zero;
       if (w.last.touched && w.load > 0) {
@@ -600,7 +598,7 @@ class RoverDrivetrain : public gz::sim::System,
   drive::ContactParams contact_;
   drive::DustParams dust_;
   bool dig_ = true;
-  double dig_rate_gain_ = 1.0, dig_max_gain_ = 1.0, dig_heal_length_ = 0.3;
+  double dig_heal_length_ = 0.3;
   std::string default_key_ = "regolith", object_key_ = "manmade";
   std::vector<Traction> sdf_surfaces_;
   std::deque<Traction> owned_;  // explicit-mu objects: stable addresses for surfaces_

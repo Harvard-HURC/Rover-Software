@@ -296,14 +296,15 @@ WINDOWS = {"sand_sheet_D": ((190, 178, 162), (199, 187, 171), (204, 193, 177)), 
            "slickrock_ledges_H": ((190, 180, 168), (201, 193, 180), (207, 200, 190)),
            "boulder_field_I": ((172, 159, 147), (197, 185, 171), (207, 197, 183))}
 
-# Dig-in (design 5.6, 6.5, D21). The catalogue carries the strong preset, the user's choice (Q12): a
-# sustained spin in loose ground digs in until the rover can no longer turn and has to drive out, as
-# Team Anveshak's did at URC 2017 [14] (A: D_max 2.0, dig_rate 0.05; a spin stops once
-# crr D c + bulldoze D^2 a >= mu_k c, near D 1.3-1.7 on sand, wash sand and powder; a crusted sand sheet
-# slows but keeps turning). MILD_DIG is the mild preset (A: a spin slows to ~0.7x and keeps turning;
-# [36] gives 3-7x the static sinkage at slip 0.6).
+# Dig-in (design 5.6, 6.5, D21). The catalogue carries the strong preset on loose ground, the user's choice
+# (Q12): a sustained spin in loose sand, wash sand or powder digs in until the rover can no longer turn and has
+# to drive out, as Team Anveshak's did at URC 2017 [14] (A: D_max 2.0, dig_rate 0.05; a spin stops once
+# crr D c + bulldoze D^2 a >= mu_k c, near D 1.3-1.7). MILD_DIG is the mild preset (A: a spin slows to ~0.7x
+# and keeps turning; [36] gives 3-7x the static sinkage at slip 0.6). The crusted sand sheet is not loose:
+# it keeps its mild values under both presets (A; with the strong ones a pure-pursuit driver's corrections dug
+# the rover in on 13 deg of it, half the ground of every synthetic world).
 STRONG_DIG = (0.05, 2.0)  # (dig_rate [m/m], dig_max)
-MILD_DIG = {"sand": (0.01, 1.25), "wash_sand": (0.012, 1.15), "sand_sheet": (0.005, 1.25), "clay": (0.008, 1.25)}
+MILD_DIG = {"sand": (0.01, 1.25), "wash_sand": (0.012, 1.15), "clay": (0.008, 1.25)}
 
 # Traction columns: mu_s, mu_k, crr, bulldoze, slip, sinkage_m, dig_rate, dig_max (design 5.6). Gross
 # mu_k = 0.85 (DP/W + crr) for the Bekker soils, with Bekker for our wheel (W 113 N, D 0.30 m, b 0.10 m)
@@ -436,8 +437,8 @@ GYPSUM = TerrainType(
 SAND_SHEET = TerrainType(
     "sand_sheet", "Crusted sand sheet", None, (237, 176, 132), pebbles=0.003, variation=0.3,
     notes="Sheppard sand between the shrubs, under a thin crust: a little firmer than loose sand.",
-    traction=Traction(0.60, 0.55, 0.15, 0.03, 0.6, 0.015, *STRONG_DIG),  # between sand and loam (A); a crust
-    # gives a small peak (A, [34])
+    traction=Traction(0.60, 0.55, 0.15, 0.03, 0.6, 0.015, 0.005, 1.25),  # between sand and loam (A); a crust
+    # gives a small peak (A, [34]); mild dig-in under both presets (A, a crust: see STRONG_DIG)
     appearance=Appearance(Palette.survey(MUNSELL["sheppard"], WINDOWS["sand_sheet_D"][1], WINDOWS["sand_sheet_D"]),
                           "rippled_sand", 0.6),
     relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL, shrubs=SAND_SHRUBS))
