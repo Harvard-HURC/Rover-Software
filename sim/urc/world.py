@@ -77,6 +77,9 @@ IMAGED_CROWN = (0.45, 0.7)  # a shrub's crown / its NAIP dark spot's diameter (M
 ZONE_OUTLINE_POINTS = 64  # most outline vertices a zone records in the sheet
 SINKAGE = True  # carve the collision heightmap by each ground type's static sinkage (design 5.8)
 SINKAGE_EASE = 0.75  # [m] the carve eases in over this inside its type (A: design 0.5-1 m)
+DIP = 0.2  # [m] the collision heightmap lies this far under a surface mesh (surface_mesh; A: deeper than the
+# 5-15 cm a wheel sinks into a corrugated heightmap, measured)
+DIP_EASE = 0.5  # [m] it dips over this inside the mesh's footprint (A)
 MAX_SINKAGE = max(t.traction.sinkage_m for t in terrains.TYPES.values())  # [m] world z = 0 lies this far below
 # the lowest point when sinkage is on, so that any carve fits above it
 COLOUR_TEXELS = 4096  # colour map size (design 5.7: 0.5 m per texel at 2 km, 6.25 cm at 256 m)
@@ -188,6 +191,7 @@ class WorldBuilder:
         self._surfaces = {}  # exact collision name in the terrain link -> ground type key (ground.json)
         self._raster = None  # the ground raster, painted when first needed (ground_map)
         self._carved = None  # the collision surface with sinkage, a layout Heightfield
+        self._dips = np.zeros_like(hf.z)  # [m] the collision heightmap under surface meshes (surface_mesh)
         self._setup()
 
     # --- Coordinates -----------------------------------------------------------------
@@ -344,8 +348,9 @@ class WorldBuilder:
         if sources:
             self.sheet["terrain"]["sources"] = sources
         collision = ("heightmap.png", z_max)
-        if self.sinkage:
-            carved = terrain.Heightfield(self.hf.size, self.hf.n, surface.z - self.carve())
+        if self.sinkage or self._dips.any():
+            carved = terrain.Heightfield(self.hf.size, self.hf.n,
+                                         surface.z - (self.carve() if self.sinkage else 0.0) - self._dips)
             collision = ("heightmap_collision.png", float(carved.z.max()))
             carved.write_png(directory / collision[0], 0.0, collision[1])
             self.sheet["terrain"].update(collision_heightmap=rel(directory / collision[0]),
@@ -606,6 +611,25 @@ class WorldBuilder:
         sdf.shape(self._terrain[2], name, sdf.box(size), (*self.to_world(x, y, top - size[2] / 2), 0, 0, yaw),
                   color)
         self._surfaces[f"{name}_collision"] = surface
+
+    def surface_mesh(self, name, vertices, faces, footprint, surface=terrains.DEFAULT_GROUND):
+        """A collision mesh in the terrain's link for ground DART's heightmap
+        collision cannot carry (features.Washboard: on corrugations its
+        cylinder wheels sink 5-15 cm into the heightmap and stall, measured;
+        on a mesh they ride the crests). vertices: layout (x, y, z) on the
+        ground (ground()); faces: triangles. Within the layout polygon
+        `footprint` the collision heightmap dips DIP below the ground, eased
+        in over DIP_EASE, so the wheels touch only the mesh; the heightmap
+        still draws the ground. ground.json names its ground `surface`."""
+        model, _, link = self._terrain
+        V = np.array([self.to_world(x, y, z) for x, y, z in vertices])
+        meshes.write_obj(self.models_dir / model / "meshes" / f"{name}.obj", V, np.asarray(faces))
+        sdf.collision(link, name, sdf.mesh(sdf.model_uri(model, "meshes", f"{name}.obj")))
+        self._surfaces[f"{name}_collision"] = surface
+        inside = landscape.Canvas(self.hf, self.legend).polygon(footprint).astype(np.float32)
+        k = 2 * int(round(DIP_EASE / 2 / self.hf.res)) + 1
+        ease = cv2.blur(cv2.erode(inside, np.ones((k, k), np.uint8)), (k, k))
+        self._dips = np.maximum(self._dips, DIP * ease)
 
     # --- Clutter: rocks, slabs, risers, shrubs, pebbles --------------------------------------
 

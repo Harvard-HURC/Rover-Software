@@ -24,6 +24,8 @@ terrain.Heightfield methods.
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from . import terrain, terrains
 from .terrains import TerrainType
 
@@ -312,7 +314,9 @@ class Natural:
 @dataclass(frozen=True)
 class Washboard:
     """Corrugated ground (terrain.Heightfield.washboard): crests across a
-    strip from `start` along yaw."""
+    strip from `start` along yaw. The wheels ride a collision mesh of the
+    same surface (WorldBuilder.surface_mesh): on the corrugated heightmap
+    alone DART's wheels sink 5-15 cm and the rover stalls (measured)."""
     key: str
     start: tuple
     yaw: float
@@ -320,6 +324,10 @@ class Washboard:
     width: float
     amplitude: float = 0.04
     wavelength: float = 0.8
+    step: float = 0.05  # [m] the mesh's grid along the strip (16 per wavelength)
+
+    def at(self, u, v=0.0):
+        return _axis_point(self.start, self.yaw, u, v)
 
     def shape(self, hf):
         hf.washboard(self.start, self.yaw, self.length, self.width, self.amplitude, self.wavelength)
@@ -328,7 +336,16 @@ class Washboard:
         return [_rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)]
 
     def dress(self, w):
-        pass
+        margin = 1.0  # [m] past the footprint, where the heightmap is back at full height
+        us = np.arange(-margin, self.length + margin + 1e-9, self.step)
+        vs = np.linspace(-self.width / 2 - margin, self.width / 2 + margin, 9)
+        vertices = [(*self.at(u, v), 0.0) for u in us for v in vs]
+        vertices = [(x, y, w.ground(x, y)) for x, y, _ in vertices]
+        n = len(vs)
+        faces = [face for i in range(len(us) - 1) for j in range(n - 1)
+                 for face in ((i * n + j, (i + 1) * n + j, i * n + j + 1),
+                              (i * n + j + 1, (i + 1) * n + j, (i + 1) * n + j + 1))]
+        w.surface_mesh(self.key, vertices, faces, self.keep_flat()[0])
 
 
 @dataclass(frozen=True)

@@ -537,8 +537,8 @@ class LookedWorld(unittest.TestCase):
             self.assertIn(f"/detail_{key}_diffuse_", layer.findtext("diffuse"))
             self.assertAlmostEqual(float(layer.findtext("size")), textures.DETAILS[key].tile_m)
         self.assertEqual(len(visual.findall("blend")), len(details))
-        colour = Image.open(self.dir / "colour.png")
-        self.assertEqual(colour.size, (self.TEXELS, self.TEXELS))
+        with Image.open(self.dir / "colour.png") as colour:
+            self.assertEqual(colour.size, (self.TEXELS, self.TEXELS))
         self.assertLess(self.sheet["terrain"]["colour_clipped"], 0.05)
 
     def test_colour_map_shows_the_ground_types(self):
@@ -921,6 +921,15 @@ class ProvingGroundPhysics(unittest.TestCase):
         pose = self.run_on(x0, p["y"], 0.0, 0.0, 36.0, cmd=(0.5, 0.0), lift=0.05)
         self.assertGreater(pose[0], p["x"] + p["length_m"] + 0.5, pose)  # out the far side
         self.assertLess(max(abs(pose[3]), abs(pose[4])), 0.8, pose)  # not flipped
+
+    def test_rover_crosses_the_washboard(self):
+        """Over the corrugations at 0.5 m/s, riding the washboard's collision
+        mesh (on the corrugated heightmap alone the wheels sink and the rover
+        stalled 1-4 m in, measured)."""
+        p = self.sheet["points"]["washboard"]
+        pose = self.run_on(p["x"] - 3.0, p["y"], 0.0, 0.0, 30.0, cmd=(0.5, 0.0), lift=0.05)
+        self.assertGreater(pose[0], p["x"] + 10.0, pose)
+        self.assertLess(abs(pose[1] - p["y"]), 1.0, pose)
 
     def test_twist_ditch_turns_the_rockers_to_their_limit(self):
         ditch = self.sheet["points"]["articulation"]["twist_ditch"]

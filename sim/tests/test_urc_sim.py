@@ -124,7 +124,12 @@ def drive_route(world, path, seconds, speed=0.8, tolerance=2.0, skip=2.5, **driv
     x, y = dense[k]
     yaw = math.atan2(dense[k + 4][1] - y, dense[k + 4][0] - x)
     with fast_copy(world, (float(x), float(y), yaw)) as copy:
-        return follow(copy, [tuple(p) for p in dense[k:]], seconds, speed=speed, tolerance=tolerance, **driver)
+        d = follow(copy, [tuple(p) for p in dense[k:]], seconds, speed=speed, tolerance=tolerance, **driver)
+    length = float(np.sum(np.hypot(*np.diff(dense[k:], axis=0).T)))
+    print(f"  {world}: {length:.0f} m to ({path[-1][0]:.0f}, {path[-1][1]:.0f}): "
+          + (f"arrived at {d.arrived:.1f} s" if d.arrived else f"{d.gap(path[-1]):.1f} m short") + f" of {seconds:.0f} s",
+          flush=True)
+    return d
 
 
 def xy(entry):
