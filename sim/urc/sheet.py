@@ -66,11 +66,14 @@ class Ground:
         assert self.raster.shape == (self.samples, self.samples), (png, self.raster.shape)
 
     def type(self, x, y):
-        """ground.json's entry for the type at world (x, y)."""
-        res = self.size / (self.samples - 1)
-        col, row = round((x + self.size / 2) / res), round((self.size / 2 - y) / res)
-        inside = 0 <= col < self.samples and 0 <= row < self.samples and math.isfinite(x + y)
-        return self.types[int(self.raster[row, col]) if inside else self.info["default"]]
+        """ground.json's entry for the type at world (x, y): the drivetrain's
+        lookup (terrain_heightmap.hh, Nearest: inside the samples' span,
+        halves rounded up)."""
+        u, v = x / self.size + 0.5, 0.5 - y / self.size  # 0 west .. 1 east, 0 north .. 1 south
+        if not (0 <= u <= 1 and 0 <= v <= 1):
+            return self.types[self.info["default"]]
+        col, row = (math.floor(t * (self.samples - 1) + 0.5) for t in (u, v))
+        return self.types[int(self.raster[row, col])]
 
     def __call__(self, x, y):
         """The key of the ground type at world (x, y)."""

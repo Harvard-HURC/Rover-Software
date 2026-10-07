@@ -92,6 +92,7 @@ class WorldBuilder:
         self.key = key
         self.name = name or f"urc_{key}"
         self.hf = hf
+        self.layout_origin = origin  # what landscape.Soils paints the soil map in
         self.sinkage = SINKAGE
         cx, cy = hf.center
         self.shift = (cx, cy, float(hf.z.min()) - (MAX_SINKAGE if self.sinkage else 0.0))
