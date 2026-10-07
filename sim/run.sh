@@ -7,13 +7,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-export GZ_SIM_RESOURCE_PATH="$here/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
-export GZ_SIM_SYSTEM_PLUGIN_PATH="$here/build${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
-# The conda gz-rendering has a space-padded OGRE plugin path baked in; without
-# this, cameras (and on some machines the GUI) cannot render.
-prefix="${CONDA_PREFIX:-$here/../.pixi/envs/default}"
-export OGRE2_RESOURCE_PATH="${OGRE2_RESOURCE_PATH:-$prefix/lib/OGRE-Next}"
-export OGRE_RESOURCE_PATH="${OGRE_RESOURCE_PATH:-$prefix/lib/OGRE}"
+# Our models and plugins, the real OGRE paths, the patched media: sim/gzenv.py,
+# the one place every Gazebo user (station, tests, tools) takes them from.
+eval "$(python "$here/gzenv.py")"
 
 follow=0
 world="$here/worlds/rover_test.sdf"

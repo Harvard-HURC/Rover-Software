@@ -1,5 +1,6 @@
 """GeoTIFF DEMs: real terrain (USGS 3DEP, fetched by sim/tools/fetch_dem.py)
-in, every world's dem.tif out.
+in, every world's dem.tif out; read_raster() also reads the multi-band
+imagery (NAIP), georeferenced the same way.
 
 The DEMs are geographic rasters: EPSG:4326, PixelIsArea, so pixel (col, row)
 covers lon0 + [col, col + 1] * dlon, lat0 - [row, row + 1] * dlat and its
@@ -24,6 +25,7 @@ GEO_KEY_DIRECTORY = 34735
 GEO_DOUBLE_PARAMS = 34736
 GEO_ASCII_PARAMS = 34737
 GDAL_METADATA = 42112
+EXTRA_SAMPLES = 338  # TIFF: what bands beyond the colour ones are (0 unspecified, 1 and 2 alpha)
 # GeoKeyDirectory keys and the values these DEMs must have.
 GEOKEYS = {1024: (2, "geographic model"), 1025: (1, "PixelIsArea"), 2048: (4326, "WGS 84")}
 # WGS84 ellipsoidal height (what a GNSS receiver and Gazebo's NavSat report,
@@ -72,20 +74,52 @@ class DEM:
 def read_geotiff(path):
     """A single-band float GeoTIFF in EPSG:4326 with PixelIsArea (what the 3DEP
     exportImage service and write_geotiff write)."""
+    bands, (lon0, dlon, _, lat0, _, minus_dlat) = read_raster(path)
+    if len(bands) != 1:
+        raise ValueError(f"{path}: a DEM has one band, not {len(bands)}")
+    z = bands[0]
+    if not np.all(np.isfinite(z)) or z.min() < -1000:
+        raise ValueError(f"{path}: the DEM has no-data pixels")
+    return DEM(z, lon0=lon0, lat0=lat0, dlon=dlon, dlat=-minus_dlat)
+
+
+def read_raster(path):
+    """A GeoTIFF of 1, 3 or 4 bands in EPSG:4326 with PixelIsArea (the DEMs,
+    NAIP imagery): (bands, geotransform). bands: float32 (B, H, W) in the
+    file's band order (NAIP 2024: R, G, B, NIR), row 0 north; geotransform:
+    GDAL's (lon0, dlon, 0, lat0, 0, -dlat), the outer corner of pixel (0, 0)
+    and the pixel size [deg]. PIL drops the fourth band of a 4-band image,
+    so the pixels are read with OpenCV, which returns colour bands as B, G,
+    R(, A): they are put back in file order. A fourth band marked as alpha
+    is refused: OpenCV multiplies the colour bands by it."""
     with Image.open(path) as img:
         tags = img.tag_v2
-        z = np.asarray(img, dtype=np.float32)
         keys = tags[GEO_KEY_DIRECTORY]
         scale, tie = tags[MODEL_PIXEL_SCALE], tags[MODEL_TIEPOINT]
+        extra = tags.get(EXTRA_SAMPLES, ())
+    if any(extra):
+        raise ValueError(f"{path}: ExtraSamples {extra} marks an alpha band, which OpenCV would premultiply")
     found = {keys[i]: keys[i + 3] for i in range(4, 4 + 4 * keys[3], 4)}
     for key, (value, meaning) in GEOKEYS.items():
         if found.get(key) != value:
             raise ValueError(f"{path}: GeoKey {key} is {found.get(key)}, expected {value} ({meaning})")
     if tie[:2] != (0.0, 0.0):
         raise ValueError(f"{path}: the tiepoint must be at raster (0, 0), got {tie}")
-    if not np.all(np.isfinite(z)) or z.min() < -1000:
-        raise ValueError(f"{path}: the DEM has no-data pixels")
-    return DEM(z, lon0=tie[3], lat0=tie[4], dlon=scale[0], dlat=scale[1])
+    log = cv2.utils.logging
+    level = log.getLogLevel()
+    log.setLogLevel(log.LOG_LEVEL_ERROR)  # libtiff warns about every GeoTIFF tag it does not know
+    try:
+        pixels = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    finally:
+        log.setLogLevel(level)
+    if pixels is None:
+        raise ValueError(f"{path}: OpenCV cannot read it")
+    bands = pixels[np.newaxis] if pixels.ndim == 2 else np.moveaxis(pixels, -1, 0)
+    if len(bands) not in (1, 3, 4):
+        raise ValueError(f"{path}: {len(bands)} bands; 1, 3 or 4 are supported")
+    if len(bands) > 1:
+        bands = bands[[2, 1, 0, 3][:len(bands)]]
+    return bands.astype(np.float32, copy=False), (tie[3], scale[0], 0.0, tie[4], 0.0, -scale[1])
 
 
 def to_heightfield(dem, origin: geo.Origin, size, n, center):
