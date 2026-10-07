@@ -8,9 +8,10 @@ grid, dropped by the Earth's curvature, with a hole under the world's own
 terrain and its seam sunk below the terrain's edge. Its texture is the NAIP
 overview of the same bounds (sim/data/imagery/naip2021_far_60km.tif),
 boosted like the near orthophoto and shared by every world through Media
-(far_texture); only the geometry is per world. Measured in the render
-prototype (M): +260-300 MB per gz process, frame cost within noise, the
-Henry Mountains and Factory Butte where they belong.
+(far_texture); only the geometry is per world. Measured (M): +260-300 MB
+per gz process (render prototype); +0.9 ms per 1280 x 720 frame (4.05 ->
+5.0 ms, median of 3 runs, a 1 km terrain from 45 m up; this module); the
+Henry Mountains and Factory Butte where they belong (tests/test_render.py).
 """
 import math
 from pathlib import Path
@@ -31,9 +32,9 @@ REFRACTION = 0.13  # standard terrestrial refraction coefficient: lowers the cur
 FIT_ERROR = 1e-6  # [deg] (~0.1 m) the most the cubic lat/lon fit may be off (A)
 
 
-def far_texture(path, raster=str(FAR_IMAGERY), boost=appearance.NAIP2021_BOOST):
+def far_texture(path, boost, raster=str(FAR_IMAGERY)):
     """The far field's texture: the NAIP overview as a PNG, boosted like the
-    near orthophoto (appearance.Boost), north up, edge to edge."""
+    near orthophoto (an appearance.Boost), north up, edge to edge."""
     bands, _ = dem.read_raster(raster)
     lin = textures.srgb_to_linear(np.moveaxis(bands[:3], 0, -1))
     Image.fromarray(textures.linear_to_srgb(boost.apply(lin))).save(path, format="PNG")
@@ -46,12 +47,14 @@ def build(models_dir, media, name, origin: geo.Origin, size, center=(0.0, 0.0), 
     NAVD88 elevations get dem.NAVD88_TO_WGS84) and whose terrain is the
     `size` square around world `center`; returns the name.
 
-    Triangles wholly over the terrain square are dropped. With `terrain`
-    (the world's heightmap as a Heightfield in world coordinates) every
-    vertex within blend_m of the square lies SINK below the lowest terrain
-    within a grid step of it, blending into the real landscape farther out,
-    so the mesh never shows through the terrain, a synthetic one included;
-    without it the seam is only sunk SINK."""
+    Triangles wholly over the terrain square are dropped. Synthetic worlds
+    pass `terrain` (their heightmap as a Heightfield in world coordinates):
+    every vertex within blend_m of the square then lies SINK below the
+    lowest terrain within a grid step of it, blending into the real
+    landscape farther out, so the mesh never shows through a terrain that
+    is not the DEM. Worlds on the real DEM (Autonomy) leave it None: the far
+    DEM continues their own ground, and the seam is only sunk SINK (the
+    render prototype's way)."""
     d = dem.read_geotiff(FAR_DEM)
     (south, west), (north, east) = d.bounds
     margin = 2 * max(d.dlat, d.dlon)  # [deg] keep every vertex inside the DEM's pixel centres
@@ -96,7 +99,7 @@ def build(models_dir, media, name, origin: geo.Origin, size, center=(0.0, 0.0), 
     root, model = sdf.model_root(name, static=True)
     link = sdf.link(model, "link")
     sdf.visual(link, "farfield", sdf.mesh(sdf.model_uri(name, "meshes", "farfield.glb")), cast_shadows=False,
-               albedo=media.texture("farfield_naip2021", far_texture), roughness=1.0)
+               albedo=media.texture("farfield_naip2021", far_texture, boost=appearance.NAIP2021_BOOST), roughness=1.0)
     sdf.write_model(models_dir, name, root, "Far-field landscape around a URC world (visual only).")
     return name
 
