@@ -77,6 +77,180 @@ def fbm(n, size, feature, seed, octaves=4, persistence=0.5):
     return total / norm
 
 
+def blur(z, sigma):
+    """A Gaussian blur of a grid, sigma in samples (OpenCV's, edges reflected)."""
+    return cv2.GaussianBlur(np.asarray(z, np.float32), (0, 0), sigma).astype(float)
+
+
+def slope_map(z, res, smooth_m=0.0):
+    """Steepest slope [deg] at every sample of a grid of spacing res, after
+    a Gaussian blur of smooth_m metres (design 5.3 paints on sigma 2 m)."""
+    if smooth_m:
+        z = blur(z, smooth_m / res)
+    gy, gx = np.gradient(np.asarray(z, float), res)
+    return np.degrees(np.arctan(np.hypot(gx, gy)))
+
+
+SWATCH_BLOCK = 64.0  # [m] relief swatches are laid in blocks of this size (design 5.4)
+SWATCH_FEATHER = 16.0  # [m] cosine-feathered into their neighbours over this
+
+
+def _ramp(t, block, feather):
+    """Weight of a block along one axis at t metres from its extended start:
+    sin^2 up over the first `feather`, 1, cos^2 down over the last; a
+    block's ramp down and the next one's up add to 1."""
+    up = np.sin(0.5 * np.pi * np.clip(t / feather, 0.0, 1.0)) ** 2
+    down = np.cos(0.5 * np.pi * np.clip((t - block) / feather, 0.0, 1.0)) ** 2
+    return np.minimum(up, down)
+
+
+def swatch_field(windows, res_m, n, size, seed, block=SWATCH_BLOCK, feather=SWATCH_FEATHER):
+    """A residual field on an n x n grid of `size` metres, tiled from swatch
+    windows (float grids of spacing res_m, row 0 north): blocks of `block`
+    metres from random places of a random window, each turned by a random
+    multiple of 90 deg and mirrored at random, laid on a grid of random
+    offset and cosine-feathered over `feather` into their neighbours. Where
+    blocks overlap with weights w_i the field is sum(w_i s_i) /
+    sqrt(sum(w_i^2)): independent residuals added that way keep their RMS,
+    which plain feathering lowers by up to 1/sqrt(2) (design 5.4)."""
+    rng = np.random.default_rng(seed)
+    span = block + feather  # a block's extent, its feathers included
+    side = int(round(span / res_m))  # source pixels across a block
+    for w in windows:
+        if min(w.shape) <= side + 1:
+            raise ValueError(f"a swatch window of {w.shape} px is smaller than a {span} m block")
+    coords = np.linspace(-size / 2, size / 2, n)  # x of the columns, -y of the rows (row 0 north)
+    start = -size / 2 - feather - rng.uniform(0.0, block)
+    count = int(math.ceil((size / 2 - start) / block))
+    num, den = np.zeros((n, n)), np.zeros((n, n))
+    for i in range(count):  # blocks west to east
+        for j in range(count):  # north to south
+            x0, y0 = start + i * block, start + j * block  # the block's west and north edge, y measured southwards
+            cols = np.flatnonzero((coords >= x0) & (coords <= x0 + span))
+            rows = np.flatnonzero((coords >= y0) & (coords <= y0 + span))
+            if not len(cols) or not len(rows):
+                continue
+            window = windows[int(rng.integers(len(windows)))]
+            r0, c0 = (int(rng.integers(0, s - side)) for s in window.shape)
+            patch = window[r0:r0 + side + 1, c0:c0 + side + 1]
+            patch = np.rot90(patch, int(rng.integers(4)))
+            if rng.integers(2):
+                patch = patch[:, ::-1]
+            u, v = coords[cols] - x0, coords[rows] - y0  # metres east and south of the block's corner
+            U, V = np.meshgrid(u / res_m, v / res_m)
+            s = cv2.remap(np.ascontiguousarray(patch, np.float32), U.astype(np.float32), V.astype(np.float32),
+                          cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            w = np.outer(_ramp(v, block, feather), _ramp(u, block, feather))
+            num[np.ix_(rows, cols)] += w * s
+            den[np.ix_(rows, cols)] += w * w
+    return num / np.sqrt(np.maximum(den, 1e-12))
+
+
+def haystack_heights(n, size, mask, seed, recipe):
+    """Rounded badland knobs on an n x n grid of `size` metres where mask >
+    0.5 (a terrains.Haystacks recipe, design 5.4): knobs of diameters in
+    recipe.diameter_m, each a raised cosine h = H cos^2(pi r / 2R) whose
+    steepest flank is drawn between recipe.min_flank_deg and flank_deg
+    (H = tan(flank) 2R / pi), placed at random apart from each other until
+    they cover 1 - recipe.floor of the masked area."""
+    rng = np.random.default_rng(seed)
+    res = size / (n - 1)
+    inside = np.flatnonzero(np.asarray(mask) > 0.5)
+    out = np.zeros((n, n))
+    target = (1 - recipe.floor) * len(inside) * res * res
+    knobs, cover, tries = [], 0.0, 0
+    while cover < target and tries < 50 * max(1, int(target / 100)) and len(inside):
+        tries += 1
+        k = inside[int(rng.integers(len(inside)))]
+        x, y = (k % n) * res, (k // n) * res  # metres east and south of the north-west corner
+        radius = rng.uniform(*recipe.diameter_m) / 2
+        if any(math.hypot(x - a, y - b) < 0.8 * (radius + r) for a, b, r in knobs):
+            continue
+        knobs.append((x, y, radius))
+        cover += math.pi * radius * radius
+        height = math.tan(math.radians(rng.uniform(recipe.min_flank_deg, recipe.flank_deg))) * 2 * radius / math.pi
+        c0, c1 = max(int((x - radius) / res), 0), min(int(math.ceil((x + radius) / res)), n - 1)
+        r0, r1 = max(int((y - radius) / res), 0), min(int(math.ceil((y + radius) / res)), n - 1)
+        C, R = np.meshgrid(np.arange(c0, c1 + 1) * res, np.arange(r0, r1 + 1) * res)
+        r = np.hypot(C - x, R - y)
+        out[r0:r1 + 1, c0:c1 + 1] += np.where(r < radius, height * np.cos(0.5 * np.pi * r / radius) ** 2, 0.0)
+    return out
+
+
+RILL_SMOOTH = 2.0  # [m] rills descend the surface blurred this much, so single-sample bumps do not trap them (A)
+RILL_STEP = 0.5  # [m] trace step
+
+
+def rill_traces(z, res, mask, seed, recipe):
+    """Rill paths down a grid z of spacing res (a terrains.Rills recipe,
+    design 5.4): from seeds on a jittered grid of a pitch drawn from
+    recipe.spacing_m, where mask > 0.5 and the ground is steeper than
+    recipe.min_slope_deg, each steps RILL_STEP down the steepest descent of
+    the blurred surface until it leaves the mask, flattens out or reaches
+    recipe.length_m; all seeds step together (no loop over samples).
+    Returns [(k, 2) array of (row, col) sample coordinates], each at least
+    two points long."""
+    rng = np.random.default_rng(seed)
+    z = np.asarray(z, float)
+    n_rows, n_cols = z.shape
+    g_row, g_col = np.gradient(blur(z, RILL_SMOOTH / res), res)
+    mask = np.asarray(mask, np.float32)
+    pitch = rng.uniform(*recipe.spacing_m) / res
+    seeds = np.stack(np.meshgrid(np.arange(0.0, n_rows - 1, pitch), np.arange(0.0, n_cols - 1, pitch),
+                                 indexing="ij"), axis=-1).reshape(-1, 2)
+    p = np.clip(seeds + rng.uniform(0, pitch, seeds.shape), 0, [n_rows - 1, n_cols - 1])
+    steep = math.tan(math.radians(recipe.min_slope_deg))
+
+    def at(grid, q):
+        return cv2.remap(np.asarray(grid, np.float32), q[:, 1].astype(np.float32).reshape(-1, 1),
+                         q[:, 0].astype(np.float32).reshape(-1, 1), cv2.INTER_LINEAR,
+                         borderMode=cv2.BORDER_REPLICATE).ravel()
+
+    def going(q):
+        gr, gc = at(g_row, q), at(g_col, q)
+        inside = (q[:, 0] >= 0) & (q[:, 0] <= n_rows - 1) & (q[:, 1] >= 0) & (q[:, 1] <= n_cols - 1)
+        return inside & (at(mask, q) > 0.5) & (np.hypot(gr, gc) > steep), gr, gc
+
+    active, _, _ = going(p)
+    p = p[active]
+    path, alive = [p.copy()], [np.ones(len(p), bool)]
+    step = RILL_STEP / res
+    for _ in range(int(recipe.length_m / RILL_STEP)):
+        ok, gr, gc = going(p)
+        ok &= alive[-1]
+        g = np.maximum(np.hypot(gr, gc), 1e-12)
+        p = np.where(ok[:, None], p - step * np.stack([gr, gc], axis=1) / g[:, None], p)
+        path.append(p.copy())
+        alive.append(ok)
+        if not ok.any():
+            break
+    path, alive = np.stack(path, axis=1), np.stack(alive, axis=1)  # (seeds, steps, 2), (seeds, steps)
+    lengths = alive.sum(axis=1)  # points of each trace: the seed and every step taken
+    return [path[k, :lengths[k]] for k in range(len(path)) if lengths[k] >= 2]
+
+
+def rill_depths(z, res, mask, seed, recipe):
+    """How deep rills cut into a grid z (rill_traces): along each trace the
+    depth grows from recipe.depth_m[0] to [1] and the width from
+    recipe.width_m[0] to [1] over recipe.length_m, deeper parts drawn last;
+    the cut is rounded by a blur of a quarter of the narrowest width where
+    the grid resolves it."""
+    out = np.zeros(np.shape(z), np.float32)
+    (d0, d1), (w0, w1) = recipe.depth_m, recipe.width_m
+    segments = []
+    for trace in rill_traces(z, res, mask, seed, recipe):
+        t = np.arange(len(trace) - 1) * RILL_STEP / recipe.length_m
+        for k in range(len(trace) - 1):
+            segments.append((d0 + (d1 - d0) * t[k], w0 + (w1 - w0) * t[k], trace[k], trace[k + 1]))
+    scale = 16  # cv2 sub-pixel coordinates: 4 fractional bits
+    for depth, width, a, b in sorted(segments, key=lambda s: s[0]):
+        cv2.line(out, (int(round(a[1] * scale)), int(round(a[0] * scale))),
+                 (int(round(b[1] * scale)), int(round(b[0] * scale))), float(depth),
+                 thickness=max(1, int(round(width / res))), lineType=cv2.LINE_8, shift=4)
+    sigma = w0 / 4 / res
+    return (blur(out, sigma) if sigma >= 0.5 else out.astype(float))
+
+
 class Heightfield:
     def __init__(self, size, n, z=None, center=(0.0, 0.0)):
         self.size = float(size)
@@ -176,15 +350,20 @@ class Heightfield:
     def mesa(self, cx, cy, top_radius, height, cliff_width, seed, irregularity=0.15):
         """A flat-topped hill: `height` above the local terrain within an
         irregular `top_radius`, falling off over `cliff_width` metres."""
+        edge, r = self.mesa_edge(cx, cy, top_radius, seed, irregularity)
+        self.z += height * (1 - smoothstep(edge, edge + cliff_width, r))
+        return self
+
+    def mesa_edge(self, cx, cy, top_radius, seed, irregularity=0.15):
+        """A mesa's irregular top edge (mesa()): its radius towards every
+        sample, and every sample's distance from the centre (landscape.Hills
+        paints the top, the cliff and the floor around it)."""
         X, Y = self.grid()
         theta = np.arctan2(Y - cy, X - cx)
         rng = np.random.default_rng(seed)
         wobble = sum(rng.uniform(-1, 1) * np.cos(k * theta + rng.uniform(0, 2 * np.pi)) / k
                      for k in range(2, 7))
-        edge = top_radius * (1 + irregularity * wobble / 1.5)
-        profile = 1 - smoothstep(edge, edge + cliff_width, np.hypot(X - cx, Y - cy))
-        self.z += height * profile
-        return self
+        return top_radius * (1 + irregularity * wobble / 1.5), np.hypot(X - cx, Y - cy)
 
     def ramp(self, path, half_width, falloff, z_start=None, z_end=None):
         """A graded road along a polyline, from z_start to z_end (default: the
@@ -274,6 +453,27 @@ class Heightfield:
         envelope = (smoothstep(0.0, fade, U) * (1 - smoothstep(length - fade, length, U))
                     * (1 - smoothstep(width / 2 - fade, width / 2, np.abs(V))))
         self.z[rows, cols] += amplitude * np.sin(2 * np.pi * np.clip(U, 0.0, length) / wavelength) * envelope
+        return self
+
+    # Micro-relief (design spec 5.4): what a synthetic world adds below its
+    # macro shape, under a mask in [0, 1] (landscape.relief composes them).
+
+    def detail(self, swatch, mask, amplitude, seed):
+        """Adds a real lidar residual (a landscape.Swatch) tiled over the grid
+        (swatch_field), times amplitude and mask."""
+        self.z += amplitude * np.asarray(mask) * swatch_field(swatch.windows, swatch.res_m, self.n, self.size, seed)
+        return self
+
+    def haystacks(self, mask, seed, recipe):
+        """Adds rounded badland knobs (haystack_heights) where mask > 0.5,
+        faded by the mask."""
+        self.z += np.asarray(mask) * haystack_heights(self.n, self.size, mask, seed, recipe)
+        return self
+
+    def rills(self, mask, seed, recipe):
+        """Carves rills (rill_depths) down this surface where mask > 0.5,
+        faded by the mask."""
+        self.z -= np.asarray(mask) * rill_depths(self.z, self.res, mask, seed, recipe)
         return self
 
     # --- Export ------------------------------------------------------------

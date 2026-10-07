@@ -2,8 +2,11 @@
 
 A feature acts twice. shape(hf) edits the heightfield before the
 WorldBuilder exists (the world frame depends on the finished terrain);
-dress(w) adds what lies on it: its friction zones (terrains.py) and blocks.
-A world lists its features, saying only where and how big:
+dress(w) adds what lies on it: its zones (terrains.py: they paint the
+ground raster, and with friction tiles they are friction zones) and blocks
+(ground type rock in ground.json). Engineered features also name the ground
+micro-relief must leave alone (keep_flat(), landscape.keep_flat). A world
+lists its features, saying only where and how big:
 
     FEATURES = [features.Patch("sand_flat", terrains.SAND, 150, 62, 14), ...]
     features.shape(hf, FEATURES)    # in make_terrain()
@@ -54,24 +57,34 @@ def _toward(a, b, distance):
     return a[0] + (b[0] - a[0]) * distance / d, a[1] + (b[1] - a[1]) * distance / d
 
 
+def _rect(start, yaw, u0, u1, v0, v1):
+    """Layout corners of the rectangle u0..u1 along yaw from start, v0..v1 to its left."""
+    return [_axis_point(start, yaw, u, v) for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
+
+
 @dataclass(frozen=True)
 class Patch:
     """A natural zone of `kind`: an irregular patch up to `radius` around
-    (x, y), on ground levelled to its plane out to where its tiles end
+    (x, y). With friction tiles (terrains.FRICTION "tiles") it lies on
+    ground levelled to its plane out to where its tiles end
     (terrains.TILE_REACH past the outline: fit_tiles needs planar ground
     under every tile), easing back over `falloff`; level=False keeps the
-    ground (a decal-only crust on a mound)."""
+    ground (a decal-only crust on a mound), level=True levels it anyway."""
     key: str
     kind: TerrainType
     x: float
     y: float
     radius: float
     irregularity: float = 0.3
-    level: bool = True
+    level: bool = None  # None: level where the zone's friction is tiles
     falloff: float = 6.0
 
+    @property
+    def levels(self):
+        return terrains.FRICTION == "tiles" if self.level is None else self.level
+
     def shape(self, hf):
-        if self.level:
+        if self.levels:
             hf.level(self.x, self.y, self.radius + terrains.TILE_REACH, self.falloff)
 
     def dress(self, w):
@@ -91,9 +104,9 @@ class Wash:
     """A dry wash along a polyline: a channel `depth` deep (0 for one the
     terrain already has, as on a real DEM) whose floor has soft sand patches
     `<key>_sand_<k>` every `sand_step` metres (along), but not at the indices
-    in `skip` (where it cuts through a ridge, say). A channel's sand stays on
-    its floor, `half_width` either side of the path: levelling a patch that
-    reached up the banks would cut them down."""
+    in `skip` (where it cuts through a ridge, say). With friction tiles a
+    channel's sand stays on its floor, `half_width` either side of the path:
+    levelling a patch that reached up the banks would cut them down."""
     key: str
     path: tuple
     depth: float = 0.0
@@ -109,7 +122,7 @@ class Wash:
 
     def shape(self, hf):
         if self.depth:
-            if self.sand_radius + terrains.TILE_REACH > self.half_width:
+            if terrains.FRICTION == "tiles" and self.sand_radius + terrains.TILE_REACH > self.half_width:
                 raise ValueError(f"{self.key}: sand patches of radius {self.sand_radius} m reach past the "
                                  f"{self.half_width} m half-width of the wash floor")
             hf.channel(self.path, self.depth, self.half_width, self.falloff)
@@ -157,6 +170,11 @@ class Slope:
         behind = _toward(self.top, self.foot, -self.run_on)
         hf.ramp([self.foot, self.top], half_width=self.width / 2 + 1.5, falloff=self.falloff,
                 z_end=hf.height(*behind))
+
+    def keep_flat(self):
+        yaw = math.atan2(self.top[1] - self.foot[1], self.top[0] - self.foot[0])
+        half = self.width / 2 + 1.5
+        return [_rect(self.foot, yaw, 0.0, math.dist(self.foot, self.top) + self.run_on, -half, half)]
 
     def dress(self, w):
         (fx, fy), (tx, ty) = self.foot, self.top
@@ -215,6 +233,9 @@ class Lane:
     def shape(self, hf):
         hf.strip(self.start, self.yaw, self.width, self.segments, self.falloff, self.z0, self.cross)
 
+    def keep_flat(self):
+        return [_rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)]
+
     def dress(self, w):
         for surface in self.surfaces:
             length = surface.length or self.length
@@ -237,6 +258,9 @@ class Washboard:
 
     def shape(self, hf):
         hf.washboard(self.start, self.yaw, self.length, self.width, self.amplitude, self.wavelength)
+
+    def keep_flat(self):
+        return [_rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)]
 
     def dress(self, w):
         pass
@@ -268,6 +292,10 @@ class AlternatingBumps:
         for u, v, h in self.humps():
             hf.bump(*self.at(u, v), h, 1 + 2 * h, self.width, self.yaw)
 
+    def keep_flat(self):
+        reach = self.offset + self.width / 2
+        return [_rect(self.start, self.yaw, 0.0, self.spacing * (2 * len(self.heights) + 1), -reach, reach)]
+
     def dress(self, w):
         pass
 
@@ -296,6 +324,10 @@ class TwistDitch:
         hf.channel([(self.x - dx, self.y - dy), (self.x + dx, self.y + dy)], self.depth, self.half_width,
                    self.falloff)
 
+    def keep_flat(self):
+        reach = self.half_width + self.falloff
+        return [_rect((self.x, self.y), self.yaw + self.angle, -self.length / 2, self.length / 2, -reach, reach)]
+
     def dress(self, w):
         pass
 
@@ -314,6 +346,9 @@ class Step:
 
     def shape(self, hf):
         pass
+
+    def keep_flat(self):
+        return [_rect((self.x, self.y), self.yaw, -self.length / 2, self.length / 2, -self.width / 2, self.width / 2)]
 
     def dress(self, w):
         w.block(self.key, self.x, self.y, self.yaw, (self.length, self.width, self.top + STEP_BURY),
@@ -356,6 +391,10 @@ class Ledge:
         hf.strip(self.at(-back), self.yaw, self.width,
                  ((LEDGE_BACK + cell, 0.0), (slope, -math.degrees(math.atan(self.drop / slope))),
                   (cell + LEDGE_APRON, 0.0)), self.falloff, z0=hf.height(self.x, self.y))
+
+    def keep_flat(self):
+        return [_rect((self.x, self.y), self.yaw, -(LEDGE_BACK + self.depth), LEDGE_APRON, -self.width / 2,
+                      self.width / 2)]
 
     def dress(self, w):
         top = w.height(*self.at(-self.depth))  # the level ground behind the shelf

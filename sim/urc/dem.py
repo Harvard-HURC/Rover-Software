@@ -7,10 +7,15 @@ covers lon0 + [col, col + 1] * dlon, lat0 - [row, row + 1] * dlat and its
 value is the elevation at the pixel centre (NAVD88 metres for 3DEP; add
 NAVD88_TO_WGS84 for the ellipsoidal heights a GNSS receiver reports).
 to_heightfield() resamples one onto a terrain.Heightfield in a mission's
-layout frame (metres east/north of a geo.Origin); write_geotiff() writes a
-Heightfield as one.
+layout frame (metres east/north of a geo.Origin), to_grid() onto any
+rectangle; write_geotiff() writes a Heightfield as one. site_altitude()
+gives a world origin's ellipsoidal altitude from the DEMs, utm_to_wgs84()
+places the lidar research windows (defined in UTM cells).
 """
+import functools
+import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -35,6 +40,10 @@ GEOKEYS = {1024: (2, "geographic model"), 1025: (1, "PixelIsArea"), 2048: (4326,
 # -0.79 m; -20.89 to -20.94 m at every world's origin, VDatum's uncertainty
 # 0.06 m.
 NAVD88_TO_WGS84 = -20.91  # [m]
+DEM_DIR = Path(__file__).resolve().parents[1] / "data" / "dem"
+# The 1 m 3DEP DEMs that cover every world's origin (sim/tools/fetch_dem.py; provenance in their .json).
+SITE_DEMS = (DEM_DIR / "mdrs_area_3dep.tif", DEM_DIR / "route_area_3dep.tif")
+UTM_K0 = 0.9996  # UTM scale factor on the central meridian
 
 
 @dataclass
@@ -134,6 +143,24 @@ def to_heightfield(dem, origin: geo.Origin, size, n, center):
     1/32 pixel: samples are within 3 cm of DEM.height on the route-area DEM.
     """
     hf = terrain.Heightfield(size, n, center=center)
+    hf.z = _resample(dem, origin, size, center, *hf.grid())
+    return hf
+
+
+def to_grid(dem, origin: geo.Origin, xs, ys):
+    """The DEM resampled like to_heightfield onto a rectangular grid of layout
+    columns xs (west to east) and rows ys (north to south): z[row, col] at
+    (xs[col], ys[row]), z = elevation - origin.alt. For lidar windows that
+    are not square (sim/tools/make_relief_swatches.py)."""
+    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+    center = ((xs[0] + xs[-1]) / 2, (ys[0] + ys[-1]) / 2)
+    size = max(abs(xs[-1] - xs[0]), abs(ys[-1] - ys[0]))
+    return _resample(dem, origin, size, center, *np.meshgrid(xs, ys))
+
+
+def _resample(dem, origin, size, center, X, Y):
+    """The DEM at layout points (X, Y) inside the square of `size` around
+    `center`, minus origin.alt (to_heightfield's method)."""
 
     def terms(x, y):
         x, y = (np.asarray(x, float) - center[0]) / size, (np.asarray(y, float) - center[1]) / size
@@ -148,15 +175,13 @@ def to_heightfield(dem, origin: geo.Origin, size, n, center):
     residual = np.abs(A @ coef - check).max()
     if residual > 1e-9:  # 0.1 mm: the terrain is too large for the fit
         raise ValueError(f"lat/lon fit is off by {residual:.2e} deg over {size} m")
-    X, Y = hf.grid()
     lat, lon = np.moveaxis(terms(X, Y) @ coef, -1, 0)
     row, col = dem.pixel(lat, lon)
     rows, cols = dem.z.shape
     if row.min() < 0 or col.min() < 0 or row.max() > rows - 1 or col.max() > cols - 1:
         raise ValueError(f"a {size} m terrain around {center} does not fit in the DEM {dem.bounds}")
     z = cv2.remap(dem.z, col.astype(np.float32), row.astype(np.float32), cv2.INTER_LINEAR)
-    hf.z = z.astype(float) - origin.alt
-    return hf
+    return z.astype(float) - origin.alt
 
 
 def write_geotiff(hf, path, origin: geo.Origin):
@@ -178,3 +203,48 @@ def write_geotiff(hf, path, origin: geo.Origin):
         ifd[tag] = value
         ifd.tagtype[tag] = kind
     Image.fromarray((hf.z + origin.alt).astype(np.float32)).save(path, tiffinfo=ifd)
+
+
+@functools.lru_cache(maxsize=4)
+def _site_dem(path):
+    return read_geotiff(path)
+
+
+def site_altitude(lat, lon, paths=SITE_DEMS):
+    """WGS84 ellipsoidal altitude [m] of the ground at (lat, lon): the first
+    DEM of `paths` that covers it (NAVD88) plus NAVD88_TO_WGS84. The one way
+    a world's geo.Origin.alt is meant to be found, so origins, sheets and
+    NavSat agree with the DEMs."""
+    for path in paths:
+        d = _site_dem(Path(path))
+        (south, west), (north, east) = d.bounds
+        if south < lat < north and west < lon < east:
+            return d.height(lat, lon) + NAVD88_TO_WGS84
+    raise ValueError(f"({lat}, {lon}) is in none of {[str(p) for p in paths]}")
+
+
+def utm_to_wgs84(easting, northing, zone):
+    """Latitude and longitude [deg] of a northern-hemisphere UTM position
+    [m] (Snyder 1987, USGS Professional Paper 1395, eqs. 8-18 to 8-25:
+    millimetres within a zone). The research windows of the 0.5 m lidar are
+    UTM 12N cells of NAD83(2011) (sim/data/research/mdrs_terrain_measurements.json);
+    GRS80 and WGS84 differ by 0.1 mm here, and the datum shift the lidar
+    files carry (their .json, datum_shift_applied) is the caller's."""
+    e2 = geo.E2
+    ep2 = e2 / (1 - e2)
+    m = northing / UTM_K0
+    mu = m / (geo.A * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
+    e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
+    phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu)
+            + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
+            + 151 * e1 ** 3 / 96 * math.sin(6 * mu) + 1097 * e1 ** 4 / 512 * math.sin(8 * mu))
+    s, c, t = math.sin(phi1), math.cos(phi1), math.tan(phi1)
+    c1, t1 = ep2 * c * c, t * t
+    n1 = geo.A / math.sqrt(1 - e2 * s * s)
+    r1 = geo.A * (1 - e2) / (1 - e2 * s * s) ** 1.5
+    d = (easting - 500_000.0) / (n1 * UTM_K0)
+    lat = phi1 - n1 * t / r1 * (d ** 2 / 2 - (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * ep2) * d ** 4 / 24
+                                + (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * ep2 - 3 * c1 ** 2) * d ** 6 / 720)
+    lon = (d - (1 + 2 * t1 + c1) * d ** 3 / 6
+           + (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ep2 + 24 * t1 ** 2) * d ** 5 / 120) / c
+    return math.degrees(lat), (zone - 1) * 6 - 177 + math.degrees(lon)
