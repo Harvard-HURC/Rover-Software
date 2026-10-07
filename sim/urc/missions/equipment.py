@@ -6,18 +6,21 @@ up to 100 m) to the mock lander, whose front faces the gate. A sample stand
 by the gate holds the sample tube (in a rack) and the cache container; the
 fuel tank stands beside the lander with its hose on the ground; the tubular
 key is in lock A. The rover works on a gravel apron in front of the lander
-(a friction zone, urc/terrains.py); rocks and a rock garden lie off the
-approach, which stays clear.
+(a zone of gravel ground, urc/terrains.py); rocks and a rock garden lie off
+the approach, which stays clear.
 """
 import math
 
-from .. import geo, lander, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder
+from .. import lander, props, rules, terrain, terrains
+from ..world import Layer, WorldBuilder, site
 
 KEY = "equipment_servicing"
 TITLE = "Equipment Servicing"
-ORIGIN = geo.Origin(38.4072, -110.7895, 1371.0)  # altitude: USGS 3DEP at this point
+SITE = (38.4072, -110.7895)  # lat, lon of C2 (altitude: world.site)
 SIZE, SAMPLES, CENTER = 256.0, 1025, (50.0, 0.0)
+# Dantzig: with PGS the lander's 101 joints run below real time (gates G2, G5: 0.86x by CPU time), so per-wheel
+# friction is approximate here (the user's choice, Q2).
+SOLVER = "dantzig"
 
 C2 = (0.0, 0.0, 0.0)
 GATE = (9.0, 0.0)
@@ -50,10 +53,10 @@ def lander_point(xyz):
 
 def build(models_dir, worlds_dir, media):
     hf = make_terrain()
-    w = WorldBuilder(KEY, TITLE, "1.d", ORIGIN, hf, models_dir, worlds_dir, media, seed=13)
+    w = WorldBuilder(KEY, TITLE, "1.d", site(*SITE), hf, models_dir, worlds_dir, media, seed=13, solver=SOLVER)
     w.sheet["time_limit_s"] = rules.EQUIPMENT_TIME
     w.terrain(LAYERS)
-    w.zone_rect("gravel_apron", terrains.GRAVEL, *GRAVEL_APRON)  # first: the fuel tank stands on it
+    w.zone_rect("gravel_apron", terrains.GRAVEL, *GRAVEL_APRON)  # first: the fuel tank stands on its ground
     w.c2(*C2)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE)
     w.point("start_gate", *GATE, rule="1.d.i")

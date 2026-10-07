@@ -5,7 +5,7 @@ import json
 import math
 import unittest
 
-from simulate import gen_model, physical, simulate, spin_ratio
+from simulate import diffdrive, gen_model, physical, simulate, spin_ratio
 from worldfiles import world_copy
 
 from urc import terrains  # noqa: E402  (worldfiles puts sim/ on the path)
@@ -45,18 +45,21 @@ class Suspension(unittest.TestCase):
             self.assertAlmostEqual(s.poses[wheel][2], height + P.wheel_radius, delta=0.02, msg=wheel)
 
 
-class Drive(unittest.TestCase):
+class DiffDriveRover(unittest.TestCase):
+    """The DiffDrive variant (design spec D22): every wheel a velocity servo on
+    tyres of mu 1.0 along the tread and 0.5 across."""
+
     def test_drives_straight(self):
-        s = simulate(4.0, cmd=(0.5, 0.0))
+        s = simulate(4.0, cmd=(0.5, 0.0), params=diffdrive())
         x, y, _, _, _, yaw = s.poses["base_link"]
         self.assertTrue(1.7 <= x <= 2.1, f"x = {x}")
         self.assertLess(abs(y), 0.1)
         self.assertLess(abs(yaw), 0.05)
 
     def test_turns_in_place(self):
-        s = simulate(4.0, cmd=(0.0, 0.5))
+        s = simulate(4.0, cmd=(0.0, 0.5), params=diffdrive())
         x, y, _, _, _, yaw = s.poses["base_link"]
-        # Commanded 2 rad; skid-steer scrub makes it turn slower (sim/README.md).
+        # Commanded 2 rad; the tyres' anisotropic scrub makes it turn slower (sim/README.md).
         self.assertTrue(1.2 <= yaw <= 2.05, f"yaw = {yaw}")
         self.assertLess(math.hypot(x, y), 0.15)
 
@@ -87,10 +90,11 @@ class Topics(unittest.TestCase):
 
 
 class PhysicalRover(unittest.TestCase):
-    """The rover with the physical drivetrain (DriveParams mode "physical",
-    plugins/rover_drivetrain.cpp) on the flat ground of these tests: a plane,
-    ground of the drivetrain's default surface (terrains.TYPES). Its
-    calibration against the design spec is test_drivetrain.py."""
+    """The rover with the physical drivetrain (the default, DriveParams mode
+    "physical", plugins/rover_drivetrain.cpp) on the flat ground of these
+    tests: a plane, ground of the drivetrain's default surface
+    (terrains.TYPES). Its calibration against the design spec is
+    test_drivetrain.py."""
 
     PARAMS = physical()
     GROUND = terrains.TYPES[PARAMS.drive.default_surface].traction
@@ -114,7 +118,7 @@ class PhysicalRover(unittest.TestCase):
     def test_turns_in_place_as_its_ground_allows(self):
         """Skid-steer turning in place: the closed-form yaw ratio of the default
         surface (design spec 5.6), not DiffDrive's 0.89."""
-        s = simulate(6.0, cmd=[(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)], params=physical(dig="off"), trace_every=10)
+        s = simulate(6.0, cmd=[(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)], params=physical(dig=False), trace_every=10)
         rate = s.trace[s.trace[:, 0] >= 3.0, 7].mean()
         self.assertAlmostEqual(rate, spin_ratio(self.GROUND), delta=0.04)
         x, y = s.poses["base_link"][:2]
@@ -148,6 +152,16 @@ class PhysicalRover(unittest.TestCase):
         self.assertTrue(1.6 <= x <= 2.1, f"x = {x}")
         self.assertAlmostEqual(z, 0.0, delta=0.03)  # the radial springs sag a little
         self.assertLess(max(abs(roll), abs(pitch)), math.radians(2))
+
+
+    def test_the_default_rover_drives(self):
+        """model://rover, its command timeout on the wall clock (0.5 s, while
+        this world runs several times faster than real time): it drives while
+        commands come (every 20 ms of sim time) and stops once they cease."""
+        s = simulate(10.0, cmd=[(0.0, 0.5, 0.0)], publish_until=2.0, trace_every=10)
+        t, x = s.trace[:, 0], s.trace[:, 1]
+        self.assertGreater(x[t <= 2.0][-1], 0.6)
+        self.assertLess(x[-1] - x[t <= 8.0][-1], 0.005)
 
 
 class DemoWorld(unittest.TestCase):

@@ -13,9 +13,11 @@ midway between the four wheels with the rockers at zero.
 
 DriveParams.mode picks the drivetrain (design spec
 docs/superpowers/specs/2026-10-06-urc-realism-design.md, section 6, D22):
-"diffdrive", Gazebo's DiffDrive (the default in wave 1, its output unchanged),
-or "physical", plugins/rover_drivetrain.cpp with the realism camera and the
-dust emitters.
+"physical", the default, plugins/rover_drivetrain.cpp (a DC motor per wheel
+driving it by torque, every wheel contact gripping like the ground under
+it), or "diffdrive", Gazebo's DiffDrive (every wheel a velocity servo on
+anisotropic tyres), kept for A/B tests and cost comparisons. The camera and
+the dust emitters are the same in both.
 """
 import dataclasses
 import math
@@ -51,22 +53,15 @@ VIEWER_NAMES = ("CHASE_MODEL", "CHASE_IMAGE_TOPIC", "CHASE_CMD_TOPIC", "CHASE_MO
                 "ChaseParams", "EyeParams", "build_chase_sdf", "build_eye_sdf")
 
 
-# Dig-in presets (design spec 6.5, D21): gains on the catalogue's dig_rate and on its dig_max - 1. "mild" is
-# the catalogue (a sustained spin in sand slows to ~0.7x and keeps turning); "strong" makes sand's dig_rate
-# 0.05 and D_max 2.0, past the D ~ 1.7 where a spin stops: the rover digs in and must drive out (Anveshak,
-# URC 2017 [14]). The user chose strong (2026-10-06, Q12).
-DIG_PRESETS = {"mild": (1.0, 1.0), "strong": (5.0, 4.0)}
-
-
 @dataclass(frozen=True)
 class DriveParams:
-    """The drivetrain (design spec section 6). mode "diffdrive": Gazebo's
-    DiffDrive, every wheel a velocity servo, kept for A/B tests and cost
-    comparisons (D22); "physical": plugins/rover_drivetrain.cpp, a DC motor
-    per wheel driving it by torque, every wheel contact gripping like the
-    ground under it. Motor numbers are typical placeholders until the
+    """The drivetrain (design spec section 6). mode "physical", the default:
+    plugins/rover_drivetrain.cpp, a DC motor per wheel driving it by torque,
+    every wheel contact gripping like the ground under it; "diffdrive":
+    Gazebo's DiffDrive, every wheel a velocity servo, kept for A/B tests and
+    cost comparisons (D22). Motor numbers are typical placeholders until the
     drivetrain is chosen (D20, Q7: the prototype's validated set)."""
-    mode: str = "diffdrive"  # or "physical"
+    mode: str = "physical"  # or "diffdrive"
     # A command older than cmd_timeout counts as zero, so a commander that died cannot leave the rover
     # driving (user decision 2026-10-06); 0 holds the last command, as Gazebo's GUI Teleop needs. The clock:
     # "wall" (a dead process) or "sim" (deterministic tests).
@@ -102,7 +97,9 @@ class DriveParams:
     # spec 6.2 has 0.2, but over 3 cm/s a rover dug in by the strong preset creeps round at 0.25 x the fresh
     # rate instead of sticking; at 0.05 it turns 0.07 x, measured).
     rr_w0: float = 0.05
-    dig: str = "strong"  # DIG_PRESETS key, or "off"
+    # Dig-in on loose ground (design spec 6.5, D21); how strong is the ground's (terrains.DIG, the one switch:
+    # strong by default, the user's choice, Q12).
+    dig: bool = True
     dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
     default_surface: str = "regolith"  # terrains.TYPES key: ground where the world has no ground map
     object_surface: str = "manmade"  # terrains.TYPES key: objects whose SDF sets no friction
@@ -174,16 +171,15 @@ class Params:
     camera_xyz: tuple[float, float, float] = (0.35, 0.0, 0.85)
     camera_pitch: float = 0.12  # [rad] down: where the tilt starts and C centres it
     camera_rate: float = 15.0  # [Hz]
-    camera_size: tuple[int, int] = (640, 480)
+    # 1280x720: at 640x480 a 20 cm ArUco face read only to ~2.5 m (sim/README.md, Known limitations). The
+    # depth image has the same size (one RGB-D sensor).
+    camera_size: tuple[int, int] = (1280, 720)
     camera_hfov: float = 1.5  # [rad]
     camera_clip: tuple[float, float] = (0.1, 40.0)  # [m] depth range
-    # The realism camera (design spec 7, D14): the physical variant's in wave 1, every rover's from wave 2.
-    # 640x480 reads a 20 cm ArUco face only to ~2.5 m (sim/README.md, Known limitations); the RGB sees the far
-    # field to 80 km while the depth stays clipped at camera_clip; gz attenuates SDF noise, stddev 0.06 is
-    # ~2 DN (M, design spec 4).
-    camera_hd_size: tuple[int, int] = (1280, 720)
+    # The RGB sees the far field to 80 km while the depth stays clipped at camera_clip (design spec 7, D14). No
+    # SDF <noise> (design spec 4's stddev 0.06): on an rgbd_camera it aborts gz on Metal (measured: Ogre
+    # RenderingAPIException, float4 output to an RGBA32Uint attachment), so noise belongs in the station.
     camera_far: float = 80_000.0  # [m] RGB far clip
-    camera_noise: float = 0.06  # RGB noise stddev [0-1]
     # Pan-tilt head. Angles are from straight ahead and level; tilt is positive
     # down (rotation about +y), pan positive to the left (about +z).
     camera_pan_limit: float = 2.8  # [rad] each way
@@ -330,11 +326,7 @@ def _add_camera_head(model, p):
     sdf.sub(sensor, "update_rate", p.camera_rate)
     sdf.sub(sensor, "topic", CAMERA_TOPIC)
     sdf.sub(sensor, "gz_frame_id", "camera")
-    if _physical(p):  # the realism camera (Params.camera_hd_size)
-        sdf.camera(sensor, p.camera_hfov, p.camera_hd_size, (p.camera_clip[0], p.camera_far), noise=p.camera_noise,
-                   depth_clip=p.camera_clip)
-    else:
-        sdf.camera(sensor, p.camera_hfov, p.camera_size, p.camera_clip)
+    sdf.camera(sensor, p.camera_hfov, p.camera_size, (p.camera_clip[0], p.camera_far), depth_clip=p.camera_clip)
 
     head = ((PAN_JOINT, "base_link", "camera_pan_link", (0, 0, 1), (-p.camera_pan_limit, p.camera_pan_limit), 0.0),
             (TILT_JOINT, "camera_pan_link", "camera_tilt_link", (0, 1, 0), p.camera_tilt_limits, p.camera_pitch))
@@ -364,15 +356,15 @@ def _add_rocker(model, p, side, sign):
         _shape(link, f"{end}_arm", sdf.box(bar), pose, ROCKER_COLOR)
     sdf.joint(model, f"{name}_joint", "revolute", "base_link", name, (0, 1, 0), -p.rocker_limit, p.rocker_limit,
               damping=p.rocker_damping)
-    if _physical(p):
-        _add_dust_emitter(link, p, f"dust_r{side[0]}")
+    _add_dust_emitter(link, p, f"dust_r{side[0]}")
 
 
 def _add_dust_emitter(link, p, name):
     """A particle emitter at the ground behind the rocker's rear wheel (on the rocker: a wheel link spins),
-    idle until the drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not emitting
-    (SDF's default is to emit), and depth and point cloud do not see its particles (scatter ratio 0, Q11)."""
-    from urc import terrains  # here: the catalogue is heavy (textures), and only the physical rover needs it
+    idle until the physical drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not
+    emitting (SDF's default is to emit); scatter ratio 0 is meant to keep its particles out of the depth
+    image and point cloud (Q11), but gz-rendering 8 ignores it (measured: tests/test_render.py)."""
+    from urc import terrains  # here: the catalogue imports the texture generators
     d = p.drive
     emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
     behind = p.wheel_dx + p.wheel_radius + d.dust_box / 4
@@ -452,9 +444,6 @@ def _add_plugins(model, p):
 def _add_drivetrain(model, p):
     """plugins/rover_drivetrain.cpp, set from DriveParams (design spec 6.2)."""
     d = p.drive
-    if d.dig != "off" and d.dig not in DIG_PRESETS:
-        raise ValueError(f"DriveParams.dig {d.dig!r}: 'off' or one of {sorted(DIG_PRESETS)}")
-    rate_gain, max_gain = DIG_PRESETS.get(d.dig, (1.0, 1.0))
     plugin = sdf.plugin(model, "RoverDrivetrain", "rover_sim::RoverDrivetrain", topic=CMD_VEL_TOPIC,
                         cmd_timeout=d.cmd_timeout, cmd_timeout_clock=d.cmd_timeout_clock, odom_topic=ODOM_TOPIC,
                         tf_topic=TF_TOPIC, frame_id="odom", child_frame_id="base_link",
@@ -475,8 +464,7 @@ def _add_drivetrain(model, p):
               max_speed=p.wheel_speed, substeps=d.substeps)
     contact = sdf.group(plugin, "contact", v_stribeck=d.v_stribeck, v_align=d.v_align, perp_ratio=d.perp_ratio,
                         stick_perp_ratio=d.stick_perp_ratio, mu_noise=d.mu_noise, mu_noise_length=d.mu_noise_length,
-                        rr_w0=d.rr_w0, dig=d.dig != "off", dig_rate_gain=rate_gain, dig_max_gain=max_gain,
-                        dig_heal_length=d.dig_heal_length, default_surface=d.default_surface,
+                        rr_w0=d.rr_w0, dig=d.dig, dig_heal_length=d.dig_heal_length, default_surface=d.default_surface,
                         object_surface=d.object_surface)
     for row in surface_rows(d.default_surface, d.object_surface):
         sdf.group(contact, "surface", **row)
@@ -485,15 +473,16 @@ def _add_drivetrain(model, p):
 
 
 def surface_rows(*keys):
-    """The traction of catalogue ground types (terrains.TYPES, design spec 5.6) as the drivetrain's
-    <surface> rows, what it uses where the world has no ground map. A key the catalogue lacks is left out;
-    the drivetrain reports it when it starts and grips there as plain Coulomb mu 1."""
-    from urc import terrains  # here: the catalogue is heavy (textures), and only the physical rover needs it
+    """The traction of catalogue ground types (terrains.TYPES, design spec 5.6, under the dig-in preset
+    terrains.DIG, as worlds write it) as the drivetrain's <surface> rows, what it uses where the world has no
+    ground map. A key the catalogue lacks is left out; the drivetrain reports it when it starts and grips
+    there as plain Coulomb mu 1."""
+    from urc import terrains  # here: the catalogue imports the texture generators
     rows = []
     for key in dict.fromkeys(keys):
         kind = terrains.TYPES.get(key)
         if kind is not None:
-            rows.append(dict(key=key, **dataclasses.asdict(kind.traction), dust=kind.appearance.dust))
+            rows.append(dict(key=key, **dataclasses.asdict(terrains.traction(kind)), dust=kind.appearance.dust))
     return rows
 
 

@@ -3,10 +3,13 @@
 Gazebo's Python TestFixture runs the server inside this process, so a run is
 repeatable: commands go out over gz-transport every 20 ms of sim time, and
 the state is read from the entity-component manager after the last step.
-The rover is model://rover or one built from gen_model Params (the physical
-drivetrain: physical()), on flat ground (world_sdf) or on a synthetic terrain
-with a ground map (ground_world: heightmap, ground.png and ground.json as the
-drivetrain reads them, design spec 9.1).
+The rover is model://rover (the physical drivetrain, its command timeout on
+the wall clock) or one built from gen_model Params (physical(): the same
+with the timeout on sim time, so runs repeat exactly; diffdrive(): Gazebo's
+DiffDrive), on flat ground (world_sdf) or on a synthetic terrain with a
+ground map (ground_world: heightmap, ground.png and ground.json as the
+drivetrain reads them, design spec 9.1). follow() drives a route instead
+of a schedule: a pure-pursuit driver on the rover's ground truth (pursue).
 
 cpu_time_per_step() measures what a world costs instead (the realism design's
 section 10.3): plain `gz sim -s -r --iterations N` processes, their CPU time
@@ -51,7 +54,7 @@ from gz.transport13 import Node  # noqa: E402
 LINKS = ("base_link", "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr")
 ROCKERS = ("rocker_left_joint", "rocker_right_joint")
 ROVER_URI = "model://rover"
-SOLVERS = ("dantzig", "pgs")  # DART's LCP solvers (dantzig is its default)
+SOLVERS = sdf.SOLVERS
 # A drive for cost measurements, [(t [s], vx [m/s], wz [rad/s])] from t on:
 # straight, turn in place, an arc, the turn back (the drivetrain prototype's
 # exp_rtf.py schedule, sim/data/research/drive/prototype).
@@ -73,9 +76,10 @@ class State:
 def world_sdf(extra="", spawn_z=0.02, rover_uri=ROVER_URI, default_surface=None, solver=None):
     """Flat ground (DART, 1 ms steps), the rover at the origin, plus `extra` SDF.
     default_surface: a terrains.TYPES key or TerrainType for the ground (its
-    Coulomb mu in the SDF, which DART honours on a plane; the physical
-    drivetrain takes a plane's ground from its own default surface instead,
-    see world_file); solver: one of SOLVERS (None: DART's default)."""
+    Coulomb mu in the SDF, which DART honours on a plane under a DiffDrive
+    rover; the physical drivetrain takes a plane's ground from its own
+    default surface instead, see world_file); solver: one of SOLVERS (None:
+    DART's default)."""
     surface = ""
     if default_surface is not None:
         kind = terrains.TYPES[default_surface] if isinstance(default_surface, str) else default_surface
@@ -139,10 +143,16 @@ def rover_model(params):
 
 
 def physical(**drive):
-    """Params of the rover with the physical drivetrain, its DriveParams
-    changed by `drive`; the command timeout runs on sim time, so runs repeat
-    exactly."""
+    """Params of the rover with the physical drivetrain (the default), its
+    DriveParams changed by `drive`; the command timeout runs on sim time, so
+    runs repeat exactly."""
     return gen_model.Params(drive=gen_model.DriveParams(mode="physical", cmd_timeout_clock="sim", **drive))
+
+
+def diffdrive(**params):
+    """Params of the rover with Gazebo's DiffDrive (design spec D22: the A/B
+    and cost reference), other Params changed by `params`."""
+    return gen_model.Params(drive=gen_model.DriveParams(mode="diffdrive"), **params)
 
 
 @contextlib.contextmanager
@@ -251,6 +261,75 @@ def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None)
 def _xyzrpy(pose):
     p, r = pose.pos(), pose.rot().euler()
     return (p.x(), p.y(), p.z(), r.x(), r.y(), r.z())
+
+
+@dataclass
+class Drive:
+    """A follow() run: base_link every 0.1 s, rows (t, x, y, z, roll, pitch,
+    yaw), and when the rover came within the goal tolerance (None: never)."""
+    trace: np.ndarray
+    arrived: float = None
+
+    def gap(self, goal):
+        """Distance [m] from the rover's last position to a world (x, y)."""
+        return math.dist(self.trace[-1, 1:3], goal)
+
+
+def pursue(path, x, y, yaw, speed, lookahead=2.0, gain=1.5, min_radius=1.5):
+    """The twist (vx, wz) of a pure-pursuit driver at (x, y, yaw) on a world
+    polyline `path`: towards the point `lookahead` metres along the path past
+    the nearest one, slowing with the cosine of the heading error and
+    turning gain x that error, on arcs of at least min_radius [m]. It never
+    turns in place: a spin digs the wheels into loose ground, and on a steep
+    slope a skid-steer rover hardly turns at all (measured: 4 % of the
+    commanded yaw rate on 25 deg slickrock), so a driver that asks for a
+    spin there stalls."""
+    pts = terrain.resample(path, 0.25)
+    nearest = int(np.argmin(np.hypot(pts[:, 0] - x, pts[:, 1] - y)))
+    ahead = min(nearest + int(round(lookahead / 0.25)), len(pts) - 1)
+    error = math.remainder(math.atan2(pts[ahead, 1] - y, pts[ahead, 0] - x) - yaw, 2 * math.pi)
+    vx = speed * max(math.cos(error), 0.25)
+    return vx, max(-vx / min_radius, min(vx / min_radius, gain * error))
+
+
+def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
+    """Drive the rover in the SDF file `world` along a world (x, y) polyline
+    with a pure-pursuit driver (pursue) on its ground truth, a command every
+    20 ms of sim time, until it is within `tolerance` of the path's end
+    (then it stops) or `seconds` of sim time have passed."""
+    node = Node()
+    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    goal = tuple(path[-1])
+    handles, trace, arrived = {}, [], []
+    twist = Twist()
+
+    def pre_update(info, ecm):
+        if not handles:
+            model = Model(World(world_entity(ecm)).model_by_name(ecm, "rover"))
+            handles["base"] = Link(model.link_by_name(ecm, "base_link"))
+        if info.iterations % 20:
+            return
+        x, y, _, _, _, yaw = _xyzrpy(handles["base"].world_pose(ecm))
+        if not arrived and math.dist((x, y), goal) < tolerance:
+            arrived.append(info.iterations / 1000)
+        twist.linear.x, twist.angular.z = (0.0, 0.0) if arrived else pursue(path, x, y, yaw, speed, **driver)
+        publisher.publish(twist)
+
+    def post_update(info, ecm):
+        if info.iterations % 100 == 0:
+            trace.append((info.iterations / 1000, *_xyzrpy(handles["base"].world_pose(ecm))))
+
+    fixture = TestFixture(world)
+    fixture.on_pre_update(pre_update)
+    fixture.on_post_update(post_update)
+    fixture.finalize()
+    for _ in range(int(math.ceil(seconds))):
+        fixture.server().run(True, 1000, False)
+        if arrived and trace[-1][0] > arrived[0] + 2.0:  # stopped there
+            break
+    if not trace:
+        raise RuntimeError(f"Gazebo did not step {world}; see the [Err] lines above")
+    return Drive(np.array(trace), arrived[0] if arrived else None)
 
 
 def spin_ratio(traction, dig=1.0, params=gen_model.Params()):

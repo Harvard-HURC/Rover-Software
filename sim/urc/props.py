@@ -278,22 +278,6 @@ def field_sign(models_dir, media, key, lines, height=1.0):
     return name
 
 
-def shrub(models_dir, variant):
-    """Desert shrub (visual only: the rover drives through brush)."""
-    name = f"urc_shrub_{variant}"
-    root, model = sdf.model_root(name, static=True)
-    link = sdf.link(model, "link")
-    rng = np.random.default_rng(500 + variant)
-    for k in range(int(rng.integers(6, 11))):
-        r = rng.uniform(0.12, 0.25)
-        x, y = rng.normal(0, 0.18, 2)
-        g = rng.uniform(0.85, 1.15)
-        sdf.visual(link, f"clump{k}", sdf.sphere(r), (x, y, r * 0.8 + rng.uniform(0, 0.15)),
-                   (0.42 * g, 0.47 * g, 0.33 * g))
-    sdf.write_model(models_dir, name, root, "Desert shrub.")
-    return name
-
-
 # --- Delivery objects (rule 1.c.iii: <= 5 kg, < 40 cm, grasp features <= 7.5 cm) ----
 
 def toolbox(models_dir):

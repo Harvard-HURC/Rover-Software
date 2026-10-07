@@ -18,19 +18,20 @@ Sub-surface sampling (10 cm, 1.b.vi) is not simulated: the sheet gives each
 unit's notes instead.
 
 The ground the rover crosses (urc/terrains.py, urc/features.py): soft sand
-friction zones along the wash floor, bentonite clay aprons at the feet of the
-banded hills, a loose scree chute up the east face of the small hill; talus
-on the hill slopes, two rock fields and the ledge's blocks.
+along the wash floor, bentonite clay aprons at the feet of the banded hills,
+a loose scree chute up the east face of the small hill; talus on the hill
+slopes, two rock fields and the ledge's blocks.
 """
 import math
 
-from .. import features, geo, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder
+from .. import features, props, rules, terrain, terrains
+from ..world import Layer, WorldBuilder, site
 
 KEY = "astrobiology"
 TITLE = "Astrobiology"
-ORIGIN = geo.Origin(38.4010, -110.7960, 1405.4)  # altitude: USGS 3DEP at this point
+SITE = (38.4010, -110.7960)  # lat, lon of C2 (altitude: world.site)
 SIZE, SAMPLES, CENTER = 1024.0, 1025, (0.0, 0.0)
+SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 3.7x real time)
 
 C2 = (0.0, 0.0, 0.0)
 ROVER = (8.0, 6.0, math.radians(30))
@@ -49,14 +50,14 @@ LICHEN_BOULDERS = (-120.0, 200.0, 12.0)
 ROCK_FIELDS = [(60.0, 60.0, 30.0, 18.0, 0.15), (-200.0, 130.0, 30.0, 20.0, 0.25)]  # x, y, length, width, rock size
 
 FEATURES = [
-    features.Wash("wash", WASH, depth=2.5, falloff=5.0),
+    features.Wash("wash", WASH, depth=2.5),
     # Weathered bentonite below the banded hills.
     features.Patch("clay_apron_0", terrains.CLAY, 122.0, 107.0, 12.0),
     features.Patch("clay_apron_1", terrains.CLAY, -245.0, 205.0, 10.0),
     # A planar ~27 deg chute up hill 1's east face.
     features.Slope("scree_chute", terrains.SCREE, (310.0, 55.0), (283.0, 55.0), 10.0, run_on=8.0, falloff=4.0),
-    *[features.Patch(f"biocrust_{k}", terrains.BIOCRUST, x, y, r, level=False) for k, (x, y, r) in enumerate(CRUSTS)],
-    features.Patch("gypsum", terrains.GYPSUM, *GYPSUM_MOUND, 13.0, level=False),
+    *[features.Patch(f"biocrust_{k}", terrains.BIOCRUST, x, y, r) for k, (x, y, r) in enumerate(CRUSTS)],
+    features.Patch("gypsum", terrains.GYPSUM, *GYPSUM_MOUND, 13.0),
 ]
 
 # Four layers is Gazebo's limit; bands by height give the Morrison look.
@@ -90,7 +91,7 @@ def make_terrain():
 
 def build(models_dir, worlds_dir, media):
     hf = make_terrain()
-    w = WorldBuilder(KEY, TITLE, "1.b", ORIGIN, hf, models_dir, worlds_dir, media, seed=19)
+    w = WorldBuilder(KEY, TITLE, "1.b", site(*SITE), hf, models_dir, worlds_dir, media, seed=19, solver=SOLVER)
     w.sheet["time_limit_s"] = list(rules.ROVING_TIME)
     w.terrain(LAYERS)
     features.dress(w, FEATURES)

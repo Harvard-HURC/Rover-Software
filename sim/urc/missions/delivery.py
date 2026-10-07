@@ -20,18 +20,19 @@ The ground (1.c.ii: "soft sandy areas, gravel, rough stony areas, rock and
 boulder fields, vertical drops and steep loosely consolidated slopes"): a
 soft sand flat in stage 1, a gravel plain on the way out, bentonite clay on
 the crate hill's flank, sand along the wash floor and a loose scree chute up
-the steep mesa are friction zones (urc/terrains.py, urc/features.py); two
-rough stony areas (rock gardens), the boulder field and the ledges.
+the steep mesa are zones of their ground (urc/terrains.py, urc/features.py);
+two rough stony areas (rock gardens), the boulder field and the ledges.
 """
 import math
 
-from .. import features, geo, props, rules, terrain, terrains
-from ..world import Layer, WorldBuilder
+from .. import features, props, rules, terrain, terrains
+from ..world import Layer, WorldBuilder, site
 
 KEY = "delivery"
 TITLE = "Delivery"
-ORIGIN = geo.Origin(38.4040, -110.7935, 1374.3)  # altitude: USGS 3DEP at this point
+SITE = (38.4040, -110.7935)  # lat, lon of C2 (altitude: world.site)
 SIZE, SAMPLES, CENTER = 1024.0, 1025, (430.0, 390.0)
+SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 1.29x real time)
 
 C2 = (0.0, 0.0, 0.0)
 GATE = (12.0, 8.0)
@@ -65,7 +66,7 @@ LANDFORMS = [features.Mesa("crate_hill", *CRATE_HILL, 10.0, 6.0, 30.0, seed=44, 
 FEATURES = [
     features.Patch("sand_flat", terrains.SAND, 150.0, 62.0, 14.0),  # among astronauts A, B and the supply crate
     features.Patch("gravel_plain", terrains.GRAVEL, 285.0, 222.0, 18.0),  # on the way out to the field sign
-    # On the crate hill's approach, ~15 deg: steeper than clay holds (14 deg).
+    # On the crate hill's approach, ~15 deg: clay climbs 17 deg at most, and a spinning wheel digs in.
     features.Patch("clay_flank", terrains.CLAY, 225.0, 102.0, 9.0),
     # Sand on the wash floor, but not where the wash cuts through the ridge (21 deg).
     features.Wash("wash", WASH, depth=3.5, sand_step=90.0, skip=(7,)),
@@ -105,10 +106,10 @@ def sign_lines(w):
 
 def build(models_dir, worlds_dir, media):
     hf = make_terrain()
-    w = WorldBuilder(KEY, TITLE, "1.c", ORIGIN, hf, models_dir, worlds_dir, media, seed=17)
+    w = WorldBuilder(KEY, TITLE, "1.c", site(*SITE), hf, models_dir, worlds_dir, media, seed=17, solver=SOLVER)
     w.sheet["time_limit_s"] = list(rules.DELIVERY_TIME)
     w.terrain(LAYERS)
-    features.dress(w, FEATURES)  # first: objects placed on a zone rest on its tiles
+    features.dress(w, FEATURES)  # first: objects stand on the ground their zones sink
     w.c2(*C2)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE, math.radians(35))
     w.point("start_gate", *GATE)

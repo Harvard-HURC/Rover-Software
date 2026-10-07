@@ -11,7 +11,10 @@ tests. West of the road, strips run west:
   ramp, a landing, a 30 deg ramp to a plateau, which drops back to the plain
   on the far side at 12 deg. A rover holds or climbs a grade up to atan(mu)
   (11, 19, 27, 35, 44 deg);
-- sand, clay and slickrock: each a flat stretch, then a slope up and down;
+- sand, clay and slickrock: each a flat stretch, then a slope up and down
+  (the strong dig-in, terrains.DIG: the rover stalls on the 15 deg sand dune
+  and 2.7 m up the 12 deg clay slope as its slipping wheels dig in, measured;
+  it crosses the slickrock's 25 deg);
 - side slopes of 10 and 20 deg across the direction of travel.
 East of the road, stations run east:
 - rock gardens of 0.1 / 0.2 / 0.3 / 0.4 m rocks (the wheel radius is 0.15 m);
@@ -27,15 +30,15 @@ import math
 
 import gen_model  # the rover's geometry; sim/ is on sys.path wherever urc is used
 
-from .. import features, geo, props, terrain, terrains
+from .. import features, props, terrain, terrains
 from ..features import Lane, Step, Surface
-from ..world import Layer, WorldBuilder, garden_spacing
+from ..world import Layer, WorldBuilder, garden_spacing, site
 
 KEY = "proving_ground"
 TITLE = "Rover proving ground"
-# East of the Equipment Servicing site; the altitude is that site's (no DEM sample here).
-ORIGIN = geo.Origin(38.4080, -110.7850, 1371.0)
+SITE = (38.4080, -110.7850)  # lat, lon of the entrance, east of the Equipment Servicing site (altitude: world.site)
 SIZE, SAMPLES, CENTER = 256.0, 2049, (-30.0, 62.0)  # 0.125 m samples: humps and corrugations need them
+SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 4.8x real time)
 
 ROVER = (0.0, 0.0, math.pi / 2)
 GATE = (0.0, 4.0)
@@ -94,7 +97,8 @@ def lane_info(lane, v=0.0):
 
 def build(models_dir, worlds_dir, media):
     hf = make_terrain()
-    w = WorldBuilder(KEY, TITLE, None, ORIGIN, hf, models_dir, worlds_dir, media, seed=23, name=KEY)
+    w = WorldBuilder(KEY, TITLE, None, site(*SITE), hf, models_dir, worlds_dir, media, seed=23, name=KEY,
+                     solver=SOLVER)
     w.terrain(LAYERS)
     features.dress(w, FEATURES)
     w.place(props.start_gate(models_dir, media), "start_gate", *GATE, math.pi / 2)
@@ -104,22 +108,26 @@ def build(models_dir, worlds_dir, media):
     for mu, y, surface in zip(FRICTION_MU, FRICTION_LANES, FRICTION_HILL.surfaces):
         kind = surface.kind
         w.station(surface.key, *FRICTION_HILL.at(0.0, surface.offset), f"Friction lane mu {mu:.2f}",
-                  f"{kind.title}: {FRICTION_HILL.describe(surface.length)}; then a plateau and the way down (mu 1). "
-                  f"Holds or climbs up to {kind.max_slope_deg:.0f} deg.",
+                  f"{kind.title}: {FRICTION_HILL.describe(surface.length)}; then a plateau and the way down "
+                  f"({terrains.TYPES[terrains.DEFAULT_GROUND].title.lower()}). Holds or climbs up to "
+                  f"{kind.traction.climb_deg:.0f} deg.",
                   ["FRICTION LANE", f"MU {mu:.2f}", "10 20 30 DEG"], (west_sign, y + 3.5), EAST,
                   mu=mu, length_m=surface.length, **lane_info(FRICTION_HILL, surface.offset))
     for lane in (SAND_PIT, CLAY_PATCH, SLICKROCK_SLAB):
         kind = lane.surfaces[0].kind
         title = lane.key.replace("_", " ").capitalize()
         steepest = max(abs(grade) for _, grade in lane.segments)
-        w.station(lane.key, *lane.start, title, f"{kind.title} (mu {kind.mu:.2f}, holds up to "
-                  f"{kind.max_slope_deg:.0f} deg): {lane.describe()}.",
-                  [title.upper(), f"MU {kind.mu:.2f}", f"{steepest:.0f} DEG SLOPES"], (west_sign, lane.start[1] + 3.5),
-                  EAST, mu=kind.mu, **lane_info(lane))
+        traction = terrains.traction(kind)
+        climb, hold = round(traction.climb_deg), round(traction.hold_deg)
+        digs = ", but slipping wheels dig in and stall well below that" if traction.dig_rate else ""
+        w.station(lane.key, *lane.start, title, f"{kind.title} (holds a parked rover up to {hold} deg, climbs up "
+                  f"to {climb} deg{digs}): {lane.describe()}.",
+                  [title.upper(), f"CLIMBS {climb} DEG", f"{steepest:.0f} DEG SLOPES"],
+                  (west_sign, lane.start[1] + 3.5), EAST, climb_deg=climb, hold_deg=hold, **lane_info(lane))
     for lane in SIDE_SLOPES:
         w.station(lane.key, *lane.start, f"Side slope {lane.cross:.0f} deg",
                   f"{lane.length:.0f} m along a {lane.cross:.0f} deg side slope, the south side up: tests roll "
-                  "stability and sideways slip (tyre mu 0.5 across).", ["SIDE SLOPE", f"{lane.cross:.0f} DEG"],
+                  "stability and sideways slip.", ["SIDE SLOPE", f"{lane.cross:.0f} DEG"],
                   (west_sign, lane.start[1] + 4.5), EAST, cross_slope_deg=lane.cross, **lane_info(lane))
 
     length, width = GARDEN_SIZE

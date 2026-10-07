@@ -5,27 +5,26 @@ Terrain: the USGS 3DEP 1 m DEM (sim/data/dem, fetched by sim/tools/fetch_dem.py)
 2048 m square around the square mile's centre. Layout metres x east, y north
 from the C2 station, which stands on the flat central rise 200 m north-east of
 that centre; z is the elevation above C2's. Altitudes (the origin, the sheet,
-NavSat) are WGS84 ellipsoidal heights: the DEM's NAVD88 elevations plus
-dem.NAVD88_TO_WGS84.
+NavSat) are WGS84 ellipsoidal heights (world.site): the DEM's NAVD88
+elevations plus dem.NAVD88_TO_WGS84.
 
 - Route-Finding, north-west: START_POST (ArUco 0) on flat ground 412 m from
   C2, in radio line of sight (1.e.xii). POST1 (ArUco 1) on the crest of a
   narrow butte, 15 m above the start. The crest is gentle (< 8 deg) for its
-  last 85 m, but its west end is reached over an 8 m rim of 18-24 deg
-  ground, which the easy route switchbacks up at 16 deg. Driving straight at
-  Post 1 the grade is 26-44 deg from 22 of 24 compass bearings, steeper than
-  a rover climbs loose slopes; but the bare ground here grips like the
-  heightmap it is (terrains.HEIGHTMAP_MU), and the rover climbs it up to
-  about 45 deg (measured: straight up a 40 deg face to Post 1). So boulders
-  of the broken caprock line the butte's rim (routes.rim: round the ground
-  reached from Post 1 on slopes up to RIM_SLOPE, kept clear of the easy
-  route along the crest), too tall to climb (0.3 m rocks stop the rover on
-  the proving ground) and too close together to pass between, everywhere
-  but where the easy route climbs onto the butte: that climb is the only way
-  up (1.e.xv: not every approach is navigable). POST2 (ArUco 2) on the plain
-  71 m north of Post 1, out of the C2 antenna's line of sight behind the
-  butte (1.e.xvi). judges_only holds the easy route, the butte's rim and its
-  approach grades.
+  last 85 m, but its west end is reached over a rim of 18-26 deg ground,
+  which the easy route switchbacks up at 16 deg on a rib of bare caprock
+  (EASY_ROUTE_RIB): across ground that steep, packed regolith (climb 23 deg)
+  does not carry the rover. Driving straight at Post 1 the grade is 26-44
+  deg from 22 of 24 compass bearings, steeper than the bare ground lets a
+  rover climb. Boulders of the broken caprock also line the butte's rim
+  (routes.rim: round the ground reached from Post 1 on slopes up to
+  RIM_SLOPE, kept clear of the easy route along the crest), too tall to
+  climb (0.3 m rocks stop the rover on the proving ground) and too close
+  together to pass between, everywhere but where the easy route climbs onto
+  the butte: that climb is the only way up (1.e.xv: not every approach is
+  navigable). POST2 (ArUco 2) on the plain 71 m north of Post 1, out of the
+  C2 antenna's line of sight behind the butte (1.e.xvi). judges_only holds
+  the easy route, the butte's rim and its approach grades.
 - Astronaut Assistance, south-east of C2 on gentle ground (< 6 deg), all in
   radio line of sight: the astronaut waits at ASTRONAUT_WAIT (1.e.v); Follow!
   along FOLLOW_PATH (1.e.vi); the rock pick hammer lies at HAMMER near its end;
@@ -37,12 +36,11 @@ the floors of the washes that drain past the butte (the north one runs
 between the start, Post 1 and Post 2), loose scree on the butte's north face
 where the straight line from the start crosses it, gravel on the aprons at its
 feet, bentonite clay on the plain the rover crosses from C2 and bare
-slickrock on its caprock crest. Rocks lie where the rover drives: a stony
-plain, two rock gardens, rubble, talus on the butte's faces, the boulders on
-its rim, and boulders below its cliff and the knoll by the astronaut. Rocks
-keep ROUTE_CLEARANCE from the easy route, the astronaut's walk and every
-target, the friction zones further still; slickrock, which grips like the
-bare ground, lies on the crest the easy route follows.
+slickrock, the best grip there is, on its caprock crest and on the rib the
+easy route climbs. Rocks lie where the rover drives: a stony plain, two rock
+gardens, rubble, talus on the butte's faces, the boulders on its rim, and
+boulders below its cliff and the knoll by the astronaut. Rocks keep
+ROUTE_CLEARANCE from the easy route, the astronaut's walk and every target.
 """
 import json
 import math
@@ -51,7 +49,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import dem, features, geo, props, routes, rules, terrain, terrains
-from ..world import Layer, WorldBuilder
+from ..world import Layer, WorldBuilder, site
 
 KEY = "autonomy"
 TITLE = "Autonomy"
@@ -59,6 +57,7 @@ DEM_PATH = Path(__file__).resolve().parents[2] / "data" / "dem" / "route_area_3d
 SQUARE_MILE_CENTER = tuple((a + b) / 2 for a, b in zip(*rules.ROUTE_AREA))  # (lat, lon)
 C2_FROM_CENTER = (160.0, 120.0)  # [m] east, north of the square mile's centre
 SIZE, SAMPLES = 2048.0, 2049  # 1 m samples
+SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (gates G2, G5: 3.4x real time)
 CENTER = (-C2_FROM_CENTER[0], -C2_FROM_CENTER[1])  # the terrain is centred on the square mile
 
 C2 = (0.0, 0.0, 0.0)  # x, y, yaw
@@ -97,16 +96,22 @@ NORTH_WASH = [(-90.0, 462.0), (-50.0, 474.0), (0.0, 440.0), (40.0, 448.0), (100.
 CLIFF_WASH = [(0.0, 342.0), (40.0, 350.0), (80.0, 352.0), (120.0, 366.0)]  # 15-20 m out from the foot of the cliff
 WASH_STEP = 45.0  # [m]
 SLABS = [(-85.0, 342.0, 12.0), (6.0, 397.0, 4.0), (44.0, 402.0, 3.5)]  # bare caprock on the butte (x, y, radius)
+# Where the easy route climbs onto the butte, its ground is 23-26 deg steep: packed regolith (climb 23 deg) does
+# not carry the rover up it, slantwise or straight (measured: it stalls on the rim at 24 deg pitch). So the route
+# climbs a rib of bare caprock (slickrock, climb 40 deg): patches every EASY_ROUTE_RIB[0] metres of it, radius
+# EASY_ROUTE_RIB[1], wherever the ground under it is steeper than EASY_ROUTE_RIB[2] [deg] (A: a firm rib is where
+# a route up a badland butte goes).
+EASY_ROUTE_RIB = (3.0, 3.5, 15.0)
 
 FEATURES = [
     features.Wash("wash", NORTH_WASH, sand_step=WASH_STEP, sand_radius=7.0),  # in the DEM already: no channel
     features.Wash("cliff_wash", CLIFF_WASH, sand_step=WASH_STEP, sand_radius=6.0),
     # The north face where the straight line from the start crosses it: 32 deg, far steeper than scree holds.
-    features.Patch("north_face_scree", terrains.SCREE, -52.0, 392.0, 6.0, falloff=3.0),
+    features.Patch("north_face_scree", terrains.SCREE, -52.0, 392.0, 6.0),
     features.Patch("gravel_apron_north", terrains.GRAVEL, -125.0, 397.0, 8.0),  # by the start, off the line to Post 1
     features.Patch("gravel_apron_south", terrains.GRAVEL, -30.0, 315.0, 8.0),  # below the cliff
     features.Patch("clay_flat", terrains.CLAY, -120.0, 250.0, 12.0),  # beside the drive from C2 to the start
-    *[features.Patch(f"caprock_slab_{k}", terrains.SLICKROCK, x, y, r, level=False)
+    *[features.Patch(f"caprock_slab_{k}", terrains.SLICKROCK, x, y, r)
       for k, (x, y, r) in enumerate(SLABS)],
 ]
 
@@ -133,31 +138,35 @@ LAYERS = [Layer("regolith"), Layer("mudstone", start=-30.0, fade=3.0), Layer("be
 
 
 def make_site():
-    """The C2 station's WGS84 origin (ellipsoidal altitude from the DEM) and
-    the DEM resampled into layout coordinates (before the features)."""
+    """The C2 station's WGS84 origin (its altitude ellipsoidal, world.site,
+    from this DEM) and the DEM resampled into layout coordinates."""
     d = dem.read_geotiff(DEM_PATH)
     center = geo.Origin(*SQUARE_MILE_CENTER, d.height(*SQUARE_MILE_CENTER))
     lat, lon, _ = geo.enu_to_wgs84(center, *C2_FROM_CENTER)
-    origin = geo.Origin(lat, lon, d.height(lat, lon))  # NAVD88, as the DEM
-    hf = dem.to_heightfield(d, origin, SIZE, SAMPLES, CENTER)
-    return geo.Origin(lat, lon, origin.alt + dem.NAVD88_TO_WGS84), hf
+    hf = dem.to_heightfield(d, geo.Origin(lat, lon, d.height(lat, lon)), SIZE, SAMPLES, CENTER)  # NAVD88: the DEM's
+    return site(lat, lon, (DEM_PATH,)), hf
 
 
 def make_terrain():
-    """The world's terrain: the DEM with the features' levelled zones, and how
-    far [m] that moved it from the DEM at most."""
+    """The world's terrain: the DEM as it is (its zones only paint the ground)."""
     origin, hf = make_site()
-    measured = hf.z.copy()
-    features.shape(hf, FEATURES)
-    return origin, hf, float(np.abs(hf.z - measured).max())
+    return origin, features.shape(hf, FEATURES)
+
+
+def easy_route_rib(hf, route):
+    """Slickrock patches along the steep part of the easy route (EASY_ROUTE_RIB)."""
+    step, radius, steeper = EASY_ROUTE_RIB
+    steep = [(float(x), float(y)) for x, y in terrain.resample(route, step) if hf.slope_deg(x, y) > steeper]
+    return [features.Patch(f"easy_route_rib_{k}", terrains.SLICKROCK, x, y, radius) for k, (x, y) in enumerate(steep)]
 
 
 def build(models_dir, worlds_dir, media):
-    origin, hf, edit = make_terrain()
-    w = WorldBuilder(KEY, TITLE, "1.e", origin, hf, models_dir, worlds_dir, media, seed=7)
+    origin, hf = make_terrain()
+    easy_route, grade = routes.easy_route(hf, START_POST, POST1, EASY_ROUTE_MAX_SLOPE)
+    w = WorldBuilder(KEY, TITLE, "1.e", origin, hf, models_dir, worlds_dir, media, seed=7, solver=SOLVER)
     w.sheet["time_limit_s"] = rules.AUTONOMY_TIME
     w.terrain(LAYERS)
-    features.dress(w, FEATURES)  # first: objects placed on a zone rest on its tiles
+    features.dress(w, FEATURES + easy_route_rib(hf, easy_route))  # first: objects stand on the ground zones sink
     w.c2(*C2)
     w.rover(*ROVER)
     w.place(props.landing_pad(models_dir, media), "landing_pad", *LANDING_PAD)
@@ -202,7 +211,6 @@ def build(models_dir, worlds_dir, media):
         w.task(subtask="route_finding", id=key, rule=rule, points=rules.ROUTE_POINTS_PER_TARGET,
                title=f"Reach {key} autonomously, stop within 1 m and signal arrival (LED flashing green)",
                target=key, tolerance_m=rules.ROUTE_TOLERANCE, led=rules.LED_ARRIVED)
-    easy_route, grade = routes.easy_route(hf, START_POST, POST1, EASY_ROUTE_MAX_SLOPE)
     approach = routes.approach_grades(hf, POST1, APPROACH_BEARINGS, *APPROACH_RADII)
     rim, entry = routes.rim(hf, POST1, RIM_SLOPE, easy_route, RIM_WIDTH)
     w.sheet["judges_only"] = {
@@ -220,8 +228,7 @@ def build(models_dir, worlds_dir, media):
                             "deg_by_bearing": {str(b): round(g, 1) for b, g in zip(APPROACH_BEARINGS, approach)}},
         "washes": {"north": [w.geo(x, y) for x, y in NORTH_WASH], "cliff": [w.geo(x, y) for x, y in CLIFF_WASH]},
         "terrain_source": dict(json.loads(DEM_PATH.with_suffix(".json").read_text()),
-                               edits=f"levelled to a plane under each friction zone, at most {edit:.2f} m off "
-                                     "the DEM; the DEM everywhere else",
+                               edits="none: the DEM as it is, resampled to the world's 1 m grid",
                                altitudes=f"WGS84 ellipsoidal: the DEM's NAVD88 elevations {dem.NAVD88_TO_WGS84:+.2f} m "
                                          "(GEOID18 and NAD83(2011) to WGS84(G2139) at epoch 2027.4, NOAA VDatum); "
                                          "the world's dem.tif holds them too")}

@@ -1,4 +1,4 @@
-"""Ground types and friction zones.
+"""Ground types and zones.
 
 TYPES is the one catalogue of ground: every world picks its terrain layers,
 zones, decals and paint rules (landscape.py) from it by name, and its
@@ -12,8 +12,10 @@ numbers in brackets are its sources, section 15; (A) marks an assumption,
 (M) a measurement, (T) a value measured elsewhere and transferred):
 - Traction: what a wheel feels (design 5.6). The drivetrain takes mu as the
   Coulomb limit of the gross tyre force and applies rolling resistance and
-  bulldozing as hub forces. Worlds write it to ground.json; DIG picks the
-  dig-in preset they are written with (traction()).
+  bulldozing as hub forces. Worlds write it to ground.json, and the rover
+  model to its drivetrain's surface rows (gen_model.surface_rows); DIG
+  picks the dig-in preset both are written with (traction()): the one
+  switch between the strong and the mild dig-in.
 - Appearance: the colour-map palette (design 5.7), detail texture and dust.
 - Relief: micro-relief a synthetic world adds under the type (design 5.4,
   landscape.relief).
@@ -25,62 +27,26 @@ ground.json (legend, traction table, collision map) next to its heightmap:
 the one record of what ground is where (landscape.Legend,
 WorldBuilder.write).
 
-Friction in Gazebo. Gazebo honours <friction> only on primitive collision
-shapes (box, plane, ...): the heightmap and every mesh always have mu 1.0
-(HEIGHTMAP_MU), and DART combines two touching shapes as min(mu_a, mu_b).
-The physical drivetrain therefore sets the friction of every wheel contact
-itself from ground.json (design D1: FRICTION = "ground"). Until it is the
-rover's default, FRICTION = "tiles" keeps today's friction zones, where a
-type's `mu` stands in for its traction and a zone with a lower mu has to be
-the only thing its wheels touch:
-
-- thin box tiles with the zone's mu lie on the terrain, each tilted to the
-  least-squares plane of the ground under it and lifted TILE_CLEARANCE above
-  its highest point, so a wheel on the tiles never reaches the heightmap.
-  Measured on the proving ground: a rover parked on the 20 deg ramp of the
-  mu 0.20 lane slides 5.4 m in 3 s, and holds without the tiles;
-- fit_tiles refuses ground that is not planar within FLATNESS under a single
-  tile, so a tile sits at most TILE_CLEARANCE + FLATNESS above the ground and
-  neighbouring tiles meet without a kerb: the ground under a natural zone is
-  levelled first (features.Patch levels out to TILE_REACH past its outline);
-- rocks that collide are kept off the tiles (WorldBuilder.rock_field drops
-  them, and refuses a zone declared over earlier ones): a rock's mesh has
-  mu 1.0 and would be a foothold;
-- a textured decal draped over the surface shows the zone.
-A zone of mu 1.0 (slickrock, crusts) is only its decal: tiles would change
-nothing.
-
-Every collision shape costs time every step whether anything touches it or
-not (0.56-0.83 us measured, see world.py), so tiles are merged into
-rectangles up to MAX_TILE wherever the ground under them is planar within
-FLATNESS.
-
-A tile's mu is a tuning knob standing in for the whole traction (a rover
-holds or climbs a slope up to about atan(mu)): today's zone types keep
-theirs, and a type added since has its net traction mu_k - crr (bare rock
-and objects 1.0, like slickrock). The tyres
-have mu 1.0 along the tread and 0.5 across it (gen_model.Params), so a zone
-mu above 1.0 changes nothing, and one above 0.5 only the grip along the
-tread.
+Friction. Gazebo honours <friction> only on primitive collision shapes,
+and DART combines two touching shapes as min(mu_a, mu_b) per direction (on
+slippery ground that erased the tyres' anisotropy, and the rover could not
+turn in place). The rover's drivetrain (plugins/rover_drivetrain.cpp) sets
+the friction of every wheel contact itself instead (design D1): on the
+heightmap from ground.png under the contact, on the terrain model's other
+shapes from ground.json's collision map (TERRAIN_SURFACE where it names
+none), on any other model from its SDF friction, else OBJECT_SURFACE. So a
+zone only paints the ground raster and shows a decal; nothing in a world
+carries a friction coefficient of its own.
 """
 import math
 import zlib
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from . import meshes, textures
 
-HEIGHTMAP_MU = 1.0  # what Gazebo gives heightmaps and meshes, whatever the SDF says
-FRICTION = "tiles"  # "tiles": friction zones are box tiles (above); "ground": zones only paint ground.png (design D1)
 DIG = "strong"  # dig-in preset worlds are written with: "strong" (the catalogue's, the user's choice) or "mild"
-TILE = 1.5  # [m] tile grid
-MAX_TILE = 24.0  # [m] largest merged tile side
-FLATNESS = 0.02  # [m] ground under any tile is planar within this (it bounds how far a tile is off the ground)
-TILE_THICKNESS = 0.1  # [m]
-TILE_CLEARANCE = 0.015  # [m] tile top above the highest ground under it
-TILE_OVERLAP = 0.015  # [m] tiles reach this far past their footprint, so wheels never meet a crack
-TILE_REACH = TILE / math.sqrt(2) + TILE_OVERLAP  # [m] how far tiles reach past a round zone's outline
 DECAL_OFFSET = 0.02  # [m] decal above the original surface
 DECAL_MARGIN = 0.2  # [m] the decal reaches this far past the zone outline
 DECAL_STEP = 0.5  # [m] decal mesh spacing (and a round zone's outline spacing)
@@ -262,7 +228,7 @@ class Clutter:
 class TerrainType:
     key: str
     title: str
-    mu: float  # friction-zone tile mu (FRICTION = "tiles")
+    mu: float  # plain Coulomb mu: the traction of a type that names none (calibration lanes); None otherwise
     rgb: tuple  # texture base colour
     pebbles: float = 0.001  # texture: pebbles per pixel
     variation: float = 0.25  # texture: mottling
@@ -274,15 +240,11 @@ class TerrainType:
 
     def __post_init__(self):
         if self.traction is None:
+            if self.mu is None:
+                raise ValueError(f"ground type {self.key}: a traction or a Coulomb mu")
             object.__setattr__(self, "traction", Traction.coulomb(self.mu))
         if self.appearance is None:
             object.__setattr__(self, "appearance", Appearance(Palette(tuple(self.rgb))))
-
-    @property
-    def max_slope_deg(self):
-        """Steepest slope a parked or climbing rover holds on a friction-zone
-        tile: tan(slope) = mu."""
-        return math.degrees(math.atan(self.mu))
 
     @property
     def seed(self):
@@ -386,93 +348,91 @@ COBBLES = Rocks(0.10)  # (A; Myton terraces: 23 % cobbles [2])
 
 
 # --- The catalogue ----------------------------------------------------------------------------
-# `mu`: today's friction-zone tiles (FRICTION = "tiles"); a type added since takes its net traction.
-# Zone types: below mu 1.0 friction zones (tiles, see above); slickrock is a decal.
+# Every type names its traction (design 5.6), so none has a plain Coulomb mu.
 GRAVEL = TerrainType(
-    "gravel", "Gravel", 0.6, (150, 128, 108), pebbles=0.06, variation=0.35,
+    "gravel", "Gravel", None, (150, 128, 108), pebbles=0.06, variation=0.35,
     notes="Loose pebbles on packed ground: rolls under the wheels.",
     traction=Traction(0.62, 0.52, 0.05, 0.0, 0.3, 0.005),  # crr: loose worn gravel 0.04-0.08 [6]; mu (A)
     appearance=Appearance(Palette.survey(MUNSELL["farb_a"], NAIP["green_river"]), "gravel", 0.3),  # hue (A)
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 SAND = TerrainType(
-    "sand", "Soft sand", 0.4, (218, 186, 140), pebbles=0.002, variation=0.3,
-    notes="Wind-blown or wash sand. Real sand also sinks and resists rolling; DART cannot, so low "
-          "traction stands in for both.",
+    "sand", "Soft sand", None, (218, 186, 140), pebbles=0.002, variation=0.3,
+    notes="Wind-blown or wash sand: the wheels sink 2 cm, it resists rolling and sideways scrub, and a "
+          "wheel spinning in it digs in.",
     # Bekker dry sand [5]: 0.85 x (0.41 + 0.20); bulldozing (A) between Rankine passive pressure (0.006) and
     # Bekker's bulldozing formula (0.11) at 2 cm sinkage [39][40], Sheppard's bulk density [2]
     traction=Traction(0.52, 0.52, 0.20, 0.06, 1.0, 0.02, *STRONG_DIG),
     appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["sheppard"]), "ripples", 0.8),
     relief=LOOSE_SAND_RELIEF, clutter=Clutter(shrubs=SAND_SHRUBS))
 SCREE = TerrainType(
-    "scree", "Loose scree", 0.35, (138, 112, 94), pebbles=0.05, variation=0.45,
-    notes="Loosely consolidated rock debris on steep slopes (URC 1.c.ii): slides from about 19 deg.",
+    "scree", "Loose scree", None, (138, 112, 94), pebbles=0.05, variation=0.45,
+    notes="Loosely consolidated rock debris on steep slopes (URC 1.c.ii): a rover climbs it to 19 deg and "
+          "slides parked above 25 deg.",
     traction=SCREE_TRACTION,
     appearance=Appearance(Palette.survey(MUNSELL["farb_c"], NAIP["steep"]), None, 0.4),  # hue (A)
     relief=SCREE_RELIEF, clutter=Clutter(rocks=COBBLES))
 CLAY = TerrainType(
-    "clay", "Dusty bentonite clay", 0.25, (158, 156, 164), pebbles=0.0005, variation=0.6,
-    notes="Morrison bentonite weathered to a 'popcorn' crust over powder: slippery, slides from "
-          "about 14 deg.",
+    "clay", "Dusty bentonite clay", None, (158, 156, 164), pebbles=0.0005, variation=0.6,
+    notes="Morrison bentonite weathered to a 'popcorn' crust over powder: climbs only 17 deg, sinks 2 cm "
+          "and digs in under a spinning wheel.",
     # a loose fine layer: no peak [34]; a 4.8 cm pulverised mantle on disturbed slopes (T, Mancos [8]);
     # mu, crr and sinkage (A); dry powder, not the moist clay of [5]
     traction=Traction(0.45, 0.45, 0.15, 0.06, 0.5, 0.02, *STRONG_DIG),
     appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn", 1.0),
     relief=FLAT_RELIEF)
 SLICKROCK = TerrainType(
-    "slickrock", "Slickrock sandstone slab", 1.0, (222, 184, 140), pebbles=0.0,
-    notes="Bare cemented sandstone: the best grip there is (the tyres' own mu 1.0 limits it); "
-          "smooth, so steep slabs are climbable. A decal only: the heightmap has mu 1.0 too.",
+    "slickrock", "Slickrock sandstone slab", None, (222, 184, 140), pebbles=0.0,
+    notes="Bare cemented sandstone: the best grip of any ground; smooth, so slabs up to 40 deg are "
+          "climbable.",
     traction=ROCK_TRACTION,
     appearance=Appearance(Palette.survey(MUNSELL["farb_a"], NAIP["farb"], WINDOWS["slickrock_ledges_H"]),
                           "slab_joints", 0.1),
     relief=SLICKROCK_RELIEF, clutter=Clutter(risers=RISERS))
-# Ground that looks different but grips like the heightmap (mu 1.0): terrain
-# layers and decals.
 REGOLITH = TerrainType(
-    "regolith", "Packed regolith", 1.0, (190, 150, 115),
-    notes="The default ground: the heightmap itself, mu 1.0 (Gazebo ignores mu on heightmaps).",
+    "regolith", "Packed regolith", None, (190, 150, 115),
+    notes="The default ground: packed sandy loam, climbable up to 23 deg.",
     traction=Traction(0.62, 0.52, 0.10, 0.0, 0.3, 0.005),  # Bekker sandy loam [5]: 0.85 x (0.51 + 0.10); mu_s (A)
     appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["sheppard_leebench"]), None, 0.4),
     relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL))  # relief: Leebench is packed sand sheet (A, Q14)
 PAVEMENT = TerrainType(
-    "pavement", "Desert pavement", 1.0, (166, 122, 93), pebbles=0.01,
+    "pavement", "Desert pavement", None, (166, 122, 93), pebbles=0.01,
     notes="Packed ground armoured with small stones, between the washes and the hills.",
     traction=PAVEMENT_TRACTION,  # a visual type: fan pavement's traction (design 5.6)
     appearance=Appearance(Palette.survey(MUNSELL["leebench"], NAIP["plain"]), "gravel", 0.3),
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 MUDSTONE = TerrainType(
-    "mudstone", "Maroon mudstone", 1.0, (138, 82, 70),
+    "mudstone", "Maroon mudstone", None, (138, 82, 70),
     notes="Morrison-like maroon and purple mudstone bands on the hills.",
     traction=BADLAND_TRACTION,  # a visual type: badland slope's traction (design 5.6)
     appearance=Appearance(Palette(NAIP["maroon"], (160, 138, 135), (195, 170, 161)), "popcorn", 0.7),
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 BENTONITE = TerrainType(
-    "bentonite", "Grey bentonitic mudstone", 1.0, (148, 148, 158),
+    "bentonite", "Grey bentonitic mudstone", None, (148, 148, 158),
     notes="Grey-blue bentonite bands on the hills; where it weathers to powder it is CLAY.",
     traction=BADLAND_TRACTION,  # a visual type: badland slope's traction (design 5.6)
     appearance=Appearance(Palette(NAIP["grey_shale"]), "popcorn", 0.7),
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 CAPROCK = TerrainType(
-    "caprock", "Sandstone caprock", 1.0, (212, 194, 156),
+    "caprock", "Sandstone caprock", None, (212, 194, 156),
     notes="Cemented sandstone capping the heights.",
     traction=ROCK_TRACTION,
     appearance=Appearance(Palette.survey(MUNSELL["farb_c"], NAIP["mesa_top"]), "slab_joints", 0.1),
     relief=SLICKROCK_RELIEF, clutter=Clutter(risers=RISERS))
 BIOCRUST = TerrainType(
-    "biocrust", "Biological soil crust", 1.0, (72, 60, 50), pebbles=0.004, variation=0.5,
+    "biocrust", "Biological soil crust", None, (72, 60, 50), pebbles=0.004, variation=0.5,
     notes="Dark knobbly cyanobacteria and lichen crust on stable flats.",
     traction=Traction(0.62, 0.52, 0.12, 0.0, 0.3, 0.005),  # as loam; pinnacles (<= 10 cm [11]) crush (A)
     appearance=Appearance(Palette((72, 60, 50)), None, 0.2),  # today's colour (A)
     relief=SAND_RELIEF)
 GYPSUM = TerrainType(
-    "gypsum", "Gypsum crust", 1.0, (216, 210, 196), pebbles=0.004, variation=0.5,
+    "gypsum", "Gypsum crust", None, (216, 210, 196), pebbles=0.004, variation=0.5,
     notes="White evaporite crust on a low mound.",
     traction=Traction(0.72, 0.60, 0.06, 0.0, 0.1, 0.0),  # (A)
     appearance=Appearance(Palette(NAIP["white"]), None, 0.6),
     relief=FLAT_RELIEF)
 # Types of the realism design (5.3, 5.6), for paint rules and the soil map.
 SAND_SHEET = TerrainType(
-    "sand_sheet", "Crusted sand sheet", 0.40, (237, 176, 132), pebbles=0.003, variation=0.3,
+    "sand_sheet", "Crusted sand sheet", None, (237, 176, 132), pebbles=0.003, variation=0.3,
     notes="Sheppard sand between the shrubs, under a thin crust: a little firmer than loose sand.",
     traction=Traction(0.60, 0.55, 0.15, 0.03, 0.6, 0.015, *STRONG_DIG),  # between sand and loam (A); a crust
     # gives a small peak (A, [34])
@@ -480,52 +440,52 @@ SAND_SHEET = TerrainType(
                           "ripples", 0.6),
     relief=SAND_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL, shrubs=SAND_SHRUBS))
 WASH_SAND = TerrainType(
-    "wash_sand", "Wash sand", 0.27, (255, 198, 154), pebbles=0.004, variation=0.3,
+    "wash_sand", "Wash sand", None, (255, 198, 154), pebbles=0.004, variation=0.3,
     notes="Loose sand on wash floors (Riverwash: 98 % sand in the top 15 cm): the loosest ground there is.",
     traction=Traction(0.52, 0.52, 0.25, 0.10, 1.2, 0.03, *STRONG_DIG),  # looser than sand (A); URC teams stuck
     # in sand [14][32]
     appearance=Appearance(Palette.survey(MUNSELL["sheppard"], NAIP["wash"]), "ripples", 0.6),  # hue (A)
     relief=WASH_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL, shrubs=WASH_SHRUBS))
 FAN_PAVEMENT = TerrainType(
-    "fan_pavement", "Fan gravel pavement", 0.59, (196, 172, 140), pebbles=0.08, variation=0.35,
+    "fan_pavement", "Fan gravel pavement", None, (196, 172, 140), pebbles=0.08, variation=0.35,
     notes="A gravel lag armouring an alluvial fan; designed patches only (design 5.3, Q14).",
     traction=PAVEMENT_TRACTION,
     appearance=Appearance(Palette.survey(MUNSELL["leebench"]), "gravel", 0.3),
     relief=FLAT_RELIEF, clutter=Clutter(rocks=COBBLES))
 CLAY_CRUST = TerrainType(
-    "clay_crust", "Shale pediment crust", 0.57, (223, 209, 184), pebbles=0.02, variation=0.3,
+    "clay_crust", "Shale pediment crust", None, (223, 209, 184), pebbles=0.02, variation=0.3,
     notes="Dry crust of gravelly silty clay on the grey shale pediment (Chipeta).",
     traction=Traction(0.78, 0.65, 0.08, 0.0, 0.1, 0.0),  # crr: medium-hard soil 0.04-0.08 [6]; dry crust mu (A)
     appearance=Appearance(Palette.survey(MUNSELL["chipeta"], NAIP["chipeta"], WINDOWS["shale_pediment_A"]),
                           "gravel", 0.5),  # its A horizon is 30 % gravel [2]
     relief=PEDIMENT_RELIEF, clutter=Clutter(rocks=SPARSE_GRAVEL))
 BADLAND_SLOPE = TerrainType(
-    "badland_slope", "Badland slope", 0.40, (225, 200, 192), pebbles=0.002, variation=0.45,
+    "badland_slope", "Badland slope", None, (225, 200, 192), pebbles=0.002, variation=0.45,
     notes="Bentonitic mudstone slopes under a popcorn crust: rounded knobs, rills and maroon, grey and white bands.",
     traction=BADLAND_TRACTION,
     appearance=Appearance(Palette.survey(NAIP["maroon"], NAIP["badland_rock"], WINDOWS["badland_banded_B"]),
                           "popcorn", 0.7),  # hue: maroon 10R-5YR (A)
     relief=BADLAND_RELIEF, clutter=Clutter(slabs=BADLAND_SLABS))
 SILT_FLAT = TerrainType(
-    "silt_flat", "Silt flat", 0.56, (225, 214, 187), pebbles=0.0005, variation=0.3,
+    "silt_flat", "Silt flat", None, (225, 214, 187), pebbles=0.0005, variation=0.3,
     notes="Silt and clay flats on badland floors (Billings, Hanksville): firm when dry.",
     traction=Traction(0.74, 0.62, 0.06, 0.0, 0.1, 0.0),  # crr 0.04-0.08 [6]; mu (A)
     appearance=Appearance(Palette.survey(MUNSELL["hanksville"], NAIP["billings"]), "cracked_silt", 0.9),
     relief=SILT_RELIEF)
 ROCK = TerrainType(
-    "rock", "Rock face", 1.0, (230, 197, 156), pebbles=0.0, variation=0.35,
+    "rock", "Rock face", None, (230, 197, 156), pebbles=0.0, variation=0.35,
     notes="Faces too steep for soil (over 30 deg), and every rock, slab, riser and step by the collision map.",
     traction=ROCK_TRACTION,
     appearance=Appearance(Palette.survey(MUNSELL["farb_c"], NAIP["cliff"]), "slab_joints", 0.1))
 BLOCK_FIELD = TerrainType(
-    "block_field", "Block field", 0.34, (214, 182, 141), pebbles=0.03, variation=0.45,
+    "block_field", "Block field", None, (214, 182, 141), pebbles=0.03, variation=0.45,
     notes="Talus of tabular sandstone blocks under the rims; the ground between them is loose debris.",
     traction=SCREE_TRACTION,  # the debris (A); the blocks are rock (collision map)
     appearance=Appearance(Palette.survey(MUNSELL["farb_c"], WINDOWS["boulder_field_I"][1],
                                          WINDOWS["boulder_field_I"]), None, 0.4),  # hue (A)
     relief=BLOCK_RELIEF, clutter=Clutter(slabs=BLOCK_SLABS, rocks=Rocks(0.05)))
 MANMADE = TerrainType(
-    "manmade", "Man-made surface", 1.0, (128, 128, 128), pebbles=0.0, variation=0.1,
+    "manmade", "Man-made surface", None, (128, 128, 128), pebbles=0.0, variation=0.1,
     notes="Objects whose SDF sets no friction: the landing pad, the C2 pad, the lander.",
     traction=Traction(0.80, 0.70, 0.015, 0.0, 0.05, 0.0),  # rubber on dry concrete 1.0 / 0.7 [23], lowered for
     # painted wood and plastic (A)
@@ -573,57 +533,24 @@ def calibration_surface(mu):
 
 
 @dataclass
-class Tile:
-    """A box whose top face lies on the plane z = top[2] + g . ((x, y) - top[:2])."""
-    footprint: np.ndarray  # (4, 2) layout corners, counter-clockwise
-    top: np.ndarray  # layout point of the top face above the footprint centre
-    gradient: np.ndarray  # (dz/dx, dz/dy) of the top face
-    axes: np.ndarray  # 3x3, columns: the box's x, y and z (the top's normal) in the layout frame
-    size: tuple  # box size [m]
-
-    @property
-    def center(self):
-        return self.top - TILE_THICKNESS / 2 * self.axes[:, 2]
-
-
-@dataclass
 class Zone:
-    """A friction zone: an outline, its terrain type and its tiles. Tiles
-    are rectangles of a grid in the zone's frame (x, y, yaw) with cell edges
-    xs, ys: a cell is used if its centre lies inside the outline, so the
-    tiles follow an irregular outline to within half a cell."""
+    """A zone of ground type `kind`: an outline in its frame (x, y, yaw). It
+    paints the ground raster (landscape.paint) and shows a decal (decal: the
+    decal mesh's shape parameters)."""
     key: str
     kind: TerrainType
     outline: np.ndarray  # (n, 2) layout polygon, counter-clockwise
     frame: tuple  # (x, y, yaw)
-    xs: np.ndarray
-    ys: np.ndarray
-    decal: dict  # shape parameters for the decal mesh
-    tiles: list = field(default_factory=list)
-
-    @property
-    def mu(self):
-        """The type's: TYPES alone says what a ground grips like."""
-        return self.kind.mu
+    decal: dict
 
     @property
     def area(self):
         return _polygon_area(self.outline)
 
-    @property
-    def tiled_area(self):
-        return sum(_polygon_area(t.footprint) for t in self.tiles)
-
     def to_layout(self, u, v):
         x0, y0, yaw = self.frame
         c, s = math.cos(yaw), math.sin(yaw)
         return x0 + c * np.asarray(u) - s * np.asarray(v), y0 + s * np.asarray(u) + c * np.asarray(v)
-
-    def to_frame(self, x, y):
-        x0, y0, yaw = self.frame
-        c, s = math.cos(yaw), math.sin(yaw)
-        dx, dy = np.asarray(x) - x0, np.asarray(y) - y0
-        return c * dx + s * dy, -s * dx + c * dy
 
 
 def blob(key, kind, x, y, radius, seed, irregularity=0.3):
@@ -631,36 +558,20 @@ def blob(key, kind, x, y, radius, seed, irregularity=0.3):
     step = min(DECAL_STEP, radius / 8)
     theta, edge = meshes.blob_outline(radius, seed, irregularity, step)
     outline = np.stack([x + edge * np.cos(theta), y + edge * np.sin(theta)], axis=1)
-    n = int(math.ceil(radius / TILE))
-    edges = np.arange(-n, n + 1) * TILE
-    return Zone(key, kind, outline, (x, y, 0.0), edges, edges.copy(),
-                dict(shape="blob", radius=radius, seed=seed, irregularity=irregularity, step=step))
+    return Zone(key, kind, outline, (x, y, 0.0), dict(shape="blob", radius=radius, seed=seed,
+                                                       irregularity=irregularity, step=step))
 
 
 def rect(key, kind, x, y, length, width, yaw=0.0, breaks=()):
     """A rectangular zone, `length` along yaw and `width` across, centred on
-    (x, y). Tile edges fall on `breaks` (distances from the start): put them
-    on the terrain's kinks, so tiles stay planar."""
-    xs = _edges([0.0, length, *breaks]) - length / 2
-    ys = _edges([0.0, width]) - width / 2
-    zone = Zone(key, kind, None, (x, y, yaw), xs, ys,
-                dict(shape="rect", length=length, width=width, yaw=yaw, breaks=tuple(breaks)))
+    (x, y). `breaks` (distances from the start): kinks of the ground under
+    it, where the draped decal mesh gets an edge."""
+    zone = Zone(key, kind, None, (x, y, yaw), dict(shape="rect", length=length, width=width, yaw=yaw,
+                                                   breaks=tuple(breaks)))
     u, v = np.array([-1, 1, 1, -1]) * length / 2, np.array([-1, -1, 1, 1]) * width / 2
     zone.outline = np.stack(zone.to_layout(u, v), axis=1)
     return zone
 
-
-def _edges(cuts):
-    """Sorted cuts, each interval split evenly into pieces of at most TILE."""
-    cuts = np.unique(np.round(cuts, 6))
-    out = [cuts[0]]
-    for a, b in zip(cuts[:-1], cuts[1:]):
-        n = int(math.ceil((b - a) / TILE - 1e-9))
-        out += list(a + (b - a) * np.arange(1, n + 1) / n)
-    return np.array(out)
-
-
-# --- Tiles ---------------------------------------------------------------------------
 
 def inside(polygon, x, y):
     """Even-odd point-in-polygon test, vectorised over x, y."""
@@ -677,126 +588,3 @@ def inside(polygon, x, y):
 def _polygon_area(polygon):
     x, y = np.asarray(polygon).T
     return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
-
-
-def _cells_used(zone):
-    """used[i, j]: the centre of cell (row i along ys, column j along xs) lies in the outline."""
-    U, V = np.meshgrid((zone.xs[:-1] + zone.xs[1:]) / 2, (zone.ys[:-1] + zone.ys[1:]) / 2)
-    return inside(zone.outline, *zone.to_layout(U, V))
-
-
-def _ground_samples(hf, zone, u0, u1, v0, v1):
-    """Layout (x, y, z) of the original surface under a frame rectangle: a grid
-    of half the heightfield spacing plus every heightfield sample inside (the
-    surface is bilinear between samples, so its extremes are among them)."""
-    step = min(hf.res, TILE) / 2
-    nu, nv = (max(2, int(math.ceil((b - a) / step)) + 1) for a, b in ((u0, u1), (v0, v1)))
-    U, V = (a.ravel() for a in np.meshgrid(np.linspace(u0, u1, nu), np.linspace(v0, v1, nv)))
-    X, Y = zone.to_layout(U, V)
-    cx, cy = zone.to_layout([u0, u1, u1, u0], [v0, v0, v1, v1])
-    col = (np.array([cx.min(), cx.max()]) - hf.center[0] + hf.size / 2) / hf.res
-    row = (hf.size / 2 - np.array([cy.max(), cy.min()]) + hf.center[1]) / hf.res
-    cols = np.arange(max(int(math.ceil(col[0])), 0), min(int(math.floor(col[1])), hf.n - 1) + 1)
-    rows = np.arange(max(int(math.ceil(row[0])), 0), min(int(math.floor(row[1])), hf.n - 1) + 1)
-    C, R = np.meshgrid(cols, rows)
-    GX = hf.center[0] - hf.size / 2 + C.ravel() * hf.res
-    GY = hf.center[1] + hf.size / 2 - R.ravel() * hf.res
-    gu, gv = zone.to_frame(GX, GY)
-    keep = (gu >= u0) & (gu <= u1) & (gv >= v0) & (gv <= v1)
-    X, Y = np.concatenate([X, GX[keep]]), np.concatenate([Y, GY[keep]])
-    return X, Y, hf.height(X, Y)
-
-
-def _plane(hf, zone, u0, u1, v0, v1):
-    """Least-squares plane of the ground under a frame rectangle: (centre (x, y),
-    (gx, gy, c0), residuals)."""
-    X, Y, Z = _ground_samples(hf, zone, u0, u1, v0, v1)
-    xc, yc = (float(a) for a in zone.to_layout((u0 + u1) / 2, (v0 + v1) / 2))
-    A = np.stack([X - xc, Y - yc, np.ones_like(X)], axis=1)
-    coef, *_ = np.linalg.lstsq(A, Z, rcond=None)
-    return (xc, yc), coef, Z - A @ coef
-
-
-def fit_tiles(hf, zone):
-    """Cover the zone's used cells with as few planar tiles as possible:
-    greedy maximal rectangles, grown along x then y while the ground under
-    them stays within FLATNESS of a plane and no side exceeds MAX_TILE.
-    Raises ValueError where the ground under a single cell is not planar
-    within FLATNESS: its tile would float above the ground in places and
-    leave kerbs at its neighbours."""
-    ok = _cells_used(zone)
-    used = np.zeros_like(ok)
-    xs, ys = zone.xs, zone.ys
-
-    def bumpiness(i0, i1, j0, j1):
-        residual = _plane(hf, zone, xs[j0], xs[j1], ys[i0], ys[i1])[2]
-        return residual.max() - residual.min()
-
-    def flat(i0, i1, j0, j1):
-        if xs[j1] - xs[j0] > MAX_TILE + 1e-9 or ys[i1] - ys[i0] > MAX_TILE + 1e-9:
-            return False
-        if not ok[i0:i1, j0:j1].all() or used[i0:i1, j0:j1].any():
-            return False
-        return bumpiness(i0, i1, j0, j1) <= FLATNESS
-
-    tiles = []
-    for i in range(ok.shape[0]):
-        for j in range(ok.shape[1]):
-            if not ok[i, j] or used[i, j]:
-                continue
-            if bumpiness(i, i + 1, j, j + 1) > FLATNESS:
-                x, y = (float(a) for a in zone.to_layout((xs[j] + xs[j + 1]) / 2, (ys[i] + ys[i + 1]) / 2))
-                raise ValueError(f"zone {zone.key}: the ground at ({x:.1f}, {y:.1f}) is not planar within "
-                                 f"{FLATNESS} m under one {TILE} m tile; level it first (features.Patch)")
-            j1 = j + 1
-            while j1 < ok.shape[1] and flat(i, i + 1, j, j1 + 1):
-                j1 += 1
-            i1 = i + 1
-            while i1 < ok.shape[0] and flat(i, i1 + 1, j, j1):
-                i1 += 1
-            used[i:i1, j:j1] = True
-            tiles.append(_tile(hf, zone, xs[j], xs[j1], ys[i], ys[i1]))
-    zone.tiles = tiles
-    return tiles
-
-
-def _tile(hf, zone, u0, u1, v0, v1):
-    (xc, yc), (gx, gy, c0), residual = _plane(hf, zone, u0, u1, v0, v1)
-    top = np.array([xc, yc, c0 + TILE_CLEARANCE + residual.max()])
-    n = np.array([-gx, -gy, 1.0]) / math.sqrt(gx * gx + gy * gy + 1)
-    yaw = zone.frame[2]
-    u = np.array([math.cos(yaw), math.sin(yaw), 0.0])
-    bx = u - (u @ n) * n
-    bx /= np.linalg.norm(bx)
-    axes = np.stack([bx, np.cross(n, bx), n], axis=1)
-    fx, fy = zone.to_layout([u0, u1, u1, u0], [v0, v0, v1, v1])
-    footprint = np.stack([fx, fy], axis=1)
-    lifted = np.column_stack([footprint, top[2] + gx * (fx - xc) + gy * (fy - yc)]) - top
-    half = np.abs(lifted @ axes[:, :2]).max(axis=0)  # the lifted footprint lies in the top face
-    size = (2 * half[0] + 2 * TILE_OVERLAP, 2 * half[1] + 2 * TILE_OVERLAP, TILE_THICKNESS)
-    return Tile(footprint, top, np.array([gx, gy]), axes, size)
-
-
-def tops(tiles, x, y):
-    """Height of the highest tile top above each layout point (x, y), NaN
-    where there is none (vectorised over the points)."""
-    x, y = np.broadcast_arrays(np.asarray(x, float), np.asarray(y, float))
-    if not tiles:
-        return np.full(x.shape, np.nan)
-    T = np.array([t.top for t in tiles])
-    G = np.array([t.gradient for t in tiles])
-    A = np.array([t.axes for t in tiles])
-    H = np.array([t.size[:2] for t in tiles]) / 2
-    px, py = x.reshape(-1, 1), y.reshape(-1, 1)  # points x tiles
-    z = T[:, 2] + G[:, 0] * (px - T[:, 0]) + G[:, 1] * (py - T[:, 1])
-    d = np.stack([px - T[:, 0], py - T[:, 1], z - T[:, 2]], axis=-1)
-    local = np.einsum("nki,kij->nkj", d, A[:, :, :2])
-    hit = np.all(np.abs(local) <= H + 1e-9, axis=-1)
-    best = np.where(hit, z, -np.inf).max(axis=1).reshape(x.shape)
-    return np.where(np.isfinite(best), best, np.nan)
-
-
-def top_height(tiles, x, y):
-    """Height of the highest tile top above layout (x, y), or None."""
-    z = float(tops(tiles, x, y))
-    return None if math.isnan(z) else z

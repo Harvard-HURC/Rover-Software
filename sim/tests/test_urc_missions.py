@@ -12,7 +12,7 @@ import numpy as np
 from worldfiles import WORLDS, gz_check, model_root, rock_vertices, sheet, terrain as world_terrain, vec
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import dem, features, lander, props, routes, rules, sdf, terrain, terrains  # noqa: E402
+from urc import dem, lander, props, routes, rules, sdf, terrain, terrains  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.missions import MISSIONS, autonomy, delivery  # noqa: E402
 
@@ -51,11 +51,19 @@ def mass(model):
     return sum(float(m.text) for m in model.iter("mass"))
 
 
+def climb_limits(world, x, y):
+    """The steepest slope [deg] the rover climbs at world points (x, y): the
+    climb angle of the ground there (the world's ground map, ground.json:
+    atan(mu_k - crr), design spec 5.6)."""
+    ground = sheets.ground(sheet(world), sheets.path(world))
+    climb = {t["key"]: math.degrees(math.atan(max(t["mu_k"] - t["crr"], 0.0))) for t in ground.info["types"]}
+    return np.vectorize(lambda px, py: climb[ground(px, py)])(x, y)
+
+
 class Autonomy(unittest.TestCase):
     """The Autonomy world on the real terrain (USGS 3DEP DEM of the square
     mile). The rules are checked on the terrain the world ships (the sheet's
-    heightmap, world coordinates): the DEM after the features levelled their
-    zones."""
+    heightmap, world coordinates): the DEM as it is."""
 
     ROCK_STOP = 0.25  # [m] the rover crosses 0.2 m rocks, 0.3 m ones stop it (proving ground)
     ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width / 2  # [m] over the wheels
@@ -93,9 +101,9 @@ class Autonomy(unittest.TestCase):
         self.assertEqual([self.xy(p) for p in (easy["points"][0], easy["points"][-1])], [start, post1])
 
     def test_only_the_easy_route_climbs_the_butte(self):
-        """1.e.xv, by the rover's measured limits: it climbs bare ground up to
-        atan(HEIGHTMAP_MU) = 45 deg, so the butte's 26-44 deg faces do not stop
-        it, and a zone up to atan(mu); a rock standing more than ROCK_STOP
+        """1.e.xv, by the rover's limits: it climbs ground up to that ground's
+        climb angle (packed regolith, the bare ground here: 23 deg, so the
+        butte's 26-44 deg faces stop it), a rock standing more than ROCK_STOP
         above the ground stops it, and it passes only a gap wider than
         itself. Over the easy route Post 1 is reachable from the start; with
         the easy route's climb onto the butte closed, from neither the start
@@ -124,11 +132,7 @@ class Autonomy(unittest.TestCase):
         reach = int(round(self.ROVER_HALF_WIDTH / res))
         blocked = cv2.dilate(blocked, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * reach + 1,) * 2))
         X, Y = np.meshgrid(np.arange(x0, x1, 1.0), np.arange(y1, y0, -1.0))  # slopes on the heightmap's 1 m grid
-        limit = np.full(X.shape, math.degrees(math.atan(terrains.HEIGHTMAP_MU)))
-        for zone in self.sheet["terrain_zones"].values():
-            inside = terrains.inside(np.array(zone["outline"]), X, Y)
-            limit[inside] = np.minimum(limit[inside], math.degrees(math.atan(zone["mu"])))
-        steep = (self.terrain.slope_deg(X, Y) > limit).astype(np.uint8)
+        steep = (self.terrain.slope_deg(X, Y) > climb_limits("urc_autonomy", X, Y)).astype(np.uint8)
         blocked |= cv2.resize(steep, shape[::-1], interpolation=cv2.INTER_NEAREST)
 
         def label(climb_closed):
@@ -191,7 +195,7 @@ class Autonomy(unittest.TestCase):
         for key, p in self.points.items():
             self.assertAlmostEqual(d.height(p["lat"], p["lon"]) + dem.NAVD88_TO_WGS84, p["alt"], delta=0.1, msg=key)
 
-    # --- Ground: friction zones and rocks (urc/terrains.py, urc/features.py) ---
+    # --- Ground: zones and rocks (urc/terrains.py, urc/features.py) ---
 
     @staticmethod
     def distance(path, x, y):
@@ -201,27 +205,37 @@ class Autonomy(unittest.TestCase):
     def test_ground_follows_the_terrain(self):
         """Each ground type lies where the DEM puts it: sand on the wash floors,
         scree on a face steeper than it holds, gravel and clay on gentle
-        ground, slickrock on the caprock."""
+        ground, slickrock on the caprock and on the rib where the easy route
+        climbs onto the butte, steeper than the bare ground climbs."""
         zones = self.sheet["terrain_zones"]
         washes = [[self.xy(p) for p in wash] for wash in self.sheet["judges_only"]["washes"].values()]
+        easy = [self.xy(p) for p in self.sheet["judges_only"]["easy_route"]["points"]]
         caprock = next(layer.start for layer in autonomy.LAYERS if layer.name == "caprock")
         c2_z = self.sheet["c2"]["z"]
         self.assertEqual({z["type"] for z in zones.values()}, {"sand", "scree", "gravel", "clay", "slickrock"})
+        rib = [key for key in zones if key.startswith("easy_route_rib_")]
+        self.assertTrue(rib)
         for key, zone in zones.items():
             c = zone["center"]
             slope = self.terrain.slope_deg(c["x"], c["y"])
             if zone["type"] == "sand":
                 self.assertLess(min(self.distance(w, c["x"], c["y"]) for w in washes), 1.0, key)
             if zone["type"] == "scree":
-                self.assertGreater(slope, terrains.SCREE.max_slope_deg + 5.0, key)
+                self.assertGreater(slope, terrains.SCREE.traction.hold_deg + 5.0, key)
+            elif key in rib:
+                self.assertLess(self.distance(easy, c["x"], c["y"]), 0.5, key)
+                self.assertGreater(slope, autonomy.EASY_ROUTE_RIB[2], key)
             elif zone["type"] == "slickrock":
                 self.assertGreater(c["z"] - c2_z, caprock, key)
             else:
                 self.assertLess(slope, 10.0, key)
+        bare = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        steep = np.array([p for p in terrain.resample(easy, 1.0) if self.terrain.slope_deg(*p) > bare])
+        self.assertTrue(len(steep))
+        self.assertTrue(np.all(climb_limits("urc_autonomy", *steep.T) > bare))  # all on the rib
 
-    def test_terrain_is_the_dem_outside_the_zones(self):
-        """The world's terrain is the USGS DEM, except where a zone levelled it
-        to its plane (by less than a metre)."""
+    def test_terrain_is_the_dem(self):
+        """The world's terrain is the USGS DEM: its zones only paint the ground."""
         _, raw = autonomy.make_site()  # the DEM in the layout frame: metres from C2
         world = self.terrain
         c2 = self.sheet["c2"]
@@ -230,29 +244,24 @@ class Autonomy(unittest.TestCase):
         X, Y = (a[::4, ::4] for a in world.grid())
         lx, ly = X + cx, Y + cy
         diff = np.abs(world.height(X, Y) - offset - raw.height(lx, ly))
-        levelled = np.zeros(X.shape, bool)
-        patches = [p for f in autonomy.FEATURES for p in (f.patches if isinstance(f, features.Wash) else [f])]
-        for f in patches:
-            if isinstance(f, features.Patch) and f.level:
-                levelled |= np.hypot(lx - f.x, ly - f.y) < f.radius + terrains.TILE_REACH + f.falloff + 1.0
-        self.assertTrue(levelled.any())
-        self.assertLess(diff[~levelled].max(), 0.01)  # 16-bit heightmap: 1.3 mm steps
-        self.assertLess(diff[levelled].max(), 1.0)
+        self.assertLess(diff.max(), 0.01)  # 16-bit heightmap: 1.3 mm steps
 
     def test_easy_route_and_astronaut_walk_stay_clear(self):
-        """No friction zone below mu 1 and no colliding rock within 4 m of the
-        judges' easy route or the astronaut's walk; no rock within 1 m of a
-        target, an object or the rover's start."""
+        """No zone of ground that climbs worse than the bare ground and no
+        colliding rock within 4 m of the judges' easy route or the
+        astronaut's walk; no rock within 1 m of a target, an object or the
+        rover's start."""
         easy = [self.xy(p) for p in self.sheet["judges_only"]["easy_route"]["points"]]
         walk = [self.xy(p) for p in self.sheet["astronaut"]["follow_path"]]
         walk.append(self.xy(self.sheet["astronaut"]["stay_to"]))
-        reach = terrains.TILE / math.sqrt(2)  # tiles cover cells whose centre is inside: they reach this far out
+        bare = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        types = self.sheet["terrain_types"]
         rocks = rock_vertices("urc_autonomy")[:, :2]
         for path in (easy, walk):
             for key, zone in self.sheet["terrain_zones"].items():
-                if zone["mu"] < terrains.HEIGHTMAP_MU:
+                if types[zone["type"]]["climb_deg"] < bare:
                     outline = np.array(zone["outline"])
-                    self.assertGreater(self.distance(path, *outline.T).min() - reach, 4.0, key)
+                    self.assertGreater(self.distance(path, *outline.T).min(), 4.0, key)
             self.assertGreater(self.distance(path, *rocks.T).min(), 4.0)
         places = {**self.points, **self.sheet["objects"], "rover_start": self.sheet["rover_start"]}
         for key, p in places.items():
@@ -260,12 +269,12 @@ class Autonomy(unittest.TestCase):
 
     def test_post2_stays_reachable(self):
         """Over the plain from the start, across the wash sand: a route no
-        steeper than any zone on it holds."""
+        steeper than any ground on it climbs."""
         start, post2 = (self.xy(self.points[k]) for k in ("route_start", "post2"))
         found = routes.easy_route(self.terrain, start, post2, 8.0)
         self.assertIsNotNone(found)
-        lowest_mu = min(zone["mu"] for zone in self.sheet["terrain_zones"].values())
-        self.assertLess(found[1], math.degrees(math.atan(lowest_mu)))
+        path = terrain.resample(found[0], 1.0)
+        self.assertLess(found[1], climb_limits("urc_autonomy", *path.T).min())
 
     def test_rocks_work_the_rocker(self):
         rocks = self.sheet["rocks"]
@@ -342,6 +351,26 @@ class Delivery(unittest.TestCase):
         far = max(math.hypot(o["x"] - self.sheet["c2"]["x"], o["y"] - self.sheet["c2"]["y"])
                   for o in self.sheet["objects"].values())
         self.assertGreater(far, 600)
+
+    def test_wash_can_be_driven_into_and_out_of(self):
+        """D6's spectrometer lies in the wash and the way to the ridge pass
+        crosses it: across the wash its banks stay below the 23 deg the
+        bare ground climbs (features.WASH_BANK plus the terrain's own slope),
+        except where it cuts through the ridge."""
+        hf = world_terrain("urc_delivery")
+        wash = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["wash"]]
+        ridge = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["ridge"]]
+        points = terrain.resample(wash, 20.0)
+        climb = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        crossings = 0
+        for a, b, c in zip(points, points[1:], points[2:]):
+            if terrain.path_distance(ridge, *b)[0] < 76.0:  # the ridge reaches 46 m out, the profile 30 m
+                continue
+            n = np.array([a[1] - c[1], c[0] - a[0]]) / math.dist(a, c)
+            profile = [hf.height(*(b + u * n)) for u in np.arange(-30.0, 30.01, 0.5)]
+            self.assertLess(np.degrees(np.arctan(np.abs(np.diff(profile)) / 0.5)).max(), climb, tuple(b))
+            crossings += 1
+        self.assertGreater(crossings, 20)
 
     def test_terrain_gets_harder(self):
         hf = delivery.make_terrain()

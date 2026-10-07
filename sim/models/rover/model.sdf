@@ -271,13 +271,19 @@
         <camera>
           <horizontal_fov>1.5</horizontal_fov>
           <image>
-            <width>640</width>
-            <height>480</height>
+            <width>1280</width>
+            <height>720</height>
           </image>
           <clip>
             <near>0.1</near>
-            <far>40</far>
+            <far>80000</far>
           </clip>
+          <depth_camera>
+            <clip>
+              <near>0.1</near>
+              <far>40</far>
+            </clip>
+          </depth_camera>
         </camera>
       </sensor>
     </link>
@@ -385,6 +391,21 @@
           <diffuse>0.35 0.35 0.38 1</diffuse>
         </material>
       </visual>
+      <particle_emitter name="dust_rl" type="box">
+        <pose>-0.6625 0 -0.225 0 -0.6 3.14159265</pose>
+        <emitting>false</emitting>
+        <size>0.25 0.25 0.25</size>
+        <particle_size>0.2 0.2 0.2</particle_size>
+        <lifetime>1.6</lifetime>
+        <rate>0</rate>
+        <min_velocity>0.15</min_velocity>
+        <max_velocity>0.5</max_velocity>
+        <scale_rate>1</scale_rate>
+        <color_start>0.8 0.7 0.56 0.28</color_start>
+        <color_end>0.8 0.7 0.56 0</color_end>
+        <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
+        <particle_scatter_ratio>0</particle_scatter_ratio>
+      </particle_emitter>
     </link>
     <joint name="rocker_left_joint" type="revolute">
       <parent>base_link</parent>
@@ -425,9 +446,8 @@
         <surface>
           <friction>
             <ode>
-              <mu>0.5</mu>
+              <mu>1</mu>
               <mu2>1</mu2>
-              <fdir1>0 0 1</fdir1>
             </ode>
           </friction>
         </surface>
@@ -454,8 +474,8 @@
         <limit>
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
-          <effort>30</effort>
-          <velocity>10</velocity>
+          <effort>1000</effort>
+          <velocity>16</velocity>
         </limit>
       </axis>
     </joint>
@@ -484,9 +504,8 @@
         <surface>
           <friction>
             <ode>
-              <mu>0.5</mu>
+              <mu>1</mu>
               <mu2>1</mu2>
-              <fdir1>0 0 1</fdir1>
             </ode>
           </friction>
         </surface>
@@ -513,8 +532,8 @@
         <limit>
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
-          <effort>30</effort>
-          <velocity>10</velocity>
+          <effort>1000</effort>
+          <velocity>16</velocity>
         </limit>
       </axis>
     </joint>
@@ -572,6 +591,21 @@
           <diffuse>0.35 0.35 0.38 1</diffuse>
         </material>
       </visual>
+      <particle_emitter name="dust_rr" type="box">
+        <pose>-0.6625 0 -0.225 0 -0.6 3.14159265</pose>
+        <emitting>false</emitting>
+        <size>0.25 0.25 0.25</size>
+        <particle_size>0.2 0.2 0.2</particle_size>
+        <lifetime>1.6</lifetime>
+        <rate>0</rate>
+        <min_velocity>0.15</min_velocity>
+        <max_velocity>0.5</max_velocity>
+        <scale_rate>1</scale_rate>
+        <color_start>0.8 0.7 0.56 0.28</color_start>
+        <color_end>0.8 0.7 0.56 0</color_end>
+        <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
+        <particle_scatter_ratio>0</particle_scatter_ratio>
+      </particle_emitter>
     </link>
     <joint name="rocker_right_joint" type="revolute">
       <parent>base_link</parent>
@@ -612,9 +646,8 @@
         <surface>
           <friction>
             <ode>
-              <mu>0.5</mu>
+              <mu>1</mu>
               <mu2>1</mu2>
-              <fdir1>0 0 1</fdir1>
             </ode>
           </friction>
         </surface>
@@ -641,8 +674,8 @@
         <limit>
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
-          <effort>30</effort>
-          <velocity>10</velocity>
+          <effort>1000</effort>
+          <velocity>16</velocity>
         </limit>
       </axis>
     </joint>
@@ -671,9 +704,8 @@
         <surface>
           <friction>
             <ode>
-              <mu>0.5</mu>
+              <mu>1</mu>
               <mu2>1</mu2>
-              <fdir1>0 0 1</fdir1>
             </ode>
           </friction>
         </surface>
@@ -700,8 +732,8 @@
         <limit>
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
-          <effort>30</effort>
-          <velocity>10</velocity>
+          <effort>1000</effort>
+          <velocity>16</velocity>
         </limit>
       </axis>
     </joint>
@@ -711,19 +743,121 @@
       <stiffness>5000</stiffness>
       <damping>100</damping>
     </plugin>
-    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
-      <left_joint>wheel_fl_joint</left_joint>
-      <left_joint>wheel_rl_joint</left_joint>
-      <right_joint>wheel_fr_joint</right_joint>
-      <right_joint>wheel_rr_joint</right_joint>
-      <wheel_separation>0.8</wheel_separation>
-      <wheel_radius>0.15</wheel_radius>
+    <plugin filename="RoverDrivetrain" name="rover_sim::RoverDrivetrain">
       <topic>/model/rover/cmd_vel</topic>
+      <cmd_timeout>0.5</cmd_timeout>
+      <cmd_timeout_clock>wall</cmd_timeout_clock>
       <odom_topic>/model/rover/odometry</odom_topic>
       <tf_topic>/model/rover/tf</tf_topic>
       <frame_id>odom</frame_id>
       <child_frame_id>base_link</child_frame_id>
       <odom_publish_frequency>50</odom_publish_frequency>
+      <state_topic>/model/rover/drivetrain</state_topic>
+      <state_rate>50</state_rate>
+      <dust_rate>10</dust_rate>
+      <track>0.8</track>
+      <radius>0.15</radius>
+      <track_multiplier>1</track_multiplier>
+      <wheel>
+        <name>fl</name>
+        <joint>wheel_fl_joint</joint>
+        <link>wheel_fl</link>
+        <side>left</side>
+      </wheel>
+      <wheel>
+        <name>rl</name>
+        <joint>wheel_rl_joint</joint>
+        <link>wheel_rl</link>
+        <side>left</side>
+      </wheel>
+      <wheel>
+        <name>fr</name>
+        <joint>wheel_fr_joint</joint>
+        <link>wheel_fr</link>
+        <side>right</side>
+      </wheel>
+      <wheel>
+        <name>rr</name>
+        <joint>wheel_rr_joint</joint>
+        <link>wheel_rr</link>
+        <side>right</side>
+      </wheel>
+      <dust>
+        <wheel>wheel_rl</wheel>
+        <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
+      </dust>
+      <dust>
+        <wheel>wheel_rr</wheel>
+        <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
+      </dust>
+      <motor>
+        <voltage>24</voltage>
+        <resistance>0.46</resistance>
+        <kt>0.0445</kt>
+        <ke>0.0445</ke>
+        <gear>50</gear>
+        <efficiency>0.8</efficiency>
+        <rotor_inertia>1.2e-05</rotor_inertia>
+        <free_current>1</free_current>
+        <output_friction>0.05</output_friction>
+        <current_limit>20</current_limit>
+      </motor>
+      <driveline>
+        <stiffness>1500</stiffness>
+        <damping>2</damping>
+        <backlash>0.026</backlash>
+      </driveline>
+      <controller>
+        <kp>4</kp>
+        <ki>40</ki>
+        <speed_filter>0.005</speed_filter>
+        <accel>8</accel>
+        <max_speed>10</max_speed>
+        <substeps>4</substeps>
+      </controller>
+      <contact>
+        <v_stribeck>0.03</v_stribeck>
+        <v_align>0.005</v_align>
+        <perp_ratio>0</perp_ratio>
+        <stick_perp_ratio>0.3</stick_perp_ratio>
+        <mu_noise>0.2</mu_noise>
+        <mu_noise_length>0.3</mu_noise_length>
+        <rr_w0>0.05</rr_w0>
+        <dig>true</dig>
+        <dig_heal_length>0.3</dig_heal_length>
+        <default_surface>regolith</default_surface>
+        <object_surface>manmade</object_surface>
+        <surface>
+          <key>regolith</key>
+          <mu_s>0.62</mu_s>
+          <mu_k>0.52</mu_k>
+          <crr>0.1</crr>
+          <bulldoze>0</bulldoze>
+          <slip>0.3</slip>
+          <sinkage_m>0.005</sinkage_m>
+          <dig_rate>0</dig_rate>
+          <dig_max>1</dig_max>
+          <dust>0.4</dust>
+        </surface>
+        <surface>
+          <key>manmade</key>
+          <mu_s>0.8</mu_s>
+          <mu_k>0.7</mu_k>
+          <crr>0.015</crr>
+          <bulldoze>0</bulldoze>
+          <slip>0.05</slip>
+          <sinkage_m>0</sinkage_m>
+          <dig_rate>0</dig_rate>
+          <dig_max>1</dig_max>
+          <dust>0</dust>
+        </surface>
+      </contact>
+      <dust_rule>
+        <speed_gain>8</speed_gain>
+        <slip_gain>25</slip_gain>
+        <max_rate>40</max_rate>
+        <min_speed>0.05</min_speed>
+      </dust_rule>
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/model/rover/joint_states</topic>

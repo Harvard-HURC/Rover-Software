@@ -3,6 +3,7 @@
 import dataclasses
 import unittest
 import xml.etree.ElementTree as ET
+from unittest import mock
 
 from worldfiles import MODELS, gz_check, temp_sdf, vec
 
@@ -10,6 +11,7 @@ import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 from urc import sdf, terrains  # noqa: E402
 
 P = gen_model.Params()
+DIFFDRIVE = dataclasses.replace(P, drive=gen_model.DriveParams(mode="diffdrive"))
 
 
 class Inertia(unittest.TestCase):
@@ -93,14 +95,6 @@ class Structure(unittest.TestCase):
         lower, upper = P.camera_tilt_limits
         self.assertTrue(lower < P.camera_pitch < upper)
 
-    def test_drive_is_tank(self):
-        drive = self.plugin("gz::sim::systems::DiffDrive")
-        self.assertEqual([e.text for e in drive.findall("left_joint")], ["wheel_fl_joint", "wheel_rl_joint"])
-        self.assertEqual([e.text for e in drive.findall("right_joint")], ["wheel_fr_joint", "wheel_rr_joint"])
-        self.assertAlmostEqual(float(drive.findtext("wheel_separation")), 2 * P.pivot_y)
-        self.assertAlmostEqual(float(drive.findtext("wheel_radius")), P.wheel_radius)
-        self.assertEqual(drive.findtext("topic"), gen_model.CMD_VEL_TOPIC)
-
     def test_differential_couples_the_rockers(self):
         diff = self.plugin("rover_sim::RockerDifferential")
         self.assertEqual(diff.get("filename"), "RockerDifferential")
@@ -109,12 +103,28 @@ class Structure(unittest.TestCase):
         self.assertAlmostEqual(float(diff.findtext("stiffness")), P.diff_stiffness)
         self.assertIsNone(self.model.find(".//mimic"))
 
-    def test_tire_friction_axes(self):
-        for ode in self.model.iter("ode"):
-            self.assertEqual(vec(ode.findtext("fdir1")), [0, 0, 1])  # the axle
-            self.assertAlmostEqual(float(ode.findtext("mu")), P.mu_lateral)
-            self.assertAlmostEqual(float(ode.findtext("mu2")), P.mu_longitudinal)
-        self.assertEqual(len(list(self.model.iter("ode"))), 4)
+    def test_realism_camera(self):
+        """RGB 1280x720 to 80 km, depth clipped at 0.1-40 m (design spec 7, D14; 640x480 read a 20 cm ArUco
+        face only to ~2.5 m); no SDF noise, which aborts gz on Metal on an RGB-D camera."""
+        camera = self.model.find("link[@name='camera_tilt_link']/sensor[@name='camera']/camera")
+        self.assertEqual((int(camera.findtext("image/width")), int(camera.findtext("image/height"))), (1280, 720))
+        self.assertEqual(float(camera.findtext("clip/far")), 80_000.0)
+        depth = camera.find("depth_camera/clip")
+        self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
+        self.assertIsNone(camera.find("noise"))
+
+    def test_dust_emitters(self):
+        """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
+        until the drivetrain says so, an explicit topic, scatter ratio 0 (Q11)."""
+        for side, s in (("left", "l"), ("right", "r")):
+            emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
+            self.assertEqual(emitter.findtext("emitting"), "false")
+            self.assertEqual(emitter.findtext("particle_scatter_ratio"), "0")
+            topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
+            self.assertEqual(emitter.findtext("topic"), topic)
+            x, _, z = vec(emitter.findtext("pose"))[:3]
+            self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
+            self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), P.drive.dust_box / 2)  # on the ground
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:
@@ -123,27 +133,63 @@ class Structure(unittest.TestCase):
         self.assertIn("Valid", result.stdout)
 
 
-class DiffDriveVariant(unittest.TestCase):
-    def test_default_output_is_unchanged(self):
-        """The default rover (DriveParams.mode "diffdrive") is what wave 0
-        generated, byte for byte: the tracked models/rover/model.sdf (design
-        spec D22)."""
-        self.assertEqual(P.drive.mode, "diffdrive")
+class TrackedModel(unittest.TestCase):
+    def test_the_default_rover_is_physical_and_tracked(self):
+        """The default rover (DriveParams.mode "physical", design spec D22) is
+        the tracked models/rover/model.sdf, byte for byte."""
+        self.assertEqual(P.drive.mode, "physical")
         self.assertEqual(gen_model.build_sdf(P), (MODELS / "rover" / "model.sdf").read_text())
 
     def test_unknown_modes_are_refused(self):
-        for drive in (gen_model.DriveParams(mode="servo"), gen_model.DriveParams(mode="physical", dig="deep")):
-            with self.assertRaises(ValueError):
-                gen_model.build_sdf(dataclasses.replace(P, drive=drive))
+        with self.assertRaises(ValueError):
+            gen_model.build_sdf(dataclasses.replace(P, drive=gen_model.DriveParams(mode="servo")))
 
 
-class PhysicalVariant(unittest.TestCase):
-    """DriveParams(mode="physical"): plugins/rover_drivetrain.cpp, the realism
-    camera and the dust emitters (design spec 6.2, 7)."""
+class DiffDriveVariant(unittest.TestCase):
+    """DriveParams(mode="diffdrive"): Gazebo's DiffDrive on anisotropic tyres,
+    kept for A/B tests and cost comparisons (design spec D22); everything but
+    the drive is the default rover's."""
 
     @classmethod
     def setUpClass(cls):
-        cls.params = dataclasses.replace(P, drive=gen_model.DriveParams(mode="physical"))
+        cls.model = ET.fromstring(gen_model.build_sdf(DIFFDRIVE)).find("model")
+
+    def test_drive_is_tank(self):
+        drive = self.model.find("plugin[@name='gz::sim::systems::DiffDrive']")
+        self.assertEqual([e.text for e in drive.findall("left_joint")], ["wheel_fl_joint", "wheel_rl_joint"])
+        self.assertEqual([e.text for e in drive.findall("right_joint")], ["wheel_fr_joint", "wheel_rr_joint"])
+        self.assertAlmostEqual(float(drive.findtext("wheel_separation")), 2 * P.pivot_y)
+        self.assertAlmostEqual(float(drive.findtext("wheel_radius")), P.wheel_radius)
+        self.assertEqual(drive.findtext("topic"), gen_model.CMD_VEL_TOPIC)
+        self.assertIsNone(self.model.find("plugin[@filename='RoverDrivetrain']"))  # never both (D22)
+
+    def test_tire_friction_axes(self):
+        for ode in self.model.iter("ode"):
+            self.assertEqual(vec(ode.findtext("fdir1")), [0, 0, 1])  # the axle
+            self.assertAlmostEqual(float(ode.findtext("mu")), P.mu_lateral)
+            self.assertAlmostEqual(float(ode.findtext("mu2")), P.mu_longitudinal)
+        self.assertEqual(len(list(self.model.iter("ode"))), 4)
+        for joint in self.model.findall("joint"):
+            if joint.get("name").startswith("wheel_"):
+                self.assertEqual(float(joint.findtext("axis/limit/effort")), P.wheel_effort)
+
+    def test_only_the_drive_differs(self):
+        """Camera, dust emitters, sensors and links are the default rover's."""
+        default = ET.fromstring(gen_model.build_sdf(P)).find("model")
+        for path in ("link[@name='camera_tilt_link']/sensor", "link[@name='rocker_left']/particle_emitter",
+                     "link[@name='base_link']/sensor[@name='gnss']"):
+            self.assertEqual(ET.tostring(self.model.find(path)), ET.tostring(default.find(path)), path)
+        self.assertEqual([link.get("name") for link in self.model.findall("link")],
+                         [link.get("name") for link in default.findall("link")])
+
+
+class PhysicalVariant(unittest.TestCase):
+    """The default rover's drivetrain, plugins/rover_drivetrain.cpp (design
+    spec 6.2)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.params = P
         cls.sdf = gen_model.build_sdf(cls.params)
         cls.model = ET.fromstring(cls.sdf).find("model")
         cls.plugin = cls.model.find("plugin[@name='rover_sim::RoverDrivetrain']")
@@ -162,7 +208,7 @@ class PhysicalVariant(unittest.TestCase):
                    "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 40.0,
                    "controller/accel": d.accel, "controller/max_speed": P.wheel_speed,
                    "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0,
-                   "contact/dig_rate_gain": 5.0, "contact/dig_max_gain": 4.0, "dust_rule/max_rate": d.dust_max}
+                   "dust_rule/max_rate": d.dust_max}
         for tag, value in numbers.items():
             self.assertAlmostEqual(float(self.plugin.findtext(tag)), value, msg=tag)
         self.assertEqual(self.plugin.findtext("contact/dig"), "true")
@@ -173,30 +219,38 @@ class PhysicalVariant(unittest.TestCase):
         self.assertEqual(wheels, [(f"{e}{s}", f"wheel_{e}{s}_joint", f"wheel_{e}{s}", side)
                                   for side, s in (("left", "l"), ("right", "r")) for e in "fr"])
 
-    def test_dig_presets(self):
-        """The strong preset is the default (the user's choice); mild keeps the
-        catalogue's dig-in, off has none."""
+    def test_dig_in_switch(self):
+        """Dig-in is on by default and can be switched off; its strength is the
+        ground's (terrains.DIG), not scaled by the rover (the plugin's gains
+        stay 1)."""
         def contact(dig):
-            drive = gen_model.DriveParams(mode="physical", dig=dig)
+            drive = gen_model.DriveParams(dig=dig)
             model = ET.fromstring(gen_model.build_sdf(dataclasses.replace(P, drive=drive))).find("model")
             return model.find("plugin[@filename='RoverDrivetrain']/contact")
 
-        for preset, gains in (("mild", (1.0, 1.0)), ("strong", (5.0, 4.0))):
-            self.assertEqual(contact(preset).findtext("dig"), "true")
-            self.assertEqual((float(contact(preset).findtext("dig_rate_gain")),
-                              float(contact(preset).findtext("dig_max_gain"))), gains)
-        self.assertEqual(contact("off").findtext("dig"), "false")
+        self.assertEqual(contact(True).findtext("dig"), "true")
+        self.assertEqual(contact(False).findtext("dig"), "false")
+        self.assertIsNone(self.plugin.find("contact/dig_rate_gain"))
+        self.assertIsNone(self.plugin.find("contact/dig_max_gain"))
 
     def test_surface_rows_come_from_the_catalogue(self):
-        """The default and object surfaces' traction, for worlds without a ground map."""
-        rows = {row.findtext("key"): row for row in self.plugin.findall("contact/surface")}
-        self.assertIn("regolith", rows)
-        for key, row in rows.items():
-            kind = terrains.TYPES[key]
-            for field in dataclasses.fields(terrains.Traction):
-                self.assertAlmostEqual(float(row.findtext(field.name)), getattr(kind.traction, field.name),
-                                       msg=field.name)
-            self.assertAlmostEqual(float(row.findtext("dust")), kind.appearance.dust)
+        """The default and object surfaces' traction under the catalogue's
+        dig-in preset (terrains.DIG), as the worlds' ground.json, for worlds
+        without a ground map."""
+        model = ET.fromstring(gen_model.build_sdf(dataclasses.replace(
+            P, drive=gen_model.DriveParams(default_surface="sand")))).find("model")
+        for dig in ("strong", "mild"):
+            with mock.patch.object(terrains, "DIG", dig):
+                rows = {row["key"]: row for row in gen_model.surface_rows("sand", "manmade")}
+            self.assertEqual(set(rows), {"sand", "manmade"})
+            for key, row in rows.items():
+                kind = terrains.TYPES[key]
+                self.assertEqual({f.name: row[f.name] for f in dataclasses.fields(terrains.Traction)},
+                                 dataclasses.asdict(terrains.traction(kind, dig)), (dig, key))
+                self.assertEqual(row["dust"], kind.appearance.dust)
+        written = {row.findtext("key"): row
+                   for row in model.findall("plugin[@filename='RoverDrivetrain']/contact/surface")}
+        self.assertEqual(float(written["sand"].findtext("dig_max")), terrains.STRONG_DIG[1])  # the default, strong
 
     def test_wheel_joints_and_tyres(self):
         """Effort 1000 N m (DART never clamps the torque), velocity limit 16 rad/s
@@ -210,30 +264,12 @@ class PhysicalVariant(unittest.TestCase):
             self.assertIsNone(ode.find("fdir1"))
         self.assertEqual(len(list(self.model.iter("ode"))), 4)
 
-    def test_dust_emitters(self):
-        """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
-        until the drivetrain says so, an explicit topic, unseen by depth and
-        point cloud (scatter ratio 0, Q11)."""
+    def test_drivetrain_drives_the_dust(self):
+        """The drivetrain commands the rear emitters on their topics."""
         for side, s in (("left", "l"), ("right", "r")):
-            emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
-            self.assertEqual(emitter.findtext("emitting"), "false")
-            self.assertEqual(emitter.findtext("particle_scatter_ratio"), "0")
             topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
-            self.assertEqual(emitter.findtext("topic"), topic)
-            self.assertIn(topic, [d.findtext("topic") for d in self.plugin.findall("dust")])
-            x, _, z = vec(emitter.findtext("pose"))[:3]
-            self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
-            self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), self.params.drive.dust_box / 2)  # on the ground
-
-    def test_realism_camera(self):
-        """RGB 1280x720 to 80 km, depth clipped at 0.1-40 m, noise 0.06 (design spec 7, D14)."""
-        camera = self.model.find("link[@name='camera_tilt_link']/sensor[@name='camera']/camera")
-        self.assertEqual((int(camera.findtext("image/width")), int(camera.findtext("image/height"))), (1280, 720))
-        self.assertEqual(float(camera.findtext("clip/far")), 80_000.0)
-        depth = camera.find("depth_camera/clip")
-        self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
-        self.assertEqual(camera.findtext("noise/type"), "gaussian")
-        self.assertEqual(float(camera.findtext("noise/stddev")), 0.06)
+            self.assertIn((f"wheel_r{s}", topic), [(d.findtext("wheel"), d.findtext("topic"))
+                                                   for d in self.plugin.findall("dust")])
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:
@@ -248,7 +284,7 @@ class TyreCompliance(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.params = dataclasses.replace(P, tire_compliance=True, drive=gen_model.DriveParams(mode="physical"))
+        cls.params = dataclasses.replace(P, tire_compliance=True)
         cls.sdf = gen_model.build_sdf(cls.params)
         cls.model = ET.fromstring(cls.sdf).find("model")
 
