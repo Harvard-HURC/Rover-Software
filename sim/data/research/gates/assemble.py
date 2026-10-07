@@ -277,6 +277,10 @@ DECISIONS = {
                "contact, so the drivetrain needs no contact sensor data for it."]),
 }
 
+EARLIER = "2026-10-06, by the first WS-0 run, at load 5-14 (ratios and functional checks: valid on a loaded machine)"
+LATER = "2026-10-07, on an otherwise idle machine (load 1.6-5.5 including the server under test)"
+RUN = dict(G1=EARLIER, G2=EARLIER, G3=EARLIER, G4=LATER, G5=LATER, G6=LATER, G7=LATER, G8=EARLIER)
+
 doc = dict(
     format="rover-gates/1",
     spec="docs/superpowers/specs/2026-10-06-urc-realism-design.md, section 10.4 (method: section 10.3)",
@@ -286,9 +290,11 @@ doc = dict(
             "minus a one-step start-up run, interleaved cases, median of 5 (G8 A/B: 10); the rover driven by a "
             "thread of the measuring process (simulate.twist_publisher), never by Python inside the server. "
             "Sensors stripped and real_time_factor 0 unless a gate renders. The 1-minute load average is recorded: "
-            "ratios hold on a loaded machine, absolute numbers need a load average below 4 (spec 10.3)."),
+            "ratios hold on a loaded machine, absolute numbers need a load average below 4 (spec 10.3). CPU time also "
+            "counts the server's helper threads, so G5 reports the wall time per step beside it (wall clock, valid "
+            "on an idle machine)."),
     summary={k: v["verdict"] for k, v in gates.items()},
-    gates={k: dict(SPEC[k], **gates[k], **DECISIONS[k]) for k in gates},
+    gates={k: dict(SPEC[k], run=RUN[k], **gates[k], **DECISIONS[k]) for k in gates},
     checks=dict(
         terrain_heightmap_hh=dict(
             what="sim/plugins/terrain_heightmap.hh against urc.sheet's terrain (check_heightmap.py, HmCheck)",
