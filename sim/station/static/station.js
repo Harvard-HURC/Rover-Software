@@ -562,7 +562,8 @@ function onTelemetry(m) {
   $("cmd-speed").textContent = signed(vx, 2);
   $("cmd-turn").textContent = signed(wz * DEG, 0);
   const asked = askedTurn(m);
-  $("turn-ratio").textContent = pose && Math.abs(asked) > TURNING ? `got ${Math.round(100 * pose.yaw_rate / asked)} %` : "";
+  $("turn-ratio").textContent = pose && Math.abs(asked) > TURNING
+    ? `got ${Math.round(100 * pose.yaw_rate / asked)} %` : "";
   if (pose) {
     $("speed").textContent = signed(pose.speed, 2);
     $("turn").textContent = signed(pose.yaw_rate * DEG, 0);
@@ -679,7 +680,8 @@ function showPictureState(m, running) {
   $("no-picture-text").textContent = !running
     ? "The simulation is not running. When it starts again, the station brings its cameras back."
     : state.view === "fly" && m.fly_note ? m.fly_note
-      : state.view === "fly" && !m.fly ? "The station spawns it when Fly or Map is first used; it reads the terrain first."
+      : state.view === "fly" && !m.fly
+        ? "The station spawns it when Fly or Map is first used; it reads the terrain first."
         : `${camera} has not sent a picture. Cameras render only in worlds with the `
           + "Sensors system, and the first picture of a big world can take a while.";
 }

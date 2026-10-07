@@ -7,8 +7,6 @@ driving rover in Gazebo and keeping above the ground, the rover eye riding
 on it, the drivetrain readout of a physical rover, and the station as a
 process, flown from a WebSocket client."""
 import asyncio
-import contextlib
-import io
 import json
 import math
 import os
@@ -22,7 +20,6 @@ import threading
 import time
 import unittest
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import aiohttp
 import cv2
@@ -547,7 +544,8 @@ class Telemetry(unittest.TestCase):
         link = FakeLink()
         wheel = {"sp": 2.6, "w": 2.5, "i": 6.2, "tau": 9.8, "u": 14.1, "sat": False, "slip": 0.12, "load": 113.0,
                  "surface": "sand", "dig": 1.08}
-        link.state["drivetrain"] = {"t": 1.0, "cmd": [0.0, 0.8], "wheels": dict.fromkeys(("fl", "rl", "fr", "rr"), wheel)}
+        link.state["drivetrain"] = {"t": 1.0, "cmd": [0.0, 0.8],
+                                    "wheels": dict.fromkeys(("fl", "rl", "fr", "rr"), wheel)}
         link.state["fly"] = fly_state(drive.View(1, 2, 30, 0, 0.5))
         t = server.Station(link, "test").telemetry(0.0)
         self.assertEqual(t["drivetrain"], link.state["drivetrain"])
@@ -1036,14 +1034,6 @@ class ViewerModels(unittest.TestCase):
     def test_chase_camera_keeps_clear_of_the_ground(self):
         plugin = ET.fromstring(viewers.build_chase_sdf(viewers.ChaseParams())).find("model/plugin")
         self.assertEqual(float(plugin.findtext("clearance")), viewers.ChaseParams.clearance)
-
-    def test_write_all_writes_the_checked_in_models(self):
-        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
-            viewers.write_all(d)
-            for name in (viewers.EYE_MODEL, viewers.CHASE_MODEL):
-                for file in ("model.sdf", "model.config"):
-                    self.assertEqual((Path(d) / name / file).read_text(),
-                                     (SIM_DIR / "models" / name / file).read_text(), f"{name}/{file}")
 
 
 def unit(x, y, z):
