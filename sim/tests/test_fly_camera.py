@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image as PILImage
 
 from simulate import gen_model, world_sdf
-from worldfiles import SIM_DIR, temp_sdf
+from worldfiles import SIM_DIR, gz_check, temp_sdf
 
 import viewers  # noqa: E402  (worldfiles puts sim/ on the path)
 from urc import terrain as terrains  # noqa: E402
@@ -229,6 +229,10 @@ class Model_(unittest.TestCase):
                            ("look_topic", viewers.FLY_LOOK_TOPIC), ("goto_topic", viewers.FLY_GOTO_TOPIC),
                            ("mode_topic", viewers.FLY_MODE_TOPIC), ("state_topic", viewers.FLY_STATE_TOPIC)):
             self.assertEqual(values[tag], topic)
+
+    def test_gz_accepts_it(self):
+        result = gz_check(SIM_DIR / "models" / viewers.FLY_MODEL / "model.sdf")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_write_all_writes_the_checked_in_model(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
@@ -493,13 +497,23 @@ LIT_WORLD = """<?xml version="1.0"?>
 """
 
 
-def marker(name, xyz, rgb, size):
-    """A static, self-lit box (a disc would do as well) of `size` (x, y, z) [m]."""
+def marker(name, xyz, rgb, size, rpy=(0.0, 0.0, 0.0)):
+    """A static, self-lit box of `size` (x, y, z) [m] at xyz, turned by rpy [rad]."""
     colour = " ".join(map(str, rgb))
-    return f"""<model name="{name}"><static>true</static><pose>{xyz[0]} {xyz[1]} {xyz[2]} 0 0 0</pose>
+    return f"""<model name="{name}"><static>true</static><pose>{xyz[0]} {xyz[1]} {xyz[2]} {rpy[0]} {rpy[1]} {rpy[2]}</pose>
       <link name="link"><visual name="visual"><geometry><box><size>{size[0]} {size[1]} {size[2]}</size></box></geometry>
       <material><ambient>{colour} 1</ambient><diffuse>{colour} 1</diffuse><emissive>{colour} 1</emissive></material>
       </visual></link></model>"""
+
+
+def ground_marker(name, hf, x, y, rgb):
+    """A 4 m x 4 m self-lit tile lying on terrain hf at (x, y), tilted with
+    the slope and 0.15 m proud of it: nothing buries it, and nothing stands
+    up to lean in a picture from above."""
+    gx = (hf.height(x + 0.5, y) - hf.height(x - 0.5, y)) / 1.0
+    gy = (hf.height(x, y + 0.5) - hf.height(x, y - 0.5)) / 1.0
+    roll, pitch = math.asin(gy / math.sqrt(1 + gx * gx + gy * gy)), -math.atan(gx)  # z axis along the normal
+    return marker(name, (x, y, hf.height(x, y) + 0.05), rgb, (4, 4, 0.2), (roll, pitch, 0.0))
 
 
 def colour_mask(rgb, channel):
@@ -553,8 +567,7 @@ class Rendering(unittest.TestCase):
                       "flank": (40.0, -30.0, 0)}
             extra = heightmap_model(path, size, height, (d / "diffuse.png", d / "normal.png"))
             for name, (x, y, channel) in places.items():
-                rgb = [1 if c == channel else 0 for c in range(3)]
-                extra += marker(name, (x, y, hf.height(x, y) + 0.2), rgb, (4, 4, 0.4))
+                extra += ground_marker(name, hf, x, y, [1 if c == channel else 0 for c in range(3)])
             world = d / "hill.sdf"
             world.write_text(LIT_WORLD.format(name="hill", extra=extra))
             (d / "hill.json").write_text(json.dumps({"terrain": {"heightmap": path.name, "size_m": size,
@@ -572,10 +585,10 @@ class Rendering(unittest.TestCase):
             elif name == "flank":
                 mask[:, :600] = False
             rows, cols = np.nonzero(mask)
-            self.assertGreater(len(rows), 0.6 * 16 / 0.25 ** 2, name)
-            self.assertLess(len(rows), 1.4 * 16 / 0.25 ** 2, f"{name}: one marker, not two")
+            self.assertGreater(len(rows), 0.85 * 16 / 0.25 ** 2, name)
+            self.assertLess(len(rows), 1.15 * 16 / 0.25 ** 2, f"{name}: one marker, not two")
             mx, my = -size / 2 + (cols.mean() + 0.5) * 0.25, size / 2 - (rows.mean() + 0.5) * 0.25
-            self.assertLess(math.hypot(mx - x, my - y), 0.5, f"{name} at {mx:.2f}, {my:.2f}, not {x}, {y}")
+            self.assertLess(math.hypot(mx - x, my - y), 0.15, f"{name} at {mx:.2f}, {my:.2f}, not {x}, {y}")
 
 
 if __name__ == "__main__":
