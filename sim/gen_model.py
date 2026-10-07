@@ -176,10 +176,10 @@ class Params:
     camera_size: tuple[int, int] = (1280, 720)
     camera_hfov: float = 1.5  # [rad]
     camera_clip: tuple[float, float] = (0.1, 40.0)  # [m] depth range
-    # The RGB sees the far field to 80 km while the depth stays clipped at camera_clip (design spec 7, D14);
-    # gz attenuates SDF noise: stddev 0.06 is ~2 DN (M, design spec 4).
+    # The RGB sees the far field to 80 km while the depth stays clipped at camera_clip (design spec 7, D14). No
+    # SDF <noise> (design spec 4's stddev 0.06): on an rgbd_camera it aborts gz on Metal (measured: Ogre
+    # RenderingAPIException, float4 output to an RGBA32Uint attachment), so noise belongs in the station.
     camera_far: float = 80_000.0  # [m] RGB far clip
-    camera_noise: float = 0.06  # RGB noise stddev [0-1]
     # Pan-tilt head. Angles are from straight ahead and level; tilt is positive
     # down (rotation about +y), pan positive to the left (about +z).
     camera_pan_limit: float = 2.8  # [rad] each way
@@ -326,8 +326,7 @@ def _add_camera_head(model, p):
     sdf.sub(sensor, "update_rate", p.camera_rate)
     sdf.sub(sensor, "topic", CAMERA_TOPIC)
     sdf.sub(sensor, "gz_frame_id", "camera")
-    sdf.camera(sensor, p.camera_hfov, p.camera_size, (p.camera_clip[0], p.camera_far), noise=p.camera_noise,
-               depth_clip=p.camera_clip)
+    sdf.camera(sensor, p.camera_hfov, p.camera_size, (p.camera_clip[0], p.camera_far), depth_clip=p.camera_clip)
 
     head = ((PAN_JOINT, "base_link", "camera_pan_link", (0, 0, 1), (-p.camera_pan_limit, p.camera_pan_limit), 0.0),
             (TILT_JOINT, "camera_pan_link", "camera_tilt_link", (0, 1, 0), p.camera_tilt_limits, p.camera_pitch))

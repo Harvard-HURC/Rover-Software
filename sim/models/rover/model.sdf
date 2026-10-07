@@ -284,11 +284,6 @@
               <far>40</far>
             </clip>
           </depth_camera>
-          <noise>
-            <type>gaussian</type>
-            <mean>0</mean>
-            <stddev>0.06</stddev>
-          </noise>
         </camera>
       </sensor>
     </link>

@@ -104,15 +104,14 @@ class Structure(unittest.TestCase):
         self.assertIsNone(self.model.find(".//mimic"))
 
     def test_realism_camera(self):
-        """RGB 1280x720 to 80 km, depth clipped at 0.1-40 m, noise 0.06 (design spec 7, D14; 640x480 read a
-        20 cm ArUco face only to ~2.5 m)."""
+        """RGB 1280x720 to 80 km, depth clipped at 0.1-40 m (design spec 7, D14; 640x480 read a 20 cm ArUco
+        face only to ~2.5 m); no SDF noise, which aborts gz on Metal on an RGB-D camera."""
         camera = self.model.find("link[@name='camera_tilt_link']/sensor[@name='camera']/camera")
         self.assertEqual((int(camera.findtext("image/width")), int(camera.findtext("image/height"))), (1280, 720))
         self.assertEqual(float(camera.findtext("clip/far")), 80_000.0)
         depth = camera.find("depth_camera/clip")
         self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
-        self.assertEqual(camera.findtext("noise/type"), "gaussian")
-        self.assertEqual(float(camera.findtext("noise/stddev")), 0.06)
+        self.assertIsNone(camera.find("noise"))
 
     def test_dust_emitters(self):
         """Behind each rear wheel, on its rocker (a wheel link spins): not emitting

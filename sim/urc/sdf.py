@@ -220,7 +220,8 @@ def camera(sensor, hfov, size, clip, image_format=None, noise=None, depth_clip=N
     """A sensor's <camera>: horizontal field of view [rad], picture (width,
     height) [px] and clip planes (near, far) [m] (the rover's RGB-D camera,
     the driver station's viewers). noise: Gaussian stddev of the picture
-    [0-1]; depth_clip: an RGB-D camera's own depth range (near, far) [m],
+    [0-1], a plain camera's only (on an rgbd_camera it aborts gz on Metal,
+    measured); depth_clip: an RGB-D camera's own depth range (near, far) [m],
     which gz-sensors applies to the depth image only, so the colour image can
     reach further (design spec D14)."""
     element = sub(sensor, "camera")
