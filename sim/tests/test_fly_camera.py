@@ -14,6 +14,7 @@ import json
 import math
 import sys
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 from dataclasses import replace
@@ -128,12 +129,13 @@ def heightmap_model(path, size, height, texture=None):
 
 # --- Flights in this process ------------------------------------------------------------------
 
-def fly(world, seconds, events=(), holds=(), track=(), fixture_runs=None):
+def fly(world, seconds, events=(), holds=(), track=(), sleeps=(), fixture_runs=None):
     """Run `world` (SDF text) for `seconds` of sim time in this process, then
     fixture_runs(fixture) if given. events: (t, topic, message) published
     once at sim time t; holds: (t0, t1, topic, message) published every 20 ms
     from t0 until before t1; neither after a world reset. track: other models
-    whose canonical link's position to record. Returns
+    whose canonical link's position to record. sleeps: (t, s) wall-clock
+    pauses at sim time t. Returns
     {"t": [s], "camera": steps x 6 (x, y, z, roll, pitch, yaw), name: steps x 3,
     "states": [fly camera state dicts]}."""
     node = Node()
@@ -164,6 +166,9 @@ def fly(world, seconds, events=(), holds=(), track=(), fixture_runs=None):
             for t0, t1, topic, message in holds:
                 if t0 - 5e-4 < t < t1 - 5e-4:
                     publishers[topic].publish(message)
+        for when, pause in sleeps:
+            if abs(t - when) < 5e-4:
+                time.sleep(pause)
 
     def post_update(info, ecm):
         out["t"].append(info.iterations / 1000)
@@ -217,6 +222,7 @@ class Model_(unittest.TestCase):
                            ("look_time_constant", f.look_time_constant), ("deadman", f.deadman),
                            ("deadman_clock", f.deadman_clock), ("speed_per_agl", f.speed_per_agl),
                            ("min_speed", f.speed_limits[0]), ("max_speed", f.speed_limits[1]), ("fast", f.fast),
+                           ("min_scale", f.speed_scales[0]), ("max_scale", f.speed_scales[1]),
                            ("max_altitude", f.max_altitude), ("margin", f.margin)):
             self.assertEqual(values[tag], str(value) if isinstance(value, str) else f"{value:.9g}", tag)
         for tag, topic in (("cmd_topic", viewers.FLY_CMD_TOPIC), ("speed_topic", viewers.FLY_SPEED_TOPIC),
@@ -264,6 +270,16 @@ class Flight(unittest.TestCase):
         # A first-order lag keeps the integral: the camera covers cruise x deadman.
         self.assertAlmostEqual(at(r, 3.0)[0], 10.0 * FLY.deadman, delta=0.02)
         self.assertLess(abs(at(r, 3.0)[0] - at(r, 2.5)[0]), 1e-3, "stopped: 10 m/s x e^-8.5 left")
+
+    def test_wall_clock_deadman(self):
+        """The default: a command lives 0.3 s of wall time, however fast the
+        sim runs. Here the 100 steps after it take a few ms of wall time, then
+        the sim stalls for 0.5 s: the camera stops after 0.1 s of sim time,
+        where the sim-clock deadman would have let it fly 0.3 s."""
+        fly_params = replace(FLY, deadman_clock="wall")
+        world = bare_world(render_map.fly_model(fly_params, (0, 0, 10, 0, 0, 0)))
+        r = fly(world, 3.0, events=[(0.5, viewers.FLY_CMD_TOPIC, twist(1.0))], sleeps=[(0.6, 0.5)])
+        self.assertAlmostEqual(at(r, 3.0)[0], 10.0 * 0.1, delta=0.02)
 
     def test_flight_into_a_hill_keeps_clearance_and_bounds(self):
         fly_params = replace(FLY, max_altitude=60.0)

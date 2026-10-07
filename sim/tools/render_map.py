@@ -322,18 +322,23 @@ class FlyServer:
                 return state
         return self._wait(there, 0.0, f"state at the jump target {x:.1f}, {y:.1f}, {z:.1f}")
 
-    def mode(self, text, check, timeout=30.0):
-        """Send mode `text` until a state passes check(state); returns that state."""
+    def mode(self, text, check, timeout=30.0, every=3.0):
+        """Send mode `text` until a state passes check(state); returns that
+        state. Sent again only every `every` s: "ortho <width>" starts a
+        flight of up to 1.5 s, which each copy would start over."""
         msg = self._string_type()
         msg.data = text
+
+        def passed():
+            return self.latest if self.latest and check(self.latest) else None
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline and self.process.poll() is None:
             self._mode.publish(msg)
-            state = self._poll(lambda: self.latest if self.latest and check(self.latest) else None, 0.25)
+            state = self._poll(passed, min(every, deadline - time.monotonic()))
             if state:
                 return dict(state)
-        return dict(self._wait(lambda: self.latest if self.latest and check(self.latest) else None, 0.0,
-                               f"state after mode {text!r}"))
+        return dict(self._wait(passed, 0.0, f"state after mode {text!r}"))
 
     def frame_after(self, stamp, timeout=60.0):
         """The first frame stamped after `stamp` [s of sim time]: (stamp, RGB)."""

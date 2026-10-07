@@ -42,7 +42,7 @@
 //   cmd    gz.msgs.Twist: linear x, y, z = forward, left, up in units of the cruise speed (each clamped
 //          to +-<fast>: 1 cruise, <fast> while the driver holds the fast key); angular.z = yaw rate
 //          (left +), angular.y = pitch rate (down +) [rad/s]. Held only for <deadman>.
-//   speed  gz.msgs.Double: the speed multiplier, clamped to [0.25, 4].
+//   speed  gz.msgs.Double: the speed multiplier, clamped to [<min_scale>, <max_scale>].
 //   look   gz.msgs.Vector3d: x is added to the yaw, y to the pitch [rad] (the view follows smoothly).
 //   goto   gz.msgs.Pose: fly to the pose (the camera looks along its x axis; roll is dropped) on a
 //          smoothstep over clamp(distance / 50 m/s, 0.4, 1.5) s; a header data key "jump" makes it
@@ -57,6 +57,7 @@
 // SDF: <target> (default rover), <clearance> [m], <time_constant>, <look_time_constant> [s],
 // <deadman> [s], <deadman_clock> wall (default: a stalled sim cannot keep a stale command alive) or sim
 // (tests at real-time factor 0), <speed_per_agl> [1/s], <min_speed>, <max_speed> [m/s], <fast>,
+// <min_scale>, <max_scale>,
 // <max_altitude> [m above the highest terrain], <margin> [m beyond the terrain edge]. The start pose is
 // the model's pose; a world reset (ISystemReset) or a jump back in sim time returns there.
 
@@ -106,18 +107,18 @@ namespace rover_sim {
 
 namespace {
 
-constexpr double kLookAhead = 0.5;           // [s] the floor also lies under where the camera will be (A)
-constexpr int kAheadSamples = 32;            // ground samples along that path, at most (A)
-constexpr double kFloorTimeConstant = 0.1;   // [s] how fast the camera rises to the floor (A)
-constexpr double kArrivalLags = 4;           // rise lags per time to arrival: clear on arrival (A)
-constexpr double kHardFloor = 0.3;           // [m] never closer to the ground than this (A)
-constexpr double kMinPitch = -1.5;           // [rad] nearly straight up
+// Section 8.1 of the realism design, (A) unless noted.
+constexpr double kLookAhead = 0.5;           // [s] the floor also lies under where the camera will be
+constexpr int kAheadSamples = 32;            // ground samples along that path, at most
+constexpr double kFloorTimeConstant = 0.1;   // [s] how fast the camera rises to the floor
+constexpr double kArrivalLags = 4;           // rise lags per time to arrival: within 2 % on arrival
+constexpr double kHardFloor = 0.3;           // [m] never closer to the ground than this
+constexpr double kMinPitch = -1.5;           // [rad] nearly straight up (prototype)
 constexpr double kMaxPitch = GZ_PI / 2;      // [rad] straight down (top-down and orthographic views)
-constexpr double kMinScale = 0.25, kMaxScale = 4.0;  // speed multiplier range (section 8.1)
 constexpr double kGotoSpeed = 50.0;          // [m/s] a goto takes distance / kGotoSpeed ...
-constexpr double kGotoMin = 0.4, kGotoMax = 1.5;     // ... clamped to [s] (prototype, tuned by eye)
+constexpr double kGotoMin = 0.4, kGotoMax = 1.5;     // ... clamped to [s]
 constexpr double kStatePeriod = 0.1;         // [s] of sim time between state messages
-constexpr double kFlatHalfExtent = 10000.0;  // [m] bounds of a world without a heightmap (A)
+constexpr double kFlatHalfExtent = 10000.0;  // [m] bounds of a world without a heightmap
 
 double Wrap(double angle) { return std::remainder(angle, 2 * GZ_PI); }
 
@@ -178,6 +179,8 @@ class FlyCamera : public gz::sim::System,
     min_speed_ = sdf->Get<double>("min_speed", min_speed_).first;
     max_speed_ = std::max(min_speed_, sdf->Get<double>("max_speed", max_speed_).first);
     fast_ = std::max(1.0, sdf->Get<double>("fast", fast_).first);
+    min_scale_ = sdf->Get<double>("min_scale", min_scale_).first;
+    max_scale_ = std::max(min_scale_, sdf->Get<double>("max_scale", max_scale_).first);
     max_altitude_ = sdf->Get<double>("max_altitude", max_altitude_).first;
     margin_ = sdf->Get<double>("margin", margin_).first;
 
@@ -300,7 +303,8 @@ class FlyCamera : public gz::sim::System,
       ortho_width_ = 2 * std::max(position_.Z() - ortho_ground_, clearance_ + kHardFloor) * std::tan(hfov_ / 2);
     }
 
-    // 8. Pose.
+    // 8. Pose, every step: sent only on change, a pose after idle steps took effect 5 steps
+    // late (measured), and skipping it saved nothing measurable.
     model_.SetWorldPoseCmd(ecm, gz::math::Pose3d(position_, gz::math::Quaterniond(0, pitch_, yaw_)));
     speed_ = dt > 0 ? (position_ - before - carried).Length() / dt : 0.0;
     PublishState(now);
@@ -331,6 +335,7 @@ class FlyCamera : public gz::sim::System,
   /// Once: the terrain heightmap, the bounds and the camera's field of view.
   void ReadWorld(const gz::sim::EntityComponentManager& ecm) {
     world_read_ = true;
+    const auto t0 = std::chrono::steady_clock::now();
     terrain_ = FindTerrainHeightmap(ecm, HeightmapGeometry::kVisual);
     if (terrain_) {
       const auto top = *std::max_element(terrain_->heights.begin(), terrain_->heights.end());
@@ -338,6 +343,9 @@ class FlyCamera : public gz::sim::System,
       low_ = terrain_->origin - half;
       high_ = terrain_->origin + half;
       high_.Z(terrain_->origin.Z() + top + max_altitude_);
+      // Read in the simulation thread: the world stalls this long when a fly camera is spawned.
+      gzmsg << "FlyCamera: ground from " << terrain_->path << " (" << terrain_->samples << "^2 samples), read in "
+            << std::lround(1000 * Seconds(std::chrono::steady_clock::now() - t0)) << " ms.\n";
     } else {
       gzmsg << "FlyCamera: no terrain heightmap; the ground is flat at z = 0.\n";
       low_ = gz::math::Vector3d(-kFlatHalfExtent, -kFlatHalfExtent, 0);
@@ -561,7 +569,7 @@ class FlyCamera : public gz::sim::System,
       return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    pending_scale_ = std::clamp(msg.data(), kMinScale, kMaxScale);
+    pending_scale_ = std::clamp(msg.data(), min_scale_, max_scale_);
   }
 
   void OnLook(const gz::msgs::Vector3d& msg) {
@@ -617,6 +625,7 @@ class FlyCamera : public gz::sim::System,
   double speed_per_agl_ = 1.0;       // [1/s]
   double min_speed_ = 2.0, max_speed_ = 200.0;  // [m/s]
   double fast_ = 4.0;
+  double min_scale_ = 0.25, max_scale_ = 4.0;
   double max_altitude_ = 2000.0;     // [m] above the highest terrain
   double margin_ = 100.0;            // [m] beyond the terrain edge
   bool enabled_ = false;

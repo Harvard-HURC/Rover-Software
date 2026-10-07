@@ -38,7 +38,7 @@ FLY_IMAGE_TOPIC = "/fly_camera/image"
 # +-FlyParams.fast), angular.z yaw rate (left +), angular.y pitch rate (down +)
 # [rad/s]; held for FlyParams.deadman.
 FLY_CMD_TOPIC = "/fly_camera/cmd"
-FLY_SPEED_TOPIC = "/fly_camera/speed"  # gz.msgs.Double: speed multiplier, within FLY_SPEED_SCALES
+FLY_SPEED_TOPIC = "/fly_camera/speed"  # gz.msgs.Double: speed multiplier, within FlyParams.speed_scales
 FLY_LOOK_TOPIC = "/fly_camera/look"  # gz.msgs.Vector3d: d yaw, d pitch [rad], smoothed
 # gz.msgs.Pose: fly there (smoothstep, 0.4-1.5 s; header data key FLY_JUMP_KEY:
 # at once); the camera looks along the pose's x axis, roll dropped.
@@ -49,7 +49,6 @@ FLY_MODES = ("free", "follow", "top", "level", "stop", "ortho", "perspective")
 # gz.msgs.StringMsg, JSON at 10 Hz of sim time: t, mode, x, y, z, yaw, pitch,
 # agl, ground, speed (multiplier), v [m/s], ortho (window width, 0 perspective), goto
 FLY_STATE_TOPIC = "/fly_camera/state"
-FLY_SPEED_SCALES = (0.25, 4.0)  # the plugin clamps the multiplier to this range
 
 
 @dataclass(frozen=True)
@@ -110,6 +109,7 @@ class FlyParams:
     speed_per_agl: float = 1.0  # [1/s]
     speed_limits: tuple[float, float] = (2.0, 200.0)  # [m/s]
     fast: float = 4.0  # cruise multiple while the fast key is held (A)
+    speed_scales: tuple[float, float] = (0.25, 4.0)  # the speed multiplier's range (A)
     max_altitude: float = 2000.0  # [m] above the highest terrain (A)
     margin: float = 100.0  # [m] the camera may go beyond the terrain edge (A)
     rate: float = 20.0  # [Hz]
@@ -165,7 +165,8 @@ def build_fly_sdf(f: FlyParams) -> str:
         ("time_constant", f.time_constant), ("look_time_constant", f.look_time_constant),
         ("deadman", f.deadman), ("deadman_clock", f.deadman_clock),
         ("speed_per_agl", f.speed_per_agl), ("min_speed", f.speed_limits[0]), ("max_speed", f.speed_limits[1]),
-        ("fast", f.fast), ("max_altitude", f.max_altitude), ("margin", f.margin),
+        ("fast", f.fast), ("min_scale", f.speed_scales[0]), ("max_scale", f.speed_scales[1]),
+        ("max_altitude", f.max_altitude), ("margin", f.margin),
         ("cmd_topic", FLY_CMD_TOPIC), ("speed_topic", FLY_SPEED_TOPIC), ("look_topic", FLY_LOOK_TOPIC),
         ("goto_topic", FLY_GOTO_TOPIC), ("mode_topic", FLY_MODE_TOPIC), ("state_topic", FLY_STATE_TOPIC)),
         system="FlyCamera")

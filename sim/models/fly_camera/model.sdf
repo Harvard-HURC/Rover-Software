@@ -44,6 +44,8 @@
       <min_speed>2</min_speed>
       <max_speed>200</max_speed>
       <fast>4</fast>
+      <min_scale>0.25</min_scale>
+      <max_scale>4</max_scale>
       <max_altitude>2000</max_altitude>
       <margin>100</margin>
       <cmd_topic>/fly_camera/cmd</cmd_topic>
