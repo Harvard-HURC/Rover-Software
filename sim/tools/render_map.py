@@ -176,20 +176,20 @@ def status(world_path, out_dir=None):
 def layout(size, pixels, max_tile_m=MAX_TILE_M, max_tile_px=MAX_TILE_PX):
     """(tiles per side, tile [m], camera picture side [px], hfov [rad]) for a
     square of `size` m mapped at `pixels` px: the fewest tiles within both
-    maxima, a whole number of map pixels each, with the field of view at least
-    MIN_HFOV."""
+    maxima, a whole number of map pixels each. The camera sees its tile plus
+    MARGIN on every side, or more where that would be narrower than MIN_HFOV
+    (a world smaller than ~24 m)."""
     gsd = size / pixels
     need = max(math.ceil(size / max_tile_m), math.ceil(size * (1 + 2 * MARGIN) / gsd / max_tile_px), 1)
-    min_tile = 2 * ABOVE * math.tan(MIN_HFOV / 2) / (1 + 2 * MARGIN)
     k = next(k for k in range(need, pixels + 1) if pixels % k == 0)
-    while k > 1 and size / k < min_tile:
-        k = next(j for j in range(k - 1, 0, -1) if pixels % j == 0)
     tile = size / k
-    px = round(tile * (1 + 2 * MARGIN) / gsd)
-    hfov = 2 * math.atan(tile * (1 + 2 * MARGIN) / 2 / ABOVE)
+    footprint = max(tile * (1 + 2 * MARGIN), 2 * ABOVE * math.tan(MIN_HFOV / 2))
+    px = round(footprint / gsd)
+    if px > max_tile_px:
+        raise ValueError(f"a {size:g} m world at {pixels} px needs {px} px tile pictures; map it with fewer pixels")
     if FEATHER_PX / 2 > MARGIN * pixels / k:
         raise ValueError(f"{k} tiles of {pixels // k} px leave no room for a {FEATHER_PX} px feather")
-    return k, tile, px, hfov
+    return k, tile, px, 2 * math.atan(footprint / 2 / ABOVE)
 
 
 def tile_centres(size, k):

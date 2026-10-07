@@ -10,8 +10,9 @@
 //   3. The velocity approaches it with a first-order lag (time_constant).
 //   4. Look target += look deltas + rates x dt; the view follows with look_time_constant.
 //   5. Position += velocity x dt, plus the target model's displacement in follow mode.
-//   6. Floor = max(ground here, ground 0.5 s ahead) + clearance, approached with 0.1 s; never below
-//      ground + min(0.3 m, clearance).
+//   6. Floor = ground + clearance under the camera and under the next 0.5 s of flight (at the velocity
+//      and at the target velocity), each approached with 0.1 s or faster, so that the camera is up by
+//      the time it gets there; never below ground + min(0.3 m, clearance).
 //   7. Clamp to the terrain plus margin, and to max_altitude above its highest point.
 //   8. SetWorldPoseCmd (measured free: no cost over a static camera).
 // Integrating here, not in a client, is what makes the picture smooth: picture motion varied 0.46 % from
@@ -106,7 +107,9 @@ namespace rover_sim {
 namespace {
 
 constexpr double kLookAhead = 0.5;           // [s] the floor also lies under where the camera will be (A)
+constexpr int kAheadSamples = 32;            // ground samples along that path, at most (A)
 constexpr double kFloorTimeConstant = 0.1;   // [s] how fast the camera rises to the floor (A)
+constexpr double kArrivalLags = 4;           // rise lags per time to arrival: clear on arrival (A)
 constexpr double kHardFloor = 0.3;           // [m] never closer to the ground than this (A)
 constexpr double kMinPitch = -1.5;           // [rad] nearly straight up
 constexpr double kMaxPitch = GZ_PI / 2;      // [rad] straight down (top-down and orthographic views)
@@ -216,28 +219,11 @@ class FlyCamera : public gz::sim::System,
     const double dt = Seconds(info.dt);
     const gz::math::Vector3d before = position_;
 
-    // 1. Inputs.
+    // 1. Inputs: modes and gotos first, so that a stop also drops the command of this step.
     gz::math::Vector3d cmd;
     double yaw_rate = 0, pitch_rate = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (cmd_ && cmd_->fresh) {
-        cmd_->sim_stamp = now;
-        cmd_->fresh = false;
-      }
-      const bool alive = cmd_ && (sim_deadman_ ? now - cmd_->sim_stamp < deadman_
-                                               : Seconds(std::chrono::steady_clock::now() - cmd_->wall_stamp) < deadman_);
-      if (alive) {
-        cmd = cmd_->linear;
-        yaw_rate = cmd_->yaw_rate;
-        pitch_rate = cmd_->pitch_rate;
-      }
-      if (pending_look_yaw_ != 0 || pending_look_pitch_ != 0 || cmd != gz::math::Vector3d::Zero) {
-        flight_.reset();
-      }
-      look_yaw_ += pending_look_yaw_;
-      look_pitch_ += pending_look_pitch_;
-      pending_look_yaw_ = pending_look_pitch_ = 0;
       if (pending_scale_) {
         scale_ = *pending_scale_;
         pending_scale_.reset();
@@ -250,6 +236,23 @@ class FlyCamera : public gz::sim::System,
         StartGoto(pending_goto_->first, pending_goto_->second);
         pending_goto_.reset();
       }
+      if (cmd_ && cmd_->fresh) {
+        cmd_->sim_stamp = now;
+        cmd_->fresh = false;
+      }
+      const bool alive = cmd_ && (sim_deadman_ ? now - cmd_->sim_stamp < deadman_
+                                               : Seconds(std::chrono::steady_clock::now() - cmd_->wall_stamp) < deadman_);
+      if (alive) {
+        cmd = cmd_->linear;
+        yaw_rate = cmd_->yaw_rate;
+        pitch_rate = cmd_->pitch_rate;
+      }
+      if (pending_look_yaw_ != 0 || pending_look_pitch_ != 0 || cmd != gz::math::Vector3d::Zero) {
+        flight_.reset();  // the driver takes over
+      }
+      look_yaw_ += pending_look_yaw_;
+      look_pitch_ += pending_look_pitch_;
+      pending_look_yaw_ = pending_look_pitch_ = 0;
     }
 
     // 2.-3. Velocity.
@@ -286,14 +289,10 @@ class FlyCamera : public gz::sim::System,
       pitch_ = look_pitch_ = kMaxPitch;
     }
 
-    // 6. Floor, 7. bounds.
+    // 6. Floor (along the velocity and the target velocity: an accelerating camera gets there sooner),
+    // 7. bounds.
     const double here = Ground(position_.X(), position_.Y());
-    const gz::math::Vector3d ahead = position_ + kLookAhead * velocity_;
-    const double floor = std::max(here, Ground(ahead.X(), ahead.Y())) + clearance_;
-    if (position_.Z() < floor) {
-      position_.Z(position_.Z() + Lag(dt, kFloorTimeConstant) * (floor - position_.Z()));
-    }
-    position_.Z(std::max(position_.Z(), here + std::min(kHardFloor, clearance_)));
+    position_.Z(std::max({Rise(velocity_, dt), Rise(target, dt), here + std::min(kHardFloor, clearance_)}));
     position_.X(std::clamp(position_.X(), low_.X(), high_.X()));
     position_.Y(std::clamp(position_.Y(), low_.Y(), high_.Y()));
     position_.Z(std::min(position_.Z(), high_.Z()));
@@ -366,6 +365,36 @@ class FlyCamera : public gz::sim::System,
     const double hx = terrain_->size.X() / 2 * (1 - 1e-9), hy = terrain_->size.Y() / 2 * (1 - 1e-9);
     return terrain_->Height(std::clamp(x, terrain_->origin.X() - hx, terrain_->origin.X() + hx),
                             std::clamp(y, terrain_->origin.Y() - hy, terrain_->origin.Y() + hy));
+  }
+
+  /// The camera's height after rising this step towards the floor, ground + clearance, under it and
+  /// under the next kLookAhead seconds of flight at `velocity`. The path is sampled about once per
+  /// heightmap sample (at most kAheadSamples times), since one point that far ahead can lie beyond a
+  /// crest. The gap to each sample closes with a lag of min(kFloorTimeConstant, time to get there /
+  /// kArrivalLags), so the camera clears it on arrival however fast it flies: with a fixed lag a
+  /// camera skimming a hill at 16x cruise sped up as it rose and topped the crest 0.3 m short.
+  double Rise(const gz::math::Vector3d& velocity, double dt) const {
+    const double z = position_.Z();
+    double out = z;
+    auto rise = [&](const gz::math::Vector3d& p, double time_constant) {
+      const double floor = Ground(p.X(), p.Y()) + clearance_;
+      if (floor > z) {
+        out = std::max(out, z + Lag(dt, time_constant) * (floor - z));
+      }
+    };
+    rise(position_, kFloorTimeConstant);
+    if (!terrain_) {
+      return out;
+    }
+    const gz::math::Vector3d reach = kLookAhead * velocity;
+    const double spacing = terrain_->size.X() / (terrain_->samples - 1);
+    const int steps = std::clamp(static_cast<int>(std::ceil(std::hypot(reach.X(), reach.Y()) / spacing)), 1,
+                                 kAheadSamples);
+    for (int i = 1; i <= steps; ++i) {
+      const double ahead = kLookAhead * i / steps;  // [s] until the camera is there
+      rise(position_ + velocity * ahead, std::min(kFloorTimeConstant, ahead / kArrivalLags));
+    }
+    return out;
   }
 
   gz::math::Vector3d FollowDisplacement(const gz::sim::EntityComponentManager& ecm) {
