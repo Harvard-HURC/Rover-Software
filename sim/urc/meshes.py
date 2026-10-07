@@ -1,10 +1,21 @@
-"""Wavefront OBJ meshes: rocks, shrubs, textured quads, terrain-draped decals.
+"""Meshes: rocks, slabs, risers, shrubs, pebbles, textured quads and
+terrain-draped decals, written as Wavefront OBJ (write_obj) or binary glTF
+(write_glb).
 
-Gazebo's mesh loader needs a normal per vertex, so write_obj always writes
-them (area-weighted from the faces when not given).
+Gazebo's mesh loader needs a normal per vertex, so both writers always write
+them (area-weighted from the faces when not given). GLB loads in less memory
+than OBJ (gate G3: 512 vs 801 MB for 1.64 M triangles) and collides the same,
+so the merged visual-only clutter (shrubs, pebbles) and the far field are
+GLB. gz does not rotate glTF's Y-up frame to its Z-up one (M: render
+prototype), so write_glb writes the world frame as it is: x east, y north,
+z up.
 """
 import functools
+import json
 import math
+import struct
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -221,3 +232,210 @@ def drape_rect(hf, cx, cy, length, width, yaw=0.0, offset=0.03, step=0.5, tile=4
             a, b, d = i * n + j, i * n + j + 1, (i + 1) * n + j
             F += [(a, b, d + 1), (a, d + 1, d)]  # counter-clockwise seen from above
     return V, np.array(F, int), UV
+
+
+# --- Clutter shapes (design spec 5.5) ----------------------------------------------------
+
+SLAB_VARIANTS = 8  # slab outlines every world's slabs are drawn from
+SLAB_HEIGHT = 0.4  # height / diameter of a tabular block (M: DSM top-hat, H/D ~ 0.4)
+SLAB_CHAMFER = 0.04  # [x diameter] the 45 deg bevel round a slab's top edge (A)
+
+
+@functools.lru_cache(maxsize=None)
+def slab(variant):
+    """Tabular block `variant` (< SLAB_VARIANTS): an irregular 6-10-gon of
+    equivalent diameter 1 (the area of a unit-diameter disc) extruded to
+    SLAB_HEIGHT, its top edge bevelled; the origin at the bottom centre.
+    Scale it by the block's diameter D (its height also by U(0.7, 1.3)),
+    then tilt and bury it where it is placed. Sides, bevel, top and bottom
+    have their own vertices, so a slab shades flat-faced, not like a pebble.
+    Returns (V, F), a closed mesh."""
+    rng = np.random.default_rng(2000 + variant)
+    k = int(rng.integers(6, 11))
+    theta = (np.arange(k) + rng.uniform(-0.3, 0.3, k)) * 2 * np.pi / k
+    radius = rng.uniform(0.7, 1.0, k)
+    outline = np.stack([radius * np.cos(theta), radius * np.sin(theta)], axis=1)
+    x, y = outline.T
+    area = 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    outline *= math.sqrt(math.pi / 4 / area)
+    inset = outline * (1 - SLAB_CHAMFER / np.linalg.norm(outline, axis=1, keepdims=True))
+
+    def ring(xy, z):
+        return np.column_stack([xy, np.full(k, z)])
+
+    bottom, shoulder, top = ring(outline, 0.0), ring(outline, SLAB_HEIGHT - SLAB_CHAMFER), ring(inset, SLAB_HEIGHT)
+    return combine([_band(bottom, shoulder), _band(shoulder, top), _fan(top, (0.0, 0.0, SLAB_HEIGHT)),
+                    _fan(bottom[::-1], (0.0, 0.0, 0.0))])
+
+
+def _band(lower, upper):
+    """The quads between two closed rings of equal length (counter-clockwise
+    seen from above), each with its own four vertices, facing outwards."""
+    k = len(lower)
+    V, F = [], []
+    for i in range(k):
+        j = (i + 1) % k
+        V += [lower[i], lower[j], upper[j], upper[i]]
+        F += [(4 * i, 4 * i + 1, 4 * i + 2), (4 * i, 4 * i + 2, 4 * i + 3)]
+    return np.array(V), np.array(F)
+
+
+def _fan(ring, centre):
+    """A polygon as a triangle fan round `centre`, facing the side from which
+    `ring` runs counter-clockwise."""
+    k = len(ring)
+    return np.vstack([ring, centre]), np.array([(i, (i + 1) % k, k) for i in range(k)])
+
+
+def riser_strip(polyline, height, depth, seed=0, bury=0.3, step=0.5, roughness=0.05):
+    """A ledge (design spec 5.5): a step `height` tall standing on the ground
+    along `polyline`, its face looking to the right of the polyline's
+    direction (downhill) and its flat top reaching `depth` metres to the left
+    (uphill, where the slope buries its back), its foot `bury` metres into
+    the ground. polyline: (n, 2) points, or (n, 3) points on the ground (z
+    default 0), resampled every `step` metres. The face wanders in and out
+    by `roughness` x height and its top edge up and down by as much (seeded,
+    A), so it does not read as a kerb. Face, top, back, bottom and ends have
+    their own vertices (sharp edges). Returns (V, F), a closed mesh."""
+    P = np.asarray(polyline, float)
+    if P.shape[1] == 2:
+        P = np.column_stack([P, np.zeros(len(P))])
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P[:, :2], axis=0), axis=1))])
+    t = np.linspace(0.0, s[-1], max(2, int(math.ceil(s[-1] / step)) + 1))
+    P = np.stack([np.interp(t, s, P[:, k]) for k in range(3)], axis=1)
+    d = np.gradient(P[:, :2], axis=0)
+    left = np.stack([-d[:, 1], d[:, 0]], axis=1) / np.linalg.norm(d, axis=1, keepdims=True)
+    rng = np.random.default_rng(seed)
+    knots = np.linspace(0.0, t[-1], max(2, len(t) // 4))
+
+    def wobble():
+        return np.interp(t, knots, rng.uniform(-1, 1, len(knots)))
+
+    face = P[:, :2] + roughness * height * wobble()[:, None] * left
+    back = P[:, :2] + depth * left
+    top_z = P[:, 2] + height * (1 + roughness * wobble())
+    foot_z = P[:, 2] - bury
+    A, B = np.column_stack([face, foot_z]), np.column_stack([face, top_z])  # the face: foot, top edge
+    C, D = np.column_stack([back, top_z]), np.column_stack([back, foot_z])  # the back: top, foot
+    return combine([_strip(A, B), _strip(B, C), _strip(C, D), _strip(D, A),
+                    _fan(np.array([A[0], B[0], C[0], D[0]]), (A[0] + C[0]) / 2),
+                    _fan(np.array([A[-1], D[-1], C[-1], B[-1]]), (A[-1] + C[-1]) / 2)])
+
+
+def _strip(lower, upper):
+    """Quads between two polylines of equal length, facing the side to which
+    lower -> upper turns counter-clockwise from the polylines' direction."""
+    n = len(lower)
+    F = [f for i in range(n - 1) for f in ((i, i + 1, n + i + 1), (i, n + i + 1, n + i))]
+    return np.vstack([lower, upper]), np.array(F)
+
+
+@functools.lru_cache(maxsize=None)
+def shrub_lowpoly(variant):
+    """Desert shrub `variant` (< SHRUB_VARIANTS) for the merged GLB chunks:
+    6-10 jittered icosahedron clumps of 20 triangles (9,208 such shrubs made
+    1.48 M triangles in the render prototype, M), filling a crown of
+    diameter 1 and height 1 above the origin on the ground. Scale it by the
+    shrub's diameter and height. Returns (V, F)."""
+    rng = np.random.default_rng(700 + variant)
+    V0, F0 = icosphere(0)
+    parts = []
+    for _ in range(int(rng.integers(6, 11))):
+        r = rng.uniform(0.11, 0.21)
+        ox, oy = rng.normal(0, 0.22, 2)
+        oz = max(rng.uniform(0.2, 1.0), r * 0.5)
+        jitter = 1 + 0.35 * rng.uniform(-1, 1, (len(V0), 1))
+        parts.append((V0 * jitter * [r, r, r * rng.uniform(0.7, 1.1)] + [ox, oy, oz], F0))
+    V, F = combine(parts)
+    lo, hi = V.min(axis=0), V.max(axis=0)
+    return (V - [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]]) / (hi - lo), F
+
+
+PEBBLE_VARIANTS = 12  # pebble shapes (render prototype: 12)
+
+
+@functools.lru_cache(maxsize=None)
+def pebble(variant, subdivisions=1):
+    """Pebble `variant` (< PEBBLE_VARIANTS): a flattish rock about 1 across
+    and 0.55 high (render prototype), the origin at its bottom centre;
+    subdivisions 0 (20 triangles) for the smallest. Scale it by the
+    pebble's diameter and sink it about a third. Returns (V, F)."""
+    return rock(3000 + variant, (0.5, 0.5, 0.275), roughness=0.25, subdivisions=subdivisions, flat_bottom=0.3)
+
+
+# --- Binary glTF ------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Material:
+    """A glTF metallic-roughness material: base colour [0-1, linear] times
+    the texture (a PNG embedded in the file), if any. A model's SDF
+    <material> overrides it (the far field takes its shared texture so)."""
+    color: tuple = (1.0, 1.0, 1.0)
+    roughness: float = 1.0
+    texture: str = None  # path of a PNG
+
+
+def write_glb(path, V, F, N=None, UV=None, texture=None, color=(1.0, 1.0, 1.0), roughness=1.0):
+    """One mesh in one material as a binary glTF file (write_glb_parts)."""
+    write_glb_parts(path, [(V, F, N, UV, Material(tuple(color), roughness, texture))])
+
+
+def write_glb_parts(path, parts):
+    """A binary glTF file of one mesh with a primitive per part [(V, F, N,
+    UV, Material)]: one file and one visual for many colours. Vertices in
+    the world frame (x east, y north, z up: see the module notes), triangles
+    counter-clockwise seen from outside; N None: area-weighted normals; UV
+    None: no texture coordinates."""
+    blob = bytearray()
+    views, accessors, primitives, materials, images = [], [], [], [], []
+
+    def view(data, target=None):
+        blob.extend(b"\0" * (-len(blob) % 4))
+        views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data),
+                      **({"target": target} if target else {})})
+        blob.extend(data)
+        return len(views) - 1
+
+    def accessor(array, kind, component, target, bounds=False):
+        entry = {"bufferView": view(array.tobytes(), target), "componentType": component,
+                 "count": int(len(array)), "type": kind}
+        if bounds:
+            entry["min"] = [float(v) for v in array.min(axis=0)]
+            entry["max"] = [float(v) for v in array.max(axis=0)]
+        accessors.append(entry)
+        return len(accessors) - 1
+
+    for V, F, N, UV, material in parts:
+        V, F = np.asarray(V, float), np.asarray(F, int)
+        N = vertex_normals(V, F) if N is None else np.asarray(N, float)
+        attributes = {"POSITION": accessor(V.astype(np.float32), "VEC3", 5126, 34962, bounds=True),
+                      "NORMAL": accessor(N.astype(np.float32), "VEC3", 5126, 34962)}
+        if UV is not None:
+            attributes["TEXCOORD_0"] = accessor(np.asarray(UV, np.float32), "VEC2", 5126, 34962)
+        indices = accessor(F.astype(np.uint32).reshape(-1), "SCALAR", 5125, 34963)
+        primitives.append({"attributes": attributes, "indices": indices, "material": len(materials)})
+        materials.append(_gltf_material(material, images, view))
+    gltf = {"asset": {"version": "2.0", "generator": "sim/urc/meshes.py"}, "scene": 0,
+            "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}], "meshes": [{"primitives": primitives}],
+            "materials": materials, "buffers": [{"byteLength": len(blob)}], "bufferViews": views,
+            "accessors": accessors}
+    if images:
+        gltf["images"] = images
+        gltf["samplers"] = [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}]
+        gltf["textures"] = [{"source": i, "sampler": 0} for i in range(len(images))]
+    text = json.dumps(gltf, separators=(",", ":")).encode()
+    text += b" " * (-len(text) % 4)
+    blob.extend(b"\0" * (-len(blob) % 4))
+    with open(path, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(text) + 8 + len(blob)))  # "glTF", version 2
+        f.write(struct.pack("<II", len(text), 0x4E4F534A) + text)  # chunk "JSON"
+        f.write(struct.pack("<II", len(blob), 0x004E4942) + bytes(blob))  # chunk "BIN"
+
+
+def _gltf_material(material, images, view):
+    pbr = {"baseColorFactor": [float(c) for c in material.color] + [1.0], "metallicFactor": 0.0,
+           "roughnessFactor": float(material.roughness)}
+    if material.texture is not None:
+        images.append({"bufferView": view(Path(material.texture).read_bytes()), "mimeType": "image/png"})
+        pbr["baseColorTexture"] = {"index": len(images) - 1}
+    return {"pbrMetallicRoughness": pbr}

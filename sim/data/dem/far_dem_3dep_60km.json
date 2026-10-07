@@ -23,6 +23,6 @@
   1145.1,
   3505.3
  ],
- "use": "far-field visual ring (Henry Mountains, Factory Butte, Caineville mesas) for the URC worlds; see prototype/far.py",
+ "use": "far-field visual ring (Henry Mountains, Factory Butte, Caineville mesas) around the URC worlds: sim/urc/farfield.py (prototype: research/render/prototype/far.py)",
  "size_bytes": 9439142
 }
