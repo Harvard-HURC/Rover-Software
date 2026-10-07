@@ -578,6 +578,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(image.shape, (1024, 1024, 3))
         self.assertEqual((meta["tiles_per_side"], meta["gsd_m"]), (2, 0.25))
         self.assertEqual(state, ("current", []))
+        self.assertIn(str(path.resolve()), meta["inputs"], "file:// inputs count too")
         for name, (x, y, channel) in places.items():
             mask = colour_mask(image, channel)
             if name == "red":

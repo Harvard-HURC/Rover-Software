@@ -81,6 +81,7 @@ JPEG_QUALITY = 88  # 2-3.3 MB at 4096 px (prototype)
 MEDIA_DIFF = SIM_DIR / "patches" / "gz-rendering8-ogre2-media.diff"  # the media patch (gz_media.py)
 ROVER_INCLUDE = re.compile(r"<include>\s*<uri>model://rover</uri>.*?</include>", re.S)
 MODEL_URI = re.compile(r"model://([^<>\s\"']+)")
+FILE_URI = re.compile(r"file://(/[^<>\s\"']+)")
 
 
 # --- Inputs and staleness ------------------------------------------------------------------
@@ -132,22 +133,24 @@ def _key(path):
 
 def inputs(world_path):
     """{file: SHA1} of everything the map shows: the world SDF and every
-    file referenced through model:// from it and from the models it includes
-    (heightmaps, colour maps, meshes, textures), except the rover, which the
-    map leaves out; plus "media": which gz-rendering media render it (the
-    patch's SHA1, or "stock")."""
+    file referenced through model:// or file:// from it and from the models
+    it includes (heightmaps, colour maps, meshes, textures), except the rover,
+    which the map leaves out; plus "media": which gz-rendering media render it
+    (the patch's SHA1, or "stock")."""
     dirs = _resource_dirs()
     out = {_key(world_path): _sha1(world_path)}
     pending = [ROVER_INCLUDE.sub("", Path(world_path).read_text())]
     seen = set()
     while pending:
-        for uri_path in MODEL_URI.findall(pending.pop()):
-            if uri_path in seen:
+        text = pending.pop()
+        uris = [(f"model://{u}", _resolve(u, dirs)) for u in MODEL_URI.findall(text)]
+        uris += [(f"file://{u}", Path(u) if Path(u).is_file() else None) for u in FILE_URI.findall(text)]
+        for uri, path in uris:
+            if uri in seen:
                 continue
-            seen.add(uri_path)
-            path = _resolve(uri_path, dirs)
+            seen.add(uri)
             if path is None:
-                out[f"model://{uri_path}"] = "missing"
+                out[uri] = "missing"
                 continue
             out[_key(path)] = _sha1(path)
             if path.suffix == ".sdf":
@@ -221,9 +224,10 @@ def camera_world(world_text, fly, pose):
 class FlyServer:
     """A world served headless by `gz sim -s -r`, with a fly camera in it:
     jump the camera, set its mode, read its state and its frames. The server
-    gets this process's environment (gzenv.environment(), with the same
-    transport partition). Only publishing and subscribing, no service calls
-    (README "Gazebo lessons": blocking requests stall)."""
+    inherits this process's environment, which main() (or tests/simulate.py)
+    set with gzenv, so both share a transport partition. Only publishing and
+    subscribing, no service calls (README "Gazebo lessons": blocking requests
+    stall)."""
 
     def __init__(self, world_path, start_timeout=300.0):
         self.world_path = Path(world_path)
