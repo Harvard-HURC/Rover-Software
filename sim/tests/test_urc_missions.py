@@ -352,6 +352,26 @@ class Delivery(unittest.TestCase):
                   for o in self.sheet["objects"].values())
         self.assertGreater(far, 600)
 
+    def test_wash_can_be_driven_into_and_out_of(self):
+        """D6's spectrometer lies in the wash and the way to the ridge pass
+        crosses it: across the wash its banks stay below the 23 deg the
+        bare ground climbs (features.WASH_BANK plus the terrain's own slope),
+        except where it cuts through the ridge."""
+        hf = world_terrain("urc_delivery")
+        wash = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["wash"]]
+        ridge = [(p["x"], p["y"]) for p in self.sheet["judges_only"]["ridge"]]
+        points = terrain.resample(wash, 20.0)
+        climb = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        crossings = 0
+        for a, b, c in zip(points, points[1:], points[2:]):
+            if terrain.path_distance(ridge, *b)[0] < 76.0:  # the ridge reaches 46 m out, the profile 30 m
+                continue
+            n = np.array([a[1] - c[1], c[0] - a[0]]) / math.dist(a, c)
+            profile = [hf.height(*(b + u * n)) for u in np.arange(-30.0, 30.01, 0.5)]
+            self.assertLess(np.degrees(np.arctan(np.abs(np.diff(profile)) / 0.5)).max(), climb, tuple(b))
+            crossings += 1
+        self.assertGreater(crossings, 20)
+
     def test_terrain_gets_harder(self):
         hf = delivery.make_terrain()
         near = hf.slope_map()[hf.radial(0, 0) < 150]

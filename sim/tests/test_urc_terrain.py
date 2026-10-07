@@ -117,6 +117,16 @@ class Features(unittest.TestCase):
         features.Wash("wash", path, depth=2.0, half_width=6.0, sand_radius=6.0).shape(bumpy_slope())
         features.Wash("wash", path, depth=0.0, half_width=6.0, sand_radius=6.5).shape(bumpy_slope())  # no channel
 
+    def test_wash_banks_are_crossable(self):
+        """A channel's banks rise no steeper than its `bank` (WASH_BANK: the
+        rover drives in and out anywhere), however deep it is."""
+        for depth in (1.0, 3.5):
+            hf = terrain.Heightfield(128.0, 513)
+            features.Wash("wash", ((-60.0, 0.0), (60.0, 0.0)), depth=depth).shape(hf)
+            self.assertAlmostEqual(-hf.z.min(), depth, places=6)
+            self.assertLess(hf.slope_map()[:, 100:-100].max(), features.WASH_BANK + 0.2, depth)
+            self.assertGreater(hf.slope_map()[:, 100:-100].max(), features.WASH_BANK - 0.5, depth)
+
     def test_patches_keep_the_ground(self):
         """A zone only paints the ground: a patch leaves the terrain as it is."""
         hf = bumpy_slope()
