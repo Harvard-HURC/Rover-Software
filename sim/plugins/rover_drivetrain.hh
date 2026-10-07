@@ -179,19 +179,21 @@ struct ContactParams {
 /// The friction of one wheel contact. mu: the ground's coefficient at this contact (StribeckMu x NoiseFactor);
 /// slip_velocity: the wheel's material point relative to the ground, in the contact plane; wheel_speed: |w r|
 /// [m/s]; load: the wheel's load over its contact count [N]; stick: the sticking direction (StickDirection).
-/// Sliding contacts get a friction circle (friction along the slip only) and the force-dependent slip of gz's
-/// WheelSlip convention, slip x wheel speed / load, with no speed floor (D23); sticking contacts an aligned box
-/// and no compliance, so a parked rover does not creep.
+/// Sliding contacts get a friction circle (friction along the slip only), sticking ones a box aligned with the
+/// expected load. Both get the force-dependent slip of gz's WheelSlip convention, slip x wheel speed / load,
+/// with no speed floor (D23): a stopped wheel has none, so a parked rover does not creep. (Design spec 6.4 also
+/// zeroes it while sticking; but the contact of a wheel rolling under traction barely moves over the ground,
+/// so that would forbid all rolling slip: measured 0.0 % instead of 20 % in sand.)
 inline ContactFriction Friction(const ContactParams& p, const Traction& ground, double mu,
                                 const gz::math::Vector3d& slip_velocity, double wheel_speed, double load,
                                 const gz::math::Vector3d& stick) {
   ContactFriction out;
   const double s = slip_velocity.Length();
   out.mu1 = mu;
+  out.compliance = ground.slip * wheel_speed / std::max(load, 5.0);
   if (s > p.v_align) {
     out.direction = slip_velocity / s;
     out.mu2 = mu * p.perp_ratio;
-    out.compliance = ground.slip * wheel_speed / std::max(load, 5.0);
   } else {
     out.direction = stick;
     out.mu2 = mu * p.stick_perp_ratio;

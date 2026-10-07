@@ -98,7 +98,10 @@ class DriveParams:
     stick_perp_ratio: float = 0.3  # mu across the expected load while sticking: holds within 4.4 % of mu_s
     mu_noise: float = 0.2  # spatial mu variation (A)
     mu_noise_length: float = 0.3  # [m] (A)
-    rr_w0: float = 0.2  # [rad/s] rolling resistance and bulldozing fade in over this wheel speed (A)
+    # [rad/s] x radius: rolling resistance and bulldozing fade in over this hub speed (A; design spec 6.2 has
+    # 0.2, but at 3 cm/s the fade lets a dug-in rover creep round at 0.25 x the fresh rate instead of sticking;
+    # at 0.05 it turns 0.07 x, measured).
+    rr_w0: float = 0.05
     dig: str = "strong"  # DIG_PRESETS key, or "off"
     dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
     default_surface: str = "regolith"  # terrains.TYPES key: ground where the world has no ground map

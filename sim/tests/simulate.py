@@ -292,7 +292,7 @@ def surface_pose(hf, x, y, yaw, lift=0.02):
 
 @contextlib.contextmanager
 def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_options=None, terrain_extra="",
-                 extra="", rover_uri=ROVER_URI, params=None, solver=None):
+                 extra="", rover_uri=ROVER_URI, params=None, solver=None, gravity=(0.0, 0.0, -9.8)):
     """Path of a world on a synthetic terrain with a ground map, in a
     temporary directory. hf: a terrain.Heightfield centred on the origin, the
     collision heightmap (shifted so its lowest sample is z = 0, as Gazebo
@@ -301,7 +301,9 @@ def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_o
     rows and ground_options (ground_json's keywords): ground.json. The rover:
     model rover_uri, or one built from Params `params`, at rover = (x, y,
     yaw), `lift` above the terrain and tilted to its slope. terrain_extra:
-    SDF of more shapes in the terrain's link; extra: SDF of more models."""
+    SDF of more shapes in the terrain's link; extra: SDF of more models;
+    gravity [m/s^2] (SDF's default; tilted, flat ground stands in for a slope
+    the rover starts on without a landing jolt)."""
     z = np.asarray(hf.z, dtype=float) - float(np.min(hf.z))
     if z.max() <= 0:
         z[0, 0] = 0.001
@@ -321,6 +323,7 @@ def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_o
         world.write_text(f"""<?xml version="1.0"?>
 <sdf version="1.11">
   <world name="ground_test">
+    <gravity>{" ".join(f"{g:.9g}" for g in gravity)}</gravity>
     <physics name="1ms" type="dart">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>0</real_time_factor>{_solver_sdf(solver)}

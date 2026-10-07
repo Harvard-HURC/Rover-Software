@@ -119,6 +119,7 @@ struct Wheel {
   gz::math::Pose3d pose;
   Vector3d velocity, angular, axle = Vector3d::UnitY;
   double speed = 0.0, angle = 0.0;  // joint [rad/s], [rad]
+  double spin = 0.0;  // joint speed through the controller's speed filter [rad/s]
   // From the last PostUpdate: load [N] and the contact force's tangential part [N].
   double load = 0.0;
   Vector3d tangential;
@@ -182,7 +183,7 @@ class RoverDrivetrain : public gz::sim::System,
     c.stick_perp_ratio = Child(sdf, "contact", "stick_perp_ratio", c.stick_perp_ratio);
     c.mu_noise = Child(sdf, "contact", "mu_noise", c.mu_noise);
     c.mu_noise_length = Child(sdf, "contact", "mu_noise_length", c.mu_noise_length);
-    rr_speed_ = Child(sdf, "contact", "rr_w0", 0.2) * radius_;
+    rr_speed_ = Child(sdf, "contact", "rr_w0", 0.05) * radius_;
     dig_rate_gain_ = Child(sdf, "contact", "dig_rate_gain", 1.0);
     dig_max_gain_ = Child(sdf, "contact", "dig_max_gain", 1.0);
     dig_heal_length_ = Child(sdf, "contact", "dig_heal_length", 0.3);
@@ -302,6 +303,7 @@ class RoverDrivetrain : public gz::sim::System,
       const auto angle = w.joint.Position(ecm);
       w.speed = speed && !speed->empty() ? (*speed)[0] : 0.0;
       w.angle = angle && !angle->empty() ? (*angle)[0] : 0.0;
+      w.spin += dt / (motor_.speed_filter + dt) * (w.speed - w.spin);
 
       double target = (vx - w.side * wz * track_ / 2) / radius_;
       w.ramp.LimitVelocity(target);
@@ -356,7 +358,7 @@ class RoverDrivetrain : public gz::sim::System,
       cmd_ = {0.0, 0.0};
     }
     for (auto& w : wheels_) {
-      w.setpoint = 0.0;
+      w.setpoint = w.spin = 0.0;
       w.motor.Reset();
       w.dig = drive::Dig();
       w.load = 0.0;
@@ -481,15 +483,19 @@ class RoverDrivetrain : public gz::sim::System,
     Wheel& w = *wheel;
     Vector3d n = normal.value_or(Vector3d::UnitZ).Normalized();
     if (n.Dot(w.pose.Pos() - point) < 0) n = -n;  // the ground's normal, into the wheel
-    const Vector3d v = w.velocity + w.angular.Cross(point - w.pose.Pos());
+    // The wheel's material point over the ground, with the wheel's spin read through the speed filter: the
+    // 1 ms coupling of the contacts, the motor and DART makes a wheel chatter at ~250 Hz (+-0.1 rad/s parked),
+    // which would otherwise flip the slip direction every step and keep the contact sliding (measured: a rover
+    // parked across 29 deg regolith crept downhill at 2 cm/s).
+    const Vector3d omega = w.angular - w.axle * (w.speed - w.spin);
+    const Vector3d v = w.velocity + omega.Cross(point - w.pose.Pos());
     const Vector3d slip = v - n * v.Dot(n);
     const Traction& ground = Surface(other, point);
     const double mu = drive::StribeckMu(ground, slip.Length(), contact_.v_stribeck) *
                       drive::NoiseFactor(point.X(), point.Y(), contact_.mu_noise, contact_.mu_noise_length);
-    const Vector3d stick =
-        drive::StickDirection(w.tangential, w.load, gravity_, w.axle.Cross(n), n);
+    const Vector3d stick = drive::StickDirection(w.tangential, w.load, gravity_, w.axle.Cross(n), n);
     const double share = w.load / std::max<size_t>(count, 1);
-    const auto f = drive::Friction(contact_, ground, mu, slip, std::abs(w.speed * radius_), share, stick);
+    const auto f = drive::Friction(contact_, ground, mu, slip, std::abs(w.spin * radius_), share, stick);
     params.firstFrictionalDirection = Eigen::Vector3d(f.direction.X(), f.direction.Y(), f.direction.Z());
     params.frictionCoeff = f.mu1;
     params.secondaryFrictionCoeff = f.mu2;

@@ -101,8 +101,8 @@ void DigIn() {
   CHECK(still.factor == 1.0);
 }
 
-/// The friction of a contact: a circle along the slip with force-dependent slip while sliding, a box aligned
-/// with the expected load and no compliance while sticking.
+/// The friction of a contact: a circle along the slip while sliding, a box aligned with the expected load while
+/// sticking; force-dependent slip from the wheel's own speed, none for a stopped wheel.
 void Friction() {
   const drive::ContactParams p;
   const Traction sand = Sand();
@@ -113,9 +113,12 @@ void Friction() {
   CHECK_NEAR(sliding.compliance, 1.0 * 0.4 / 50.0, 1e-12);
   const auto light = drive::Friction(p, sand, 0.5, Vector3d(0.3, 0.4, 0.0), 0.4, 1.0, stick);
   CHECK_NEAR(light.compliance, 0.4 / 5.0, 1e-12);  // loads under 5 N count as 5 N
-  const auto stuck = drive::Friction(p, sand, 0.5, Vector3d(0.004, 0.0, 0.0), 0.4, 50.0, stick);
-  CHECK(stuck.direction == stick && stuck.mu1 == 0.5 && stuck.compliance == 0.0);
-  CHECK_NEAR(stuck.mu2, 0.15, 1e-12);
+  const auto rolling = drive::Friction(p, sand, 0.5, Vector3d(0.004, 0.0, 0.0), 0.4, 50.0, stick);
+  CHECK(rolling.direction == stick && rolling.mu1 == 0.5);
+  CHECK_NEAR(rolling.mu2, 0.15, 1e-12);
+  CHECK_NEAR(rolling.compliance, 1.0 * 0.4 / 50.0, 1e-12);
+  const auto parked = drive::Friction(p, sand, 0.5, Vector3d(0.004, 0.0, 0.0), 0.0, 50.0, stick);
+  CHECK(parked.compliance == 0.0);
 
   // The sticking direction: the last tangential force, else downhill, else the heading.
   const Vector3d g(0, 0, -9.81), heading = Vector3d::UnitX;
