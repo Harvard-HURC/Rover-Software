@@ -542,7 +542,7 @@ def golombek_cover(k, d):
     return k * np.exp(-(1.79 + 0.152 / k) * np.asarray(d, float))
 
 
-def _avoid_mask(hf, avoid, clearance):
+def avoid_mask(hf, avoid, clearance):
     """Samples within clearance of any of the layout points `avoid`."""
     out = np.zeros((hf.n, hf.n), np.uint8)
     if len(avoid) and clearance > 0:
@@ -568,7 +568,7 @@ def place(hf, raster, kind, rng, avoid=(), clearance=0.0, legend=None, within=No
     cover the Golombek fraction of their size range. Shrubs: per_ha, height
     and diameter uniform. Risers: rise_traces()."""
     legend = legend or Legend()
-    blocked = _avoid_mask(hf, avoid, clearance)
+    blocked = avoid_mask(hf, avoid, clearance)
     allowed = ~blocked if within is None else (~blocked & np.asarray(within, bool))
     out = []
     for i in np.unique(raster):

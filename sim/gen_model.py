@@ -40,6 +40,7 @@ CAMERA_TOPIC = "/model/rover/camera"  # rgbd: /image, /depth_image, /points, /ca
 LED_TOPIC = "/model/rover/led"  # set by the rover's software, shown by sim/referee.py
 DRIVETRAIN_TOPIC = "/model/rover/drivetrain"  # physical drivetrain: gz.msgs.StringMsg, JSON (design spec 9.3)
 DUST_TOPIC = "/model/rover/link/{link}/particle_emitter/{emitter}/cmd"  # gz.msgs.ParticleEmitter
+DUST_SPRITE = "materials/textures/dust_puff.png"  # in the rover model: a soft dust puff (textures.dust_puff)
 LED_VISUAL = "led_visual"
 # The camera's pan-tilt head: gz.msgs.Double target angles [rad].
 PAN_JOINT = "camera_pan_joint"
@@ -363,7 +364,8 @@ def _add_dust_emitter(link, p, name):
     """A particle emitter at the ground behind the rocker's rear wheel (on the rocker: a wheel link spins),
     idle until the physical drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not
     emitting (SDF's default is to emit); scatter ratio 0 is meant to keep its particles out of the depth
-    image and point cloud (Q11), but gz-rendering 8 ignores it (measured: tests/test_render.py)."""
+    image and point cloud (Q11), but gz-rendering 8 ignores it (measured: tests/test_render.py). Each particle
+    is the soft puff sprite DUST_SPRITE, tinted by the colours (M: the render research's tuned plume)."""
     from urc import terrains  # here: the catalogue imports the texture generators
     d = p.drive
     emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
@@ -381,6 +383,8 @@ def _add_dust_emitter(link, p, name):
     sdf.sub(emitter, "color_end", (*terrains.DUST_RGB, 0.0))
     sdf.sub(emitter, "topic", DUST_TOPIC.format(link=link.get("name"), emitter=name))
     sdf.sub(emitter, "particle_scatter_ratio", 0.0)
+    sdf.sub(sdf.sub(sdf.sub(sdf.sub(emitter, "material"), "pbr"), "metal"), "albedo_map",
+            sdf.model_uri(MODEL_DIR.name, DUST_SPRITE))
 
 
 def _add_wheel(model, p, side, name, sign, ahead):
@@ -496,10 +500,14 @@ def __getattr__(name):
 
 
 def main():
+    from urc import textures  # here: only main writes files
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     out = MODEL_DIR / "model.sdf"
     out.write_text(build_sdf(Params()))
-    print(f"wrote {out}")
+    sprite = MODEL_DIR / DUST_SPRITE
+    sprite.parent.mkdir(parents=True, exist_ok=True)
+    textures.dust_puff(sprite)
+    print(f"wrote {out} and {sprite.relative_to(MODEL_DIR)}")
     import viewers  # here, not at the top: viewers imports this module
     viewers.write_all(MODELS_DIR)
 

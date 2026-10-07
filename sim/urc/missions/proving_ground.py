@@ -95,8 +95,12 @@ def make_terrain():
     hf.flatten(*ROVER[:2], 6.0, 6.0, z=0.0)
     features.shape(hf, FEATURES)
     # Micro-relief only on the natural strips: everything else is engineered.
-    return add_relief(hf, [landscape.Base(terrains.DEFAULT_GROUND)], NATURAL, seed=23,
-                      within=landscape.only(hf, [strip.polygon() for strip in NATURAL]))
+    return add_relief(hf, [landscape.Base(terrains.DEFAULT_GROUND)], NATURAL, seed=23, within=natural(hf))
+
+
+def natural(hf):
+    """Where the course has natural micro-relief (landscape.only): the natural strips."""
+    return landscape.only(hf, [strip.polygon() for strip in NATURAL])
 
 
 def lane_info(lane, v=0.0):
@@ -178,8 +182,7 @@ def build(models_dir, worlds_dir, media):
                   ["NATURAL GROUND", title.upper()], (west_sign, strip.start[1] + strip.width / 2 + 1.5), EAST,
                   ground=kind.key, grade_deg=strip.grade, length_m=strip.length, width_m=strip.width,
                   heading_deg=round(math.degrees(strip.yaw) % 360, 1))
-    natural = landscape.only(hf, [strip.polygon() for strip in NATURAL], ease=0.5) > 0.5
-    w.clutter(within=natural, avoid=w.keep_clear(), clearance=2.0)
+    w.clutter(within=natural(hf) > 0, avoid=w.keep_clear(), clearance=2.0)
     (x, y, radius), (count, sizes) = BOULDER_FIELD, BOULDERS
     w.rock_field("boulder_field", w.scatter(count, (x, y), radius, sizes, avoid=w.keep_clear(), clearance=2.0))
     w.station("boulder_field", x - radius, y, "Boulder field",

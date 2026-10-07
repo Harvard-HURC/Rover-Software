@@ -98,6 +98,7 @@ PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120
 PADS = [(*C2[:2], 30.0), (*GATE, 4.0), (*TOOLBOX, 5.0), (*ASTRONAUT_A, 4.0), (*ASTRONAUT_B, 4.0), (*WATER_JUG, 3.0),
         (*SUPPLY_CRATE, 3.0), (*CRATE_HILL, 5.0), (*FIELD_SIGN, 3.0), (*INSTRUMENT_CASE, 3.0), (*FIRST_AID, 3.0),
         (*ASTRONAUT_C, 4.0), (*SPECTROMETER, 3.0)]  # x, y, radius: kept flat (design 5.4)
+RELIEF = dict(features=FEATURES + BADLANDS, pads=PADS, paths=[(tuple(RIDGE_PASS), 7.0)])  # kept flat (design 5.4)
 COURSE = [GATE, TOOLBOX, ASTRONAUT_A, WATER_JUG, ASTRONAUT_B, SUPPLY_CRATE, CRATE_HILL, FIELD_SIGN, INSTRUMENT_CASE,
           FIRST_AID, RIDGE_PASS[0], RIDGE_PASS[1], ASTRONAUT_C, SPECTROMETER]  # the legs, in task order
 COURSE_GRAVEL = 15.0  # [m] gravel lies within this of the course (A: the clutter budget, design D10)
@@ -118,8 +119,9 @@ def make_terrain():
     hf.flatten(*TOOLBOX, 4.0, 6.0)
     hf.flatten(*ASTRONAUT_A, 3.0, 4.0)
     hf.flatten(*ASTRONAUT_B, 3.0, 4.0)
-    # Below 4 m the ground is MDRS's own (the 35 m octave halved: with the relief, 16 m roughness is the real p50).
-    return add_relief(hf, PAINT, FEATURES + BADLANDS, PADS, [(tuple(RIDGE_PASS), 7.0)], seed=17)
+    # Below 4 m the ground is MDRS's own (the 35 m octave halved: with the relief, 16 m roughness is the real p50),
+    # rougher with distance too: at the start half as rough (A).
+    return add_relief(hf, PAINT, seed=17, within=0.5 + 0.5 * rough, **RELIEF)
 
 
 def sign_lines(w):

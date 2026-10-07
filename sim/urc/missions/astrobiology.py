@@ -83,6 +83,9 @@ PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120
 STRATA = {"badland_slope": appearance.Strata(bands=(terrains.NAIP["maroon"], terrains.NAIP["grey_shale"],
                                                     (160, 138, 135), terrains.NAIP["white"]))}
 CAPROCK_Z = 16.0  # [m] above C2: the hills' sandstone caps, where slab joints show
+STAKE_PADS = [(BOUNDARY_RADIUS * math.cos(a), BOUNDARY_RADIUS * math.sin(a), 3.0)
+              for a in (2 * math.pi * k / STAKES for k in range(STAKES))]
+RELIEF = dict(features=FEATURES + BADLANDS, pads=[(*C2[:2], 15.0)] + STAKE_PADS)  # kept flat (design 5.4)
 
 BIOCRUST_NOTES = "Cyanobacteria, lichens and mosses: the highest surface biomass on site."
 UNITS = [
@@ -106,10 +109,7 @@ def make_terrain():
     hf.z -= hf.height(0, 0)
     features.shape(hf, LANDFORMS + FEATURES + BADLANDS)
     hf.flatten(*C2[:2], 15.0, 20.0, z=0.0)
-    stakes = [(BOUNDARY_RADIUS * math.cos(a), BOUNDARY_RADIUS * math.sin(a), 3.0)
-              for a in (2 * math.pi * k / STAKES for k in range(STAKES))]
-    # Below 4 m the ground is MDRS's own (world.add_relief).
-    return add_relief(hf, PAINT, FEATURES + BADLANDS, [(*C2[:2], 15.0)] + stakes, seed=19)
+    return add_relief(hf, PAINT, seed=19, **RELIEF)  # below 4 m the ground is MDRS's own
 
 
 def build(models_dir, worlds_dir, media):

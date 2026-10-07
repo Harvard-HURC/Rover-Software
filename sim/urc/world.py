@@ -638,23 +638,56 @@ class WorldBuilder:
         rock_sizes, slab_sizes: (low, high) [m] instead of the recipes'
         ranges (rocks: the clutter budget; slabs: real-DEM worlds take
         0.15-1 m, design D9). Groups "slabs", "risers" and "gravel" in the
-        sheet."""
+        sheet, with the slabs' size-frequency per ground type (clutter_report)
+        and the shrubs' density."""
         raster = self.ground_map()
         rng = np.random.default_rng([self.seed, 2])  # its own stream: the world's other placements do not move it
 
         def place(kind, **extra):
             return landscape.place(self.hf, raster, kind, rng, avoid, clearance, self.legend, **extra)
 
-        self.slabs("slabs", place("slabs", within=within, sizes=slab_sizes))
+        slabs = place("slabs", within=within, sizes=slab_sizes)
+        self.slabs("slabs", slabs)
+        allowed = ~landscape.avoid_mask(self.hf, avoid, clearance)
+        self.sheet["slabs"]["slabs"]["by_type"] = self.clutter_report(
+            slabs, allowed if within is None else allowed & np.asarray(within, bool))
         self.risers("risers", place("risers", within=within))
         rocks = place("rocks", within=within if rocks_within is None else rocks_within, sizes=rock_sizes)
         self.rock_field("gravel", [(p.x, p.y, p.size, p.yaw) for p in rocks])
         if not shrubs:
             return
         placed = place("shrubs")
+        self.sheet["shrub_density_per_ha"] = {
+            key: round(entry["count"] / entry["area_m2"] * 1e4, 1)
+            for key, entry in self.clutter_report(placed, np.ones(raster.shape, bool), sizes=False).items()}
         meshed = self._inside(within if shrubs_3d is None else shrubs_3d, [(p.x, p.y) for p in placed])
         self.shrubs([(p.x, p.y, p.size, p.height) for p, m in zip(placed, meshed) if m])
         self.shrub_dots([(p.x, p.y, p.size) for p, m in zip(placed, meshed) if not m])
+
+    def clutter_report(self, placements, allowed, sizes=True):
+        """{type key: entry} for placements (landscape.Placement) on the
+        ground raster: the area [m2] of each type where they were allowed
+        (a boolean grid), their count and, with sizes, slabs' cumulative
+        counts N(>=1, 2, 4 m) per 100 m2 and the cover by 1-7 m slabs (design
+        5.5: the measured block fields' size-frequency)."""
+        if not placements:
+            return {}
+        raster = self.ground_map()
+        col, row = (np.round(landscape.Canvas(self.hf, self.legend).pixels([(p.x, p.y) for p in placements]))
+                    .astype(int).reshape(-1, 2).T)
+        under = raster[np.clip(row, 0, self.hf.n - 1), np.clip(col, 0, self.hf.n - 1)]
+        size = np.array([p.size for p in placements])
+        out = {}
+        for i in np.unique(under):
+            area = float(np.count_nonzero((raster == i) & allowed)) * self.hf.res ** 2
+            d = size[under == i]
+            entry = {"area_m2": round(area, 1), "count": int(len(d))}
+            if sizes:
+                entry["per_100m2"] = {str(k): round(float(np.count_nonzero(d >= k)) / area * 100, 4) for k in (1, 2, 4)}
+                big = d[(d >= 1.0) & (d < 7.0)]
+                entry["cover_1_7"] = round(float(np.sum(math.pi / 4 * big * big)) / area, 4)
+            out[self.legend[int(i)].key] = entry
+        return out
 
     def _inside(self, grid, points):
         """Whether each layout point lies on a True sample of a boolean grid

@@ -36,6 +36,7 @@ ROCK_GARDEN = (50.0, 16.0, 20.0, 10.0, 0.18)  # x, y, length, width, rock size: 
 
 PAINT = [landscape.Base("clay_crust"), landscape.Noise("sand_sheet", feature_m=60.0, cover=0.35)]
 PADS = [(*C2[:2], 10.0), (*GATE, 6.0), (*SAMPLE_STAND[:2], 2.0), (*LANDER[:2], 9.0)]  # x, y, radius: kept flat
+RELIEF = dict(pads=PADS)  # kept flat (design 5.4)
 APPROACH_CLEAR = 7.0  # [m] no gravel this close to the drive from the gate to the lander (the apron's half-width)
 
 
@@ -47,7 +48,7 @@ def make_terrain():
     hf.flatten(*GATE, 6.0, 8.0)
     hf.flatten(*SAMPLE_STAND[:2], 2.0, 3.0)
     hf.flatten(*LANDER[:2], 9.0, 8.0)
-    return add_relief(hf, PAINT, pads=PADS, seed=13)
+    return add_relief(hf, PAINT, seed=13, **RELIEF)
 
 
 def lander_point(xyz):
