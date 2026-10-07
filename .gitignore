@@ -27,3 +27,6 @@ sim/data/research/drive/prototype/cpp/build/
 
 # build output of the drivetrain/fly-camera prototypes and tests
 sim/plugins/tests/build/
+
+# agent worktrees and local Claude state
+.claude/
