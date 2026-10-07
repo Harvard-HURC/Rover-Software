@@ -140,17 +140,19 @@ class Meshes(unittest.TestCase):
 
     def test_glb(self):
         """A two-material GLB: positions as given (Z-up), normals, UVs,
-        indices, an embedded alpha-tested texture."""
+        indices, an embedded texture."""
         V, F = meshes.slab(0)
         V2 = V + (0.0, 0.0, 5.0)
         with tempfile.TemporaryDirectory() as d:
             png = Path(d) / "t.png"
-            Image.new("RGBA", (4, 4), (10, 200, 30, 128)).save(png)
+            Image.new("RGB", (4, 4), (10, 200, 30)).save(png)
             path = Path(d) / "m.glb"
             meshes.write_glb_parts(path, [(V, F, None, None, meshes.Material((0.5, 0.4, 0.3))),
-                                          (V2, F, None, V2[:, :2], meshes.Material(texture=str(png), alpha_cutoff=0.5,
-                                                                                   double_sided=True))])
+                                          (V2, F, None, V2[:, :2], meshes.Material(texture=str(png)))])
             gltf, binary = read_glb(path)
+            embedded = gltf["bufferViews"][gltf["images"][0]["bufferView"]]
+            self.assertEqual(binary[embedded["byteOffset"]:embedded["byteOffset"] + embedded["byteLength"]],
+                             png.read_bytes())
         primitives = gltf["meshes"][0]["primitives"]
         self.assertEqual(len(primitives), 2)
         np.testing.assert_allclose(accessor(gltf, binary, primitives[1]["attributes"]["POSITION"]), V2, atol=1e-6)
@@ -160,8 +162,9 @@ class Meshes(unittest.TestCase):
         self.assertNotIn("TEXCOORD_0", primitives[0]["attributes"])
         self.assertAlmostEqual(gltf["accessors"][primitives[1]["attributes"]["POSITION"]]["max"][2], V2[:, 2].max(),
                                places=6)
-        textured = gltf["materials"][1]
-        self.assertEqual((textured["alphaMode"], textured["alphaCutoff"], textured["doubleSided"]), ("MASK", 0.5, True))
+        self.assertEqual(gltf["materials"][1]["pbrMetallicRoughness"]["baseColorTexture"], {"index": 0})
+        np.testing.assert_allclose(accessor(gltf, binary, primitives[1]["attributes"]["TEXCOORD_0"]), V2[:, :2],
+                                   atol=1e-6)
         self.assertEqual(gltf["images"][0]["mimeType"], "image/png")
         self.assertEqual(gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"], [0.5, 0.4, 0.3, 1.0])
 

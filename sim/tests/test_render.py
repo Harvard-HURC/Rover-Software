@@ -23,6 +23,7 @@ import numpy as np
 from worldfiles import SIM_DIR
 
 import gzenv  # noqa: E402  (worldfiles puts sim/ on the path)
+from urc import appearance as A  # noqa: E402
 from urc import dem, farfield, geo, lighting, meshes, props, sdf, terrain  # noqa: E402
 from urc.media import Media  # noqa: E402
 
@@ -206,6 +207,59 @@ class Render(unittest.TestCase):
         p999, p99 = brightest[True]
         self.assertLessEqual(p999, p99 + 15, brightest)
         self.assertGreater(brightest[False][0], brightest[False][1] + 15, brightest)  # the stock glint
+
+    def terra(self, name, hf, layers):
+        """A heightmap visual of hf (its own frame, lowest point 0) with
+        Terra layers [(diffuse, normal, size)] and blends; its <include>."""
+        directory = self.r.models / name
+        directory.mkdir(parents=True, exist_ok=True)
+        _, z_max = hf.write_png(directory / "heightmap.png", 0.0)
+
+        def build(link):
+            g = sdf.sub(sdf.sub(sdf.sub(link, "visual", name="terrain"), "geometry"), "heightmap")
+            sdf.sub(g, "use_terrain_paging", False)
+            layers(g)
+            sdf.sub(g, "uri", f"model://{name}/heightmap.png")
+            sdf.sub(g, "size", (hf.size, hf.size, z_max))
+
+        return model(self.r.models, name, build)
+
+    def test_detail_layers_keep_the_colour_map(self):
+        """Terra renders a compensated colour map under the shared detail
+        layers (appearance.terra_layers) in the colour map's own colours:
+        seen from 25 m, each half of a two-colour map averages within 3 DN
+        of the plain colour map's render (the details are zero-mean; M:
+        0.1 DN in the render prototype), and the details add texture."""
+        hf = terrain.Heightfield(64.0, 129).noise(1.0, 30.0, 4)
+        hf.z -= hf.z.min()
+        colour = np.zeros((256, 256, 3), np.uint8)
+        colour[:, :128], colour[:, 128:] = (200, 170, 130), (150, 150, 145)
+        plain_dir = self.r.models / "urc_plain"
+        plain_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(plain_dir / "colour.png"), cv2.cvtColor(colour, cv2.COLOR_RGB2BGR))
+        layers = A.terra_layers(colour, hf, A.DEFAULT_DETAILS, self.r.media)
+        detail_dir = self.r.models / "urc_detail"
+        detail_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(detail_dir / "colour.png"), cv2.cvtColor(layers.layer0, cv2.COLOR_RGB2BGR))
+
+        def plain(g):
+            t = sdf.sub(g, "texture")
+            sdf.sub(t, "diffuse", "model://urc_plain/colour.png")
+            sdf.sub(t, "normal", self.r.media.flat_normal())
+            sdf.sub(t, "size", hf.size)
+
+        cam = camera("top", (0, 0, 25.0), 0.0, math.pi / 2, (480, 480), 0.9)
+        shots = {}
+        for name, fill in (("urc_plain", plain),
+                           ("urc_detail", lambda g: layers.write(g, "model://urc_detail/colour.png",
+                                                                 self.r.media.flat_normal(), hf.size))):
+            shots[name] = self.r.take(world(self.terra(name, hf, fill) + cam), ["/render/top"])["/render/top"]
+        # Looking straight down, the image's top is east: the west half is the bottom rows.
+        for rows in (slice(300, 460), slice(20, 180)):
+            a = shots["urc_plain"][rows, 40:440].reshape(-1, 3).astype(float).mean(axis=0)
+            b = shots["urc_detail"][rows, 40:440].reshape(-1, 3).astype(float).mean(axis=0)
+            self.assertLess(np.abs(a - b).max(), 3.0, (a, b))
+        self.assertGreater(residual(shots["urc_detail"], 2), residual(shots["urc_plain"], 2) + 1.0)
 
     def test_aruco_through_haze_and_noise(self):
         """ArUco 0 still decoded at 2.5 m with the haze and camera noise

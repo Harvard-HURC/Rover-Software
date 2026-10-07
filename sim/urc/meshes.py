@@ -368,14 +368,11 @@ def pebble(variant, subdivisions=1):
 @dataclass(frozen=True)
 class Material:
     """A glTF metallic-roughness material: base colour [0-1, linear] times
-    the texture (a PNG embedded in the file), if any. alpha_cutoff: an
-    alpha-tested cut-out (gate G4: cut-outs work in gz, soft alpha edges do
-    not)."""
+    the texture (a PNG embedded in the file), if any. A model's SDF
+    <material> overrides it (the far field takes its shared texture so)."""
     color: tuple = (1.0, 1.0, 1.0)
     roughness: float = 1.0
     texture: str = None  # path of a PNG
-    alpha_cutoff: float = None
-    double_sided: bool = False
 
 
 def write_glb(path, V, F, N=None, UV=None, texture=None, color=(1.0, 1.0, 1.0), roughness=1.0):
@@ -441,10 +438,4 @@ def _gltf_material(material, images, view):
     if material.texture is not None:
         images.append({"bufferView": view(Path(material.texture).read_bytes()), "mimeType": "image/png"})
         pbr["baseColorTexture"] = {"index": len(images) - 1}
-    entry = {"pbrMetallicRoughness": pbr}
-    if material.alpha_cutoff is not None:
-        entry["alphaMode"] = "MASK"
-        entry["alphaCutoff"] = float(material.alpha_cutoff)
-    if material.double_sided:
-        entry["doubleSided"] = True
-    return entry
+    return {"pbrMetallicRoughness": pbr}
