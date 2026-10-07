@@ -50,7 +50,7 @@ LICHEN_BOULDERS = (-120.0, 200.0, 12.0)
 ROCK_FIELDS = [(60.0, 60.0, 30.0, 18.0, 0.15), (-200.0, 130.0, 30.0, 20.0, 0.25)]  # x, y, length, width, rock size
 
 FEATURES = [
-    features.Wash("wash", WASH, depth=2.5, falloff=5.0),
+    features.Wash("wash", WASH, depth=2.5),
     # Weathered bentonite below the banded hills.
     features.Patch("clay_apron_0", terrains.CLAY, 122.0, 107.0, 12.0),
     features.Patch("clay_apron_1", terrains.CLAY, -245.0, 205.0, 10.0),

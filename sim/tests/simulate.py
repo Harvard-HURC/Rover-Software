@@ -274,17 +274,21 @@ class Drive:
         return math.dist(self.trace[-1, 1:3], goal)
 
 
-def pursue(path, x, y, yaw, speed, lookahead=2.0, gain=1.5, max_turn=1.0):
+def pursue(path, x, y, yaw, speed, lookahead=2.0, gain=1.5, min_radius=1.5):
     """The twist (vx, wz) of a pure-pursuit driver at (x, y, yaw) on a world
     polyline `path`: towards the point `lookahead` metres along the path past
-    the nearest one, turning gain x the heading error (at most max_turn)
-    and slowing with its cosine. It never turns in place (a spin digs the
-    wheels into loose ground): past 80 deg off it still creeps forward."""
+    the nearest one, slowing with the cosine of the heading error and
+    turning gain x that error, on arcs of at least min_radius [m]. It never
+    turns in place: a spin digs the wheels into loose ground, and on a steep
+    slope a skid-steer rover hardly turns at all (measured: 4 % of the
+    commanded yaw rate on 25 deg slickrock), so a driver that asks for a
+    spin there stalls."""
     pts = terrain.resample(path, 0.25)
     nearest = int(np.argmin(np.hypot(pts[:, 0] - x, pts[:, 1] - y)))
     ahead = min(nearest + int(round(lookahead / 0.25)), len(pts) - 1)
     error = math.remainder(math.atan2(pts[ahead, 1] - y, pts[ahead, 0] - x) - yaw, 2 * math.pi)
-    return speed * max(math.cos(error), 0.15), max(-max_turn, min(max_turn, gain * error))
+    vx = speed * max(math.cos(error), 0.25)
+    return vx, max(-vx / min_radius, min(vx / min_radius, gain * error))
 
 
 def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):

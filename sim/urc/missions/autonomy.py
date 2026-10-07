@@ -12,9 +12,11 @@ elevations plus dem.NAVD88_TO_WGS84.
   C2, in radio line of sight (1.e.xii). POST1 (ArUco 1) on the crest of a
   narrow butte, 15 m above the start. The crest is gentle (< 8 deg) for its
   last 85 m, but its west end is reached over an 8 m rim of 18-24 deg
-  ground, which the easy route switchbacks up at 16 deg. Driving straight at
-  Post 1 the grade is 26-44 deg from 22 of 24 compass bearings, steeper than
-  the bare ground lets a rover climb (packed regolith: 23 deg, terrains.py).
+  ground, which the easy route switchbacks up at 16 deg over a rib of bare
+  caprock (EASY_ROUTE_RIB: that rim is 23-26 deg steep, more than packed
+  regolith lets a rover climb across, 23 deg). Driving straight at Post 1
+  the grade is 26-44 deg from 22 of 24 compass bearings, steeper than the
+  bare ground lets a rover climb.
   Boulders of the broken caprock also line the butte's rim (routes.rim: round
   the ground reached from Post 1 on slopes up to RIM_SLOPE, kept clear of
   the easy route along the crest), too tall to climb (0.3 m rocks stop the
@@ -96,6 +98,12 @@ NORTH_WASH = [(-90.0, 462.0), (-50.0, 474.0), (0.0, 440.0), (40.0, 448.0), (100.
 CLIFF_WASH = [(0.0, 342.0), (40.0, 350.0), (80.0, 352.0), (120.0, 366.0)]  # 15-20 m out from the foot of the cliff
 WASH_STEP = 45.0  # [m]
 SLABS = [(-85.0, 342.0, 12.0), (6.0, 397.0, 4.0), (44.0, 402.0, 3.5)]  # bare caprock on the butte (x, y, radius)
+# Where the easy route climbs onto the butte, its ground is 23-26 deg steep: packed regolith (climb 23 deg) does
+# not carry the rover up it, slantwise or straight (measured: it stalls on the rim at 24 deg pitch). So the route
+# climbs a rib of bare caprock (slickrock, climb 40 deg): patches every EASY_ROUTE_RIB[0] metres of it, radius
+# EASY_ROUTE_RIB[1], wherever the ground under it is steeper than EASY_ROUTE_RIB[2] [deg] (A: a firm rib is where
+# a route up a badland butte goes).
+EASY_ROUTE_RIB = (3.0, 3.5, 15.0)
 
 FEATURES = [
     features.Wash("wash", NORTH_WASH, sand_step=WASH_STEP, sand_radius=7.0),  # in the DEM already: no channel
@@ -147,12 +155,20 @@ def make_terrain():
     return origin, features.shape(hf, FEATURES)
 
 
+def easy_route_rib(hf, route):
+    """Slickrock patches along the steep part of the easy route (EASY_ROUTE_RIB)."""
+    step, radius, steeper = EASY_ROUTE_RIB
+    steep = [(float(x), float(y)) for x, y in terrain.resample(route, step) if hf.slope_deg(x, y) > steeper]
+    return [features.Patch(f"easy_route_rib_{k}", terrains.SLICKROCK, x, y, radius) for k, (x, y) in enumerate(steep)]
+
+
 def build(models_dir, worlds_dir, media):
     origin, hf = make_terrain()
+    easy_route, grade = routes.easy_route(hf, START_POST, POST1, EASY_ROUTE_MAX_SLOPE)
     w = WorldBuilder(KEY, TITLE, "1.e", origin, hf, models_dir, worlds_dir, media, seed=7, solver=SOLVER)
     w.sheet["time_limit_s"] = rules.AUTONOMY_TIME
     w.terrain(LAYERS)
-    features.dress(w, FEATURES)  # first: objects stand on the ground their zones sink
+    features.dress(w, FEATURES + easy_route_rib(hf, easy_route))  # first: objects stand on the ground zones sink
     w.c2(*C2)
     w.rover(*ROVER)
     w.place(props.landing_pad(models_dir, media), "landing_pad", *LANDING_PAD)
@@ -197,7 +213,6 @@ def build(models_dir, worlds_dir, media):
         w.task(subtask="route_finding", id=key, rule=rule, points=rules.ROUTE_POINTS_PER_TARGET,
                title=f"Reach {key} autonomously, stop within 1 m and signal arrival (LED flashing green)",
                target=key, tolerance_m=rules.ROUTE_TOLERANCE, led=rules.LED_ARRIVED)
-    easy_route, grade = routes.easy_route(hf, START_POST, POST1, EASY_ROUTE_MAX_SLOPE)
     approach = routes.approach_grades(hf, POST1, APPROACH_BEARINGS, *APPROACH_RADII)
     rim, entry = routes.rim(hf, POST1, RIM_SLOPE, easy_route, RIM_WIDTH)
     w.sheet["judges_only"] = {

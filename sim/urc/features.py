@@ -34,6 +34,9 @@ LEDGE_LIP_COLOR = (0.5, 0.35, 0.27)
 LEDGE_LIP = (0.3, 0.06)  # [m] depth, height of the lip along the drop's edge
 LEDGE_BACK = 3.0  # [m] level ground behind a ledge's shelf, to drive onto it
 LEDGE_APRON = 4.0  # [m] level ground in front of a ledge's drop, to land on
+# Steepest bank of a wash channel: the rover drives into and out of a wash anywhere (the default ground climbs
+# 23 deg, terrains.py, and the terrain's own slope adds to the bank) (A).
+WASH_BANK = 15.0  # [deg]
 
 
 def shape(hf, features):
@@ -106,12 +109,13 @@ class Wash:
     terrain already has, as on a real DEM) whose floor has soft sand patches
     `<key>_sand_<k>` every `sand_step` metres (along), but not at the indices
     in `skip` (where it cuts through a ridge, say). A channel's sand stays on
-    its floor, within `half_width` of the path, not up its banks."""
+    its floor, within `half_width` of the path, not up its banks, which rise
+    no steeper than `bank` [deg]."""
     key: str
     path: tuple
     depth: float = 0.0
     half_width: float = 8.0
-    falloff: float = 6.0
+    bank: float = WASH_BANK
     sand_step: float = 60.0
     sand_radius: float = 6.5
     skip: tuple = ()
@@ -125,7 +129,8 @@ class Wash:
             if self.sand_radius > self.half_width:
                 raise ValueError(f"{self.key}: sand patches of radius {self.sand_radius} m reach past the "
                                  f"{self.half_width} m half-width of the wash floor")
-            hf.channel(self.path, self.depth, self.half_width, self.falloff)
+            # The channel's banks are smoothstep profiles, steepest at their middle: 1.5 depth / falloff.
+            hf.channel(self.path, self.depth, self.half_width, 1.5 * self.depth / math.tan(math.radians(self.bank)))
 
     def footprints(self):
         return [f for patch in self.patches for f in patch.footprints()]

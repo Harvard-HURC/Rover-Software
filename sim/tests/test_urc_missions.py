@@ -195,7 +195,7 @@ class Autonomy(unittest.TestCase):
         for key, p in self.points.items():
             self.assertAlmostEqual(d.height(p["lat"], p["lon"]) + dem.NAVD88_TO_WGS84, p["alt"], delta=0.1, msg=key)
 
-    # --- Ground: friction zones and rocks (urc/terrains.py, urc/features.py) ---
+    # --- Ground: zones and rocks (urc/terrains.py, urc/features.py) ---
 
     @staticmethod
     def distance(path, x, y):
@@ -205,12 +205,16 @@ class Autonomy(unittest.TestCase):
     def test_ground_follows_the_terrain(self):
         """Each ground type lies where the DEM puts it: sand on the wash floors,
         scree on a face steeper than it holds, gravel and clay on gentle
-        ground, slickrock on the caprock."""
+        ground, slickrock on the caprock and on the rib where the easy route
+        climbs onto the butte, steeper than the bare ground climbs."""
         zones = self.sheet["terrain_zones"]
         washes = [[self.xy(p) for p in wash] for wash in self.sheet["judges_only"]["washes"].values()]
+        easy = [self.xy(p) for p in self.sheet["judges_only"]["easy_route"]["points"]]
         caprock = next(layer.start for layer in autonomy.LAYERS if layer.name == "caprock")
         c2_z = self.sheet["c2"]["z"]
         self.assertEqual({z["type"] for z in zones.values()}, {"sand", "scree", "gravel", "clay", "slickrock"})
+        rib = [key for key in zones if key.startswith("easy_route_rib_")]
+        self.assertTrue(rib)
         for key, zone in zones.items():
             c = zone["center"]
             slope = self.terrain.slope_deg(c["x"], c["y"])
@@ -218,10 +222,17 @@ class Autonomy(unittest.TestCase):
                 self.assertLess(min(self.distance(w, c["x"], c["y"]) for w in washes), 1.0, key)
             if zone["type"] == "scree":
                 self.assertGreater(slope, terrains.SCREE.traction.hold_deg + 5.0, key)
+            elif key in rib:
+                self.assertLess(self.distance(easy, c["x"], c["y"]), 0.5, key)
+                self.assertGreater(slope, autonomy.EASY_ROUTE_RIB[2], key)
             elif zone["type"] == "slickrock":
                 self.assertGreater(c["z"] - c2_z, caprock, key)
             else:
                 self.assertLess(slope, 10.0, key)
+        bare = terrains.TYPES[terrains.DEFAULT_GROUND].traction.climb_deg
+        steep = np.array([p for p in terrain.resample(easy, 1.0) if self.terrain.slope_deg(*p) > bare])
+        self.assertTrue(len(steep))
+        self.assertTrue(np.all(climb_limits("urc_autonomy", *steep.T) > bare))  # all on the rib
 
     def test_terrain_is_the_dem(self):
         """The world's terrain is the USGS DEM: its zones only paint the ground."""

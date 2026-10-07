@@ -294,7 +294,8 @@ class SmallWorld(unittest.TestCase):
         names = [p.get("name") for p in world_sdf.iter("plugin")]
         self.assertIn("gz::sim::systems::ParticleEmitter", names)  # the drivetrain's wheel dust
         for key, name in (("ground_map", "ground.png"), ("ground_legend", "ground.json")):
-            self.assertEqual((self.world_path.parent / self.sheet["terrain"][key]).resolve(), (self.dir / name).resolve())
+            path = self.world_path.parent / self.sheet["terrain"][key]
+            self.assertEqual(path.resolve(), (self.dir / name).resolve())
 
     def test_zone_under_a_placed_model_is_refused(self):
         """A zone whose ground sinks would sink the ground under it."""
@@ -545,8 +546,8 @@ class GeneratedWorlds(unittest.TestCase):
         tiles or SDF friction in its terrain model."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
-                name = re.search(r"<uri>model://(urc_terrain_\w+)</uri>", (WORLDS / f"{world}.sdf").read_text()).group(1)
-                model = model_root(name)
+                text = (WORLDS / f"{world}.sdf").read_text()
+                model = model_root(re.search(r"<uri>model://(urc_terrain_\w+)</uri>", text).group(1))
                 self.assertFalse([c for c in model.iter("collision") if c.get("name").startswith("zone_")])
                 self.assertFalse(list(model.iter("friction")))
 

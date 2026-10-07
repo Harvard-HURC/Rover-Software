@@ -249,7 +249,8 @@ class PhysicalVariant(unittest.TestCase):
                 self.assertEqual({f.name: row[f.name] for f in dataclasses.fields(terrains.Traction)},
                                  dataclasses.asdict(terrains.traction(kind, dig)), (dig, key))
                 self.assertEqual(row["dust"], kind.appearance.dust)
-        written = {row.findtext("key"): row for row in model.findall("plugin[@filename='RoverDrivetrain']/contact/surface")}
+        written = {row.findtext("key"): row
+                   for row in model.findall("plugin[@filename='RoverDrivetrain']/contact/surface")}
         self.assertEqual(float(written["sand"].findtext("dig_max")), terrains.STRONG_DIG[1])  # the default, strong
 
     def test_wheel_joints_and_tyres(self):
