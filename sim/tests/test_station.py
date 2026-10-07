@@ -853,7 +853,7 @@ class App(AioHTTPTestCase):
         self.assertEqual(info["map"]["size"], [256.0, 256.0])
         self.assertEqual(info["map"]["photo"], {"status": "missing", "changed": [], "url": None})
         self.assertEqual(info["rover"]["wheel_dx"], P.wheel_dx)
-        self.assertEqual(sorted(info["presets"]), ["1", "2", "3"])
+        self.assertEqual(sorted(info["presets"]), ["1", "2", "3", "4", "5"])
         self.assertEqual(info["hfov"], {"eye": gen_model.EyeParams().hfov, "chase": gen_model.ChaseParams().hfov,
                                         "rgb": P.camera_hfov, "depth": P.camera_hfov, "fly": FLY.hfov})
         self.assertEqual(info["fly"]["aspect"], ASPECT)

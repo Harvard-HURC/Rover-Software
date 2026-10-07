@@ -480,7 +480,7 @@
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
           <effort>1000</effort>
-          <velocity>16</velocity>
+          <velocity>32</velocity>
         </limit>
       </axis>
     </joint>
@@ -538,7 +538,7 @@
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
           <effort>1000</effort>
-          <velocity>16</velocity>
+          <velocity>32</velocity>
         </limit>
       </axis>
     </joint>
@@ -685,7 +685,7 @@
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
           <effort>1000</effort>
-          <velocity>16</velocity>
+          <velocity>32</velocity>
         </limit>
       </axis>
     </joint>
@@ -743,7 +743,7 @@
           <lower>-1e+16</lower>
           <upper>1e+16</upper>
           <effort>1000</effort>
-          <velocity>16</velocity>
+          <velocity>32</velocity>
         </limit>
       </axis>
     </joint>
@@ -801,7 +801,7 @@
         <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
       </dust>
       <motor>
-        <voltage>24</voltage>
+        <voltage>48</voltage>
         <resistance>0.46</resistance>
         <kt>0.0445</kt>
         <ke>0.0445</ke>
@@ -822,7 +822,7 @@
         <ki>160</ki>
         <speed_filter>0.005</speed_filter>
         <accel>8</accel>
-        <max_speed>10</max_speed>
+        <max_speed>20</max_speed>
         <substeps>4</substeps>
       </controller>
       <contact>

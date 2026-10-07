@@ -223,7 +223,7 @@ class PhysicalVariant(unittest.TestCase):
         for tag, value in expect.items():
             self.assertEqual(self.plugin.findtext(tag), value, tag)
         numbers = {"cmd_timeout": 0.5, "track": 2 * P.pivot_y, "radius": P.wheel_radius, "track_multiplier": 1.0,
-                   "motor/gear": 50.0, "motor/efficiency": 0.8, "motor/current_limit": 20.0, "motor/voltage": 24.0,
+                   "motor/gear": 50.0, "motor/efficiency": 0.8, "motor/current_limit": 20.0, "motor/voltage": 48.0,
                    "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 160.0,
                    "controller/accel": d.accel, "controller/max_speed": P.wheel_speed,
                    "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0,
@@ -272,12 +272,12 @@ class PhysicalVariant(unittest.TestCase):
         self.assertEqual(float(written["sand"].findtext("dig_max")), terrains.STRONG_DIG[1])  # the default, strong
 
     def test_wheel_joints_and_tyres(self):
-        """Effort 1000 N m (DART never clamps the torque), velocity limit 16 rad/s
+        """Effort 1000 N m (DART never clamps the torque), velocity limit 32 rad/s
         (never a hidden brake); isotropic tyre mu, the drivetrain sets every contact."""
         for joint in self.model.findall("joint"):
             if joint.get("name").startswith("wheel_"):
                 self.assertEqual(float(joint.findtext("axis/limit/effort")), 1000.0)
-                self.assertEqual(float(joint.findtext("axis/limit/velocity")), 16.0)
+                self.assertEqual(float(joint.findtext("axis/limit/velocity")), 32.0)
         for ode in self.model.iter("ode"):
             self.assertEqual((float(ode.findtext("mu")), float(ode.findtext("mu2"))), (1.0, 1.0))
             self.assertIsNone(ode.find("fdir1"))

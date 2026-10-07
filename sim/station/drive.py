@@ -12,8 +12,8 @@ import viewers
 
 ROVER = gen_model.Params()
 FLY = viewers.FlyParams()
-# Speed presets 1/2/3: (linear [m/s], angular [rad/s]) at full stick.
-PRESETS = {1: (0.25, 0.4), 2: (0.6, 0.8), 3: (1.2, 1.2)}
+# Speed presets 1-5: (linear [m/s], angular [rad/s]) at full stick.
+PRESETS = {1: (0.25, 0.4), 2: (0.6, 0.8), 3: (1.2, 1.2), 4: (2.0, 1.2), 5: (3.0, 1.2)}
 FAST = 2.0  # Shift multiplies the preset, up to what the rover can do:
 MAX_LINEAR = ROVER.wheel_speed * ROVER.wheel_radius  # [m/s] wheel joint velocity limit
 MAX_ANGULAR = 1.5  # [rad/s] spinning faster than this is not drivable from a camera

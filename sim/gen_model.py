@@ -70,7 +70,9 @@ class DriveParams:
     cmd_timeout_clock: str = "wall"
     track_multiplier: float = 1.0  # effective-track compensation; 1 = the raw skid-steer response (D24, Q10)
     accel: float = 8.0  # [rad/s^2] wheel setpoint ramp, 1.2 m/s^2 (A: until the driver team reports theirs, Q7)
-    voltage: float = 24.0  # [V] (R: Husky A200 motor [18])
+    # [V] twice the Husky A200's 24 V (R [18]): a 21.6 rad/s free speed at the wheel, 3.2 m/s, for the 3 m/s top
+    # speed (user 2026-10-07); the torque per amp, and with it every climb and stall, is unchanged.
+    voltage: float = 48.0
     resistance: float = 0.46  # [ohm] (R [18])
     kt: float = 0.0445  # [N m/A] (R [18])
     ke: float = 0.0445  # [V s/rad] (R [18])
@@ -106,10 +108,10 @@ class DriveParams:
     dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
     default_surface: str = "regolith"  # terrains.TYPES key: ground where the world has no ground map
     object_surface: str = "manmade"  # terrains.TYPES key: objects whose SDF sets no friction
-    # Wheel joints: DART never clamps the torque, and the velocity limit (1.5 x the 10.8 rad/s free speed)
+    # Wheel joints: DART never clamps the torque, and the velocity limit (1.5 x the 21.6 rad/s free speed)
     # never acts as a hidden brake (design spec 6.2).
     wheel_effort: float = 1000.0  # [N m]
-    wheel_velocity: float = 16.0  # [rad/s]
+    wheel_velocity: float = 32.0  # [rad/s]
     odom_rate: float = 50.0  # [Hz]
     state_rate: float = 50.0  # [Hz] DRIVETRAIN_TOPIC
     # Dust behind the rear wheels (design spec 6.5, D15): particles per second = dust factor x
@@ -153,7 +155,7 @@ class Params:
     diff_stiffness: float = 5000.0  # [N m/rad]
     diff_damping: float = 100.0  # [N m s/rad]
     wheel_effort: float = 30.0  # [N m] motor torque limit
-    wheel_speed: float = 10.0  # [rad/s]
+    wheel_speed: float = 20.0  # [rad/s] 3 m/s, the top speed (user 2026-10-07)
     # Tire friction. Lateral below longitudinal emulates tire scrub; with equal
     # values the physics engine's box friction stops the rover turning in place.
     mu_longitudinal: float = 1.0
