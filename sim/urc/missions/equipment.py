@@ -38,6 +38,8 @@ PAINT = [landscape.Base("clay_crust"), landscape.Noise("sand_sheet", feature_m=6
 PADS = [(*C2[:2], 10.0), (*GATE, 6.0), (*SAMPLE_STAND[:2], 2.0), (*LANDER[:2], 9.0)]  # x, y, radius: kept flat
 RELIEF = dict(pads=PADS)  # kept flat (design 5.4)
 APPROACH_CLEAR = 7.0  # [m] no gravel this close to the drive from the gate to the lander (the apron's half-width)
+GRAVEL_REACH = 30.0  # [m] gravel lies within this of that drive, where the rover works (A: with the lander's 101
+# joints the world has little physics time to spare, design 10.3)
 
 
 def make_terrain():
@@ -127,7 +129,8 @@ def build(models_dir, worlds_dir, media):
     w.rock_field("scattered", w.scatter(260, CENTER, 120.0, (0.03, 0.25), avoid=keep_clear, clearance=4.0))
     w.rock_field("boulders", w.scatter(40, CENTER, 120.0, (0.3, 0.8), avoid=keep_clear, clearance=12.0))
     w.rock_garden("rock_garden", *ROCK_GARDEN, avoid=keep_clear, clearance=3.0)
-    approach = w.near(paths=[([GATE, (lx, ly)], APPROACH_CLEAR)])
-    w.clutter(avoid=keep_clear, clearance=4.0, rock_sizes=(0.15, 0.3), rocks_within=~approach)
+    drive = [GATE, (lx, ly)]
+    gravel = w.near(paths=[(drive, GRAVEL_REACH)]) & ~w.near(paths=[(drive, APPROACH_CLEAR)])
+    w.clutter(avoid=keep_clear, clearance=4.0, rock_sizes=(0.15, 0.3), rocks_within=gravel)
     w.pebbles([(*ROVER[:2], 35.0), (sx, sy, 6.0), (lx - 6.0, ly, 6.0)])
     return w.write()

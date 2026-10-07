@@ -657,8 +657,8 @@ class WorldBuilder:
         if not shrubs:
             return
         placed = place("shrubs")
-        self.sheet["shrub_density_per_ha"] = {
-            key: round(entry["count"] / entry["area_m2"] * 1e4, 1)
+        self.sheet["shrub_density"] = {
+            key: dict(entry, per_ha=round(entry["count"] / entry["area_m2"] * 1e4, 1))
             for key, entry in self.clutter_report(placed, np.ones(raster.shape, bool), sizes=False).items()}
         meshed = self._inside(within if shrubs_3d is None else shrubs_3d, [(p.x, p.y) for p in placed])
         self.shrubs([(p.x, p.y, p.size, p.height) for p, m in zip(placed, meshed) if m])
@@ -977,6 +977,8 @@ class WorldBuilder:
             self._write_colour()
             self._write_farfield()
         name, root, _ = self._terrain
+        for collision in self._terrain[2].findall("collision"):
+            sdf.collide_bitmask(collision, sdf.GROUND)
         sdf.write_model(self.models_dir, name, root, f"Terrain for the URC {self.sheet['mission']} world.")
         self.worlds_dir.mkdir(parents=True, exist_ok=True)
         world_path = self.worlds_dir / f"{self.name}.sdf"

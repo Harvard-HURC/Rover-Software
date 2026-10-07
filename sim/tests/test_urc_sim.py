@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from simulate import SIM_DIR, follow, simulate, spin_ratio
-from worldfiles import rock_vertices, sheet, terrain, world_copy
+from worldfiles import MODELS, WORLDS, model_root, sheet, terrain, vec, world_copy
 
 import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
 from gz.sim8 import Joint, Model, TestFixture, World, world_entity
@@ -27,6 +27,7 @@ from gz.transport13 import Node
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 from urc import geo, routes, terrains  # noqa: E402
+from urc.world import COLLIDING  # noqa: E402
 from urc import judge as J  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc import terrain as heightfields  # noqa: E402
@@ -53,6 +54,19 @@ ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width /
 SLOW = unittest.skipUnless(os.environ.get("ROVER_SLOW"), "slow (many minutes of sim time): set ROVER_SLOW=1")
 
 
+def clutter_vertices(world):
+    """World (x, y, z) of every vertex of the world's merged clutter
+    collisions: rocks, slabs and risers (world.COLLIDING)."""
+    name = re.search(r"<uri>model://(urc_terrain_\w+)</uri>", (WORLDS / f"{world}.sdf").read_text()).group(1)
+    out = [np.zeros((0, 3))]
+    for c in model_root(name).iter("collision"):
+        if re.fullmatch(rf"({'|'.join(COLLIDING)})_-?\d+_-?\d+_collision", c.get("name")):
+            path = MODELS / name / "meshes" / Path(c.findtext("geometry/mesh/uri")).name
+            out.append(np.array([vec(line[2:]) for line in path.read_text().splitlines() if line.startswith("v ")])
+                       + vec(c.findtext("pose"))[:3])
+    return np.concatenate(out)
+
+
 @contextlib.contextmanager
 def fast_copy(world, rover, lift=0.05):
     """world_copy at real_time_factor 0: as fast as it runs."""
@@ -68,7 +82,8 @@ def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
     (routes.easy_route) that keeps `clearance` past the rover's half width
     from every rock taller than ROCK_STOP and off ground steeper than its
     type climbs less `margin` [deg] (ground.json): the search sees those as
-    walls in the terrain. None if there is none."""
+    walls in the terrain; slabs and risers block like rocks. None if there
+    is none."""
     hf = terrain(world)
     s = sheet(world)
     ground = sheets.ground(s, sheets.path(world))
@@ -76,7 +91,7 @@ def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
     for t in ground.info["types"]:
         climb[t["index"]] = math.degrees(math.atan(max(t["mu_k"] - t["crr"], 0.0)))
     blocked = (hf.slope_map() + margin > climb[ground.raster]).astype(np.uint8)
-    V = rock_vertices(world)
+    V = clutter_vertices(world)
     tall = V[V[:, 2] - hf.height(V[:, 0], V[:, 1]) > ROCK_STOP]
     cols = np.round((tall[:, 0] - hf.center[0] + hf.size / 2) / hf.res).astype(int)
     rows = np.round((hf.center[1] + hf.size / 2 - tall[:, 1]) / hf.res).astype(int)
@@ -136,9 +151,10 @@ class Worlds(unittest.TestCase):
         self.assertLess(math.hypot(east, north), 1.0)  # antenna lever arm 0.25 m + noise
 
     def test_rim_boulders_stop_a_straight_climb(self):
-        """1.e.xv in the physics: driven straight up the butte's 32-40 deg
-        north face at Post 1, steeper than its packed regolith climbs (23 deg),
-        and lined with the rim's boulders, the rover stays well below Post 1."""
+        """1.e.xv in the physics: driven straight up the butte's steep north
+        face at Post 1 (the soil map's badland slope, climbs 22 deg, and rock
+        above 30 deg, climbs 40 deg), lined with the rim's boulders, the
+        rover stays well below Post 1."""
         post = sheet("urc_autonomy")["points"]["post1"]
         ground = terrain("urc_autonomy")
         x, y = post["x"], post["y"] + 16.0

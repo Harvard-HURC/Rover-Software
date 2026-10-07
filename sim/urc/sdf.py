@@ -12,6 +12,13 @@ from pathlib import Path
 SDF_VERSION = "1.11"
 WHITE = (1.0, 1.0, 1.0, 1.0)
 SOLVERS = ("dantzig", "pgs")  # DART's LCP solvers (dantzig is its default)
+# Collide bitmasks: two shapes collide when their masks share a bit (SDF's default, 65535: every bit). The
+# terrain's shapes carry GROUND only, so parts that can never reach the ground (a fixed lander's keys) skip it with
+# ABOVE_GROUND: a heightmap's bounding box spans its whole height range, and every dynamic link below its top
+# otherwise runs the heightfield narrowphase each step (M: one 3 m spike on Equipment Servicing's flat terrain
+# cost +9 % CPU per step through the lander's links).
+GROUND = 1
+ABOVE_GROUND = 0xFFFF & ~GROUND
 
 
 def fmt(value):
@@ -150,6 +157,18 @@ def collision(link_element, name, geometry, xyzrpy=(0, 0, 0), mu=None, mu2=None,
         if fdir1 is not None:
             sub(ode, "fdir1", fdir1)
     return element
+
+
+def collide_bitmask(collision_element, bits):
+    """Set a <collision>'s collide bitmask (GROUND, ABOVE_GROUND), keeping its other surface settings."""
+    surface = collision_element.find("surface")
+    if surface is None:
+        surface = sub(collision_element, "surface")
+    contact = surface.find("contact")
+    if contact is None:
+        contact = sub(surface, "contact")
+    sub(contact, "collide_bitmask", int(bits))
+    return collision_element
 
 
 def visual(link_element, name, geometry, xyzrpy=(0, 0, 0), color=WHITE, cast_shadows=True, **material_args):
