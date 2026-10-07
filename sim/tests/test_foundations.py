@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""The shared foundations every workstream builds on (no physics; pixi run
-sim-test): the one Gazebo environment (gzenv), the multi-band GeoTIFF reader,
-the ground catalogue's recipe structure, the viewer cameras' module and the
-test helpers of simulate.py."""
+"""The shared foundations every workstream builds on (pixi run sim-test): the
+one Gazebo environment (gzenv), the multi-band GeoTIFF reader, the ground
+catalogue's recipe structure, the viewer cameras' module and the test helpers
+of simulate.py; only the last two classes run Gazebo, a few seconds each."""
 import contextlib
 import dataclasses
 import io
@@ -17,13 +17,16 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, TiffImagePlugin, TiffTags
 
-from simulate import ROVER_URI, twist_at, variant_sdf, world_sdf
-from worldfiles import MODELS, SIM_DIR
+from simulate import ROVER_URI, cpu_time_per_step, simulate, twist_at, variant_sdf, world_sdf
+from worldfiles import MODELS, SIM_DIR, temp_sdf
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 import gzenv  # noqa: E402
 import viewers  # noqa: E402
 from urc import dem, geo, sdf, terrain, terrains  # noqa: E402
+
+from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402  (after simulate set the environment)
+from gz.transport13 import Node  # noqa: E402
 
 NAIP_PATH = SIM_DIR / "data" / "imagery" / "route_area_naip2024.tif"  # git-ignored; skipped where missing
 
@@ -211,6 +214,47 @@ class SimulateHelpers(unittest.TestCase):
         self.assertEqual(world.findtext("world/include/uri"), "file:///tmp/r")
         self.assertEqual(world.findtext("world/physics/dart/solver/solver_type"), "dantzig")
         self.assertEqual(world.findtext("world/physics/max_step_size"), "0.001")
+
+
+
+class SimulateRuns(unittest.TestCase):
+    """simulate()'s new arguments reach Gazebo (TestFixture, in this process)."""
+
+    def test_a_schedule_drives_then_stops(self):
+        x = simulate(3.0, cmd=[(0.0, 0.5, 0.0), (1.0, 0.0, 0.0)]).poses["base_link"][0]
+        self.assertAlmostEqual(x, 0.5, delta=0.15)  # 1 s at 0.5 m/s, then parked
+
+    def test_params_build_the_rover(self):
+        """Equal tyre mu along and across: DART's box friction cannot turn the
+        rover in place (sim/README.md, skid-steer friction); Params() turns."""
+        square = dataclasses.replace(gen_model.Params(), mu_lateral=1.0)
+        yaw = simulate(2.0, cmd=(0.0, 1.0), params=square).poses["base_link"][5]
+        self.assertLess(abs(yaw), 0.05)
+
+    def test_default_surface_and_solver_reach_dart(self):
+        """Clay (mu 0.25 <= the tyres' 0.5 across): DART takes min(mu) per
+        direction, the anisotropy is gone and the turn in place stalls (design
+        spec D1). PGS turns on the plain ground like Dantzig."""
+        stalled = simulate(2.0, cmd=(0.0, 1.0), default_surface="clay").poses["base_link"][5]
+        turned = simulate(2.0, cmd=(0.0, 1.0), solver="pgs").poses["base_link"][5]
+        self.assertLess(abs(stalled), 0.05)
+        self.assertGreater(turned, 0.8)
+
+
+class CostHelpers(unittest.TestCase):
+    """cpu_time_per_step: plain gz sim processes, the rover driven from here."""
+
+    def test_cost_of_a_driving_run(self):
+        node = Node()
+        xs = []
+        node.subscribe(Odometry, gen_model.GROUND_TRUTH_TOPIC, lambda m: xs.append(m.pose.position.x))
+        with temp_sdf(world_sdf()) as world:
+            cost = cpu_time_per_step({"flat": world}, iterations=4000, runs=1, schedule=[(0.0, 0.5, 0.0)])["flat"]
+        self.assertTrue(0 < cost.per_step < 0.01, cost)
+        self.assertGreater(cost.real_time_factor, 0.1)
+        self.assertTrue(0 < cost.startup_wall < 30 and cost.peak_rss > 50e6, cost)
+        self.assertEqual(len(cost.load), 1)
+        self.assertGreater(max(xs, default=0.0), 0.2)  # twist_publisher drove it
 
 
 if __name__ == "__main__":

@@ -1,4 +1,9 @@
-"""G4: do alpha textures from SDF cut out (shrub cards) and feather (decal edges) in ogre2 on Metal?"""
+"""G4: do alpha textures from SDF cut out (shrub cards) and feather (decal edges) in ogre2 on Metal?
+
+Three 1 m quads in front of an emissive blue wall, seen by one camera: a red disc on transparent green
+texels (a cut-out shows blue around the disc), a red texture whose alpha ramps 0 -> 1 across the quad
+(feathering shows a red-to-blue gradient, an alpha test a hard edge), and the same ramp with SDF
+<transparency> 0.001, the one blending switch SDF has."""
 import json
 import os
 import subprocess
@@ -27,12 +32,11 @@ ramp[..., 3] = np.round(xx / (n - 1) * 255).astype(np.uint8)  # alpha 0 -> 1 alo
 cv2.imwrite(str(D / "ramp.png"), ramp)
 
 
-def quad(name, y, texture, double_sided=False, transparency=None):
+def quad(name, y, z, texture, transparency=None):
     extra = f"<transparency>{transparency}</transparency>" if transparency is not None else ""
-    ds = "<double_sided>true</double_sided>" if double_sided else ""
-    return f"""<model name="{name}"><static>true</static><pose>4 {y} 1 0 0 0</pose><link name="l">
+    return f"""<model name="{name}"><static>true</static><pose>4 {y} {z} 0 0 0</pose><link name="l">
   <visual name="v"><geometry><plane><normal>-1 0 0</normal><size>1 1</size></plane></geometry>{extra}
-    <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>{ds}
+    <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
       <pbr><metal><albedo_map>{texture}</albedo_map><roughness>1</roughness><metalness>0</metalness></metal></pbr>
     </material></visual></link></model>"""
 
@@ -47,8 +51,9 @@ world = f"""<?xml version="1.0"?>
   <model name="backdrop"><static>true</static><pose>8 0 1 0 0 0</pose><link name="l"><visual name="v">
     <geometry><box><size>0.2 20 20</size></box></geometry>
     <material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse><emissive>0 0 0.8 1</emissive></material></visual></link></model>
-  {quad("cutout", 0.8, D / "disc.png")}
-  {quad("feather", -0.8, D / "ramp.png")}
+  {quad("cutout", 0.8, 1.0, D / "disc.png")}
+  {quad("feather", -0.8, 1.0, D / "ramp.png")}
+  {quad("feather_blend", 0.0, 0.0, D / "ramp.png", transparency=0.001)}
   <model name="cam"><static>true</static><pose>0 0 1 0 0 0</pose><link name="l">
     <sensor name="camera" type="camera"><always_on>true</always_on><update_rate>10</update_rate><topic>/g4/camera</topic>
       <camera><horizontal_fov>1.0</horizontal_fov><image><width>640</width><height>480</height></image>
@@ -75,17 +80,26 @@ def patch(y, z, r=2):
 
 result = {"backdrop": patch(0.0, 2.2), "cutout_disc_centre": patch(0.8, 1.0),
           "cutout_corner_transparent": patch(1.22, 1.42), "cutout_corner_2": patch(0.38, 0.58)}
-v, u0 = px(-0.3, 1.0)
-_, u1 = px(-1.3, 1.0)
-row = img[v, min(u0, u1) + 2:max(u0, u1) - 1]
-# fraction "red" along the feather quad: r / (r + b)
-frac = (row[:, 0] / np.maximum(row[:, 0] + row[:, 2], 1)).round(2)
-result["feather_profile_red_fraction"] = frac[:: max(1, len(frac) // 24)].tolist()
-steps = np.abs(np.diff(frac))
-result["feather_max_step"] = float(steps.max())
-result["feather_distinct_levels"] = int(len(np.unique(np.round(frac, 1))))
 green = result["cutout_corner_transparent"]
 result["cutout_works"] = bool(green[2] > green[1] and green[2] > 60)
-result["feathered"] = bool(result["feather_distinct_levels"] >= 5 and result["feather_max_step"] < 0.3)
+
+
+def ramp_profile(y, z):
+    """The quad's red fraction r / (r + b), averaged across and profiled along whichever screen axis
+    it varies on (the texture's u axis lands on a screen axis by the plane's orientation)."""
+    v0, u0 = px(y + 0.42, z + 0.42)
+    v1, u1 = px(y - 0.42, z - 0.42)
+    block = img[min(v0, v1):max(v0, v1), min(u0, u1):max(u0, u1)]
+    frac = block[..., 0] / np.maximum(block[..., 0] + block[..., 2], 1)
+    profiles = [frac.mean(axis=0), frac.mean(axis=1)]
+    profile = max(profiles, key=lambda p: p.max() - p.min())
+    steps = np.abs(np.diff(profile))
+    return dict(profile=profile[:: max(1, len(profile) // 24)].round(2).tolist(), max_step=round(float(steps.max()), 3),
+                levels=int(len(np.unique(np.round(profile, 1)))),
+                feathered=bool(len(np.unique(np.round(profile, 1))) >= 5 and steps.max() < 0.3))
+
+
+result["feather"] = ramp_profile(-0.8, 1.0)
+result["feather_with_transparency"] = ramp_profile(0.0, 0.0)
 print(json.dumps(result, indent=1))
 G.save("g4", result)

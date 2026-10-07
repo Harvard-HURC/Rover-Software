@@ -8,11 +8,15 @@ sets RTF); eye (960x540) and fly (1280x720, FlyCamProto, SceneUpdate hook) camer
 the rover's RGB-D subscribed (image and depth). RTF 1, the rover driving.
 
 Usage: python g6.py <world> <variant> [seconds]
-variant: rgbd1280 | rgbd640 | chase | chase_flare
+variant: rgbd1280 | rgbd640 | chase | chase_flare | fallback, and <variant>_dd for the same with today's
+DiffDrive rover (a cheaper physics step: what the render alone allows). The rover's prototype takes its
+wheel loads from G6_LOAD_SOURCE (default joint, gate G8's pick). The server's output goes through a
+pseudo-terminal, so its messages (LensFlare's) reach the log line by line.
 """
 import json
 import math
 import os
+import pty
 import re
 import shutil
 import signal
@@ -32,6 +36,8 @@ import glb  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 
 world_key, variant = sys.argv[1], sys.argv[2]
+diffdrive = variant.endswith("_dd")
+base_variant = variant.removesuffix("_dd")
 seconds = float(sys.argv[3]) if len(sys.argv) > 3 else 10.0
 D = G.SCRATCH / "g6"
 MODELS = D / "models"
@@ -79,7 +85,7 @@ def scatter_chunks(name, count, radius, unit, scale, chunks, color):
     return len(xy) * len(F0)
 
 
-fallback = variant == "fallback"  # the spec's G6 fallback: fewer shrubs, no pebbles, fly 960x540
+fallback = base_variant == "fallback"  # the spec's G6 fallback: fewer shrubs, no pebbles, fly 960x540
 key = f"{world_key}_fallback" if fallback else f"{world_key}"
 assets = MODELS / f"g6_assets_{key}"
 if not (assets / "model.sdf").exists():
@@ -129,10 +135,10 @@ if not tcopy.exists():
     (tcopy / "model.config").write_text((tcopy / "model.config").read_text().replace(terrain_name, f"{terrain_name}_g6"))
 
 # rover: drivetrain prototype, RGB-D at the variant's size, RGB clip 80 km, depth 40 m
-rgbd = (640, 480) if variant == "rgbd640" else (1280, 720)
-uri = G.proto_rover(f"g6_{variant}", load_source=os.environ.get("G6_LOAD_SOURCE", "contact"))
+rgbd = (640, 480) if base_variant == "rgbd640" else (1280, 720)
+uri = G.proto_rover(f"g6_{variant}", load_source=os.environ.get("G6_LOAD_SOURCE", "joint"))
 rover_sdf = Path(uri.removeprefix("file://")) / "model.sdf"
-text = rover_sdf.read_text()
+text = G.gen_model.build_sdf(G.gen_model.Params()) if diffdrive else rover_sdf.read_text()
 cam = re.search(r'<sensor name="camera" type="rgbd_camera">.*?</sensor>', text, re.S).group(0)
 new = re.sub(r"<width>\d+</width>", f"<width>{rgbd[0]}</width>", cam)
 new = re.sub(r"<height>\d+</height>", f"<height>{rgbd[1]}</height>", new)
@@ -145,11 +151,11 @@ eye = (G.REPO / "sim/models/eye_camera/model.sdf").read_text().replace("<far>200
 eye = eye.split("\n", 1)[1].replace('<sdf version="1.11">', "").replace("</sdf>", "").replace(
     '<model name="eye_camera">', '<model name="eye_camera"><pose>0 0 -100 0 0 0</pose>')
 chase = ""
-if variant.startswith("chase"):
+if base_variant.startswith("chase"):
     chase = (G.REPO / "sim/models/chase_camera/model.sdf").read_text().replace("<far>2000</far>", "<far>80000</far>")
     chase = chase.split("\n", 1)[1].replace('<sdf version="1.11">', "").replace("</sdf>", "").replace(
         '<model name="chase_camera">', '<model name="chase_camera"><pose>0 0 -100 0 0 0</pose>')
-    if variant == "chase_flare":
+    if base_variant == "chase_flare":
         chase = chase.replace("</camera>", "</camera><plugin filename=\"gz-sim-lens-flare-system\" "
                               "name=\"gz::sim::systems::LensFlare\"><scale>0.6</scale><color>1.0 0.95 0.9</color></plugin>")
 c, s = math.cos(yaw0), math.sin(yaw0)
@@ -176,7 +182,7 @@ from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 
 topics = ["/eye_camera/image", "/fly_camera/image", "/model/rover/camera/image", "/model/rover/camera/depth_image"]
-if variant.startswith("chase"):
+if base_variant.startswith("chase"):
     topics.append("/chase_camera/image")
 stamps = {t: [] for t in topics}
 rtf = []
@@ -185,8 +191,26 @@ for t in topics:
     node.subscribe(Image, t, lambda m, t=t: stamps[t].append(time.monotonic()))
 name = G.S.world_name(world)
 node.subscribe(WorldStatistics, f"/world/{name}/stats", lambda m: rtf.append((time.monotonic(), m.real_time_factor)))
-with open(log, "w") as f, G.S.twist_publisher({name}):
-    proc = subprocess.Popen(["gz", "sim", "-s", "-r", "-v", "3", str(world)], env=env, stdout=f, stderr=subprocess.STDOUT)
+master, slave = pty.openpty()  # a terminal: the server flushes every line, also when it is killed
+
+
+def copy_output():
+    with open(log, "wb") as f:
+        while True:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:  # the server closed its end
+                return
+            if not chunk:
+                return
+            f.write(chunk)
+
+
+copier = threading.Thread(target=copy_output, daemon=True)
+copier.start()
+with G.S.twist_publisher({name}):
+    proc = subprocess.Popen(["gz", "sim", "-s", "-r", "-v", "3", str(world)], env=env, stdout=slave, stderr=slave)
+    os.close(slave)
     t0 = time.monotonic()
     while not stamps["/eye_camera/image"] and time.monotonic() - t0 < 120:
         time.sleep(0.2)
@@ -201,13 +225,16 @@ with open(log, "w") as f, G.S.twist_publisher({name}):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+copier.join(10)
 fps = {t: round(sum(a <= x <= b for x in v) / (b - a), 2) for t, v in stamps.items()}
 rtfs = [r for t, r in rtf if a <= t <= b]
 text = log.read_text(errors="replace")
 out = dict(world=world_key, variant=variant, seconds=seconds, first_frame_s=round(first, 1), fps=fps,
            real_time_factor=round(float(np.median(rtfs)), 3) if rtfs else None,
            lens_flare_pass_added="LensFlare Render pass added" in text,
-           errors=[l for l in text.splitlines() if "[Err]" in l][:5],
+           lens_flare_sensor_missing=text.count("Unable to find sensor"), exit_code=proc.returncode,
+           # the OGRE plugin path error is printed once even though the fallback path then works (README)
+           errors=[l for l in text.splitlines() if "[Err]" in l and "Unable to load Ogre Plugin" not in l][:5],
            counts=json.loads((assets / "counts.json").read_text()), rgbd=list(rgbd))
 print("RESULT", json.dumps(out))
 G.save(f"g6_{world_key}_{variant}", out)
