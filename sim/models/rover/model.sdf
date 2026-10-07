@@ -438,17 +438,13 @@
         </surface>
       </collision>
       <visual name="tire_visual">
-        <pose>0 0 0 1.57079633 0 0</pose>
+        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <cylinder>
-            <radius>0.15</radius>
-            <length>0.1</length>
-          </cylinder>
+          <mesh>
+            <uri>model://rover/meshes/wheel.glb</uri>
+            <scale>0.15 0.1 0.15</scale>
+          </mesh>
         </geometry>
-        <material>
-          <ambient>0.1 0.1 0.1 1</ambient>
-          <diffuse>0.1 0.1 0.1 1</diffuse>
-        </material>
       </visual>
     </link>
     <joint name="wheel_fl_joint" type="revolute">
@@ -496,17 +492,13 @@
         </surface>
       </collision>
       <visual name="tire_visual">
-        <pose>0 0 0 1.57079633 0 0</pose>
+        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <cylinder>
-            <radius>0.15</radius>
-            <length>0.1</length>
-          </cylinder>
+          <mesh>
+            <uri>model://rover/meshes/wheel.glb</uri>
+            <scale>0.15 0.1 0.15</scale>
+          </mesh>
         </geometry>
-        <material>
-          <ambient>0.1 0.1 0.1 1</ambient>
-          <diffuse>0.1 0.1 0.1 1</diffuse>
-        </material>
       </visual>
     </link>
     <joint name="wheel_rl_joint" type="revolute">
@@ -623,17 +615,13 @@
         </surface>
       </collision>
       <visual name="tire_visual">
-        <pose>0 0 0 1.57079633 0 0</pose>
+        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <cylinder>
-            <radius>0.15</radius>
-            <length>0.1</length>
-          </cylinder>
+          <mesh>
+            <uri>model://rover/meshes/wheel.glb</uri>
+            <scale>0.15 0.1 0.15</scale>
+          </mesh>
         </geometry>
-        <material>
-          <ambient>0.1 0.1 0.1 1</ambient>
-          <diffuse>0.1 0.1 0.1 1</diffuse>
-        </material>
       </visual>
     </link>
     <joint name="wheel_fr_joint" type="revolute">
@@ -681,17 +669,13 @@
         </surface>
       </collision>
       <visual name="tire_visual">
-        <pose>0 0 0 1.57079633 0 0</pose>
+        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <cylinder>
-            <radius>0.15</radius>
-            <length>0.1</length>
-          </cylinder>
+          <mesh>
+            <uri>model://rover/meshes/wheel.glb</uri>
+            <scale>0.15 0.1 0.15</scale>
+          </mesh>
         </geometry>
-        <material>
-          <ambient>0.1 0.1 0.1 1</ambient>
-          <diffuse>0.1 0.1 0.1 1</diffuse>
-        </material>
       </visual>
     </link>
     <joint name="wheel_rr_joint" type="revolute">
@@ -813,6 +797,11 @@
           <dust>0</dust>
         </surface>
       </contact>
+      <dig_sink>
+        <gain>1</gain>
+        <max>0.06</max>
+        <tau>0.1</tau>
+      </dig_sink>
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/model/rover/joint_states</topic>

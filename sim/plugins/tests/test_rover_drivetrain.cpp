@@ -1,5 +1,5 @@
 // Unit tests of the drivetrain's Gazebo-free rules (rover_drivetrain.hh): the motor and driveline, the dig-in
-// state, the friction of a wheel contact, the hub forces and the dust rate.
+// state, the friction of a wheel contact, the hub forces, the dust rate and the tyre sink.
 #include <cmath>
 
 #include "check.hh"
@@ -171,6 +171,38 @@ void Dust() {
   CHECK(drive::DustRate(p, sand, 3.0, 2.0, 2.0, 100) == p.max_rate);
 }
 
+/// The tyre sink at true scale (gain 1, the user's decision of 2026-10-07): (D - 1) x the ground's static
+/// sinkage, capped; nothing on ground without sinkage or before the wheel digs.
+void TyreSink() {
+  const drive::SinkParams p;
+  CHECK(p.gain == 1.0);
+  CHECK_NEAR(drive::VisualSink(p, 2.0, 0.02), 0.02, 1e-12);     // sand and clay at the strong D_max
+  CHECK_NEAR(drive::VisualSink(p, 2.0, 0.03), 0.03, 1e-12);     // wash sand
+  CHECK_NEAR(drive::VisualSink(p, 1.25, 0.015), 0.00375, 1e-12);  // the sand sheet at its D_max 1.25
+  CHECK_NEAR(drive::VisualSink(p, 1.26, 0.02), 0.0052, 1e-12);  // crossing sand at the equilibrium D
+  CHECK(drive::VisualSink(p, 2.0, 0.0) == 0.0);                 // rock, pavement, crusts
+  CHECK(drive::VisualSink(p, 1.0, 0.02) == 0.0);                // not dug in
+  CHECK(drive::VisualSink(p, 0.9, 0.02) == 0.0);
+  drive::SinkParams deep = p;
+  deep.gain = 3.0;
+  CHECK_NEAR(drive::VisualSink(deep, 2.0, 0.03), p.max, 1e-12);  // capped
+  // The lag: 63 % of a step in one time constant, settled within 1e-6 after 15, back to exactly 0.
+  double shown = 0.0;
+  for (int k = 0; k < 100; ++k) shown = drive::SinkLag(shown, 0.02, p.tau, kDt);
+  CHECK_NEAR(shown, 0.02 * (1 - std::pow(p.tau / (p.tau + kDt), 100)), 1e-12);
+  CHECK_NEAR(shown, 0.02 * (1 - std::exp(-1.0)), 2e-4);
+  for (int k = 0; k < 1400; ++k) shown = drive::SinkLag(shown, 0.02, p.tau, kDt);
+  CHECK_NEAR(shown, 0.02, 1e-6);
+  int steps = 0;
+  while (shown > 0.0 && steps < 10000) {
+    shown = drive::SinkLag(shown, 0.0, p.tau, kDt);
+    ++steps;
+  }
+  CHECK(shown == 0.0);
+  CHECK(steps < 0.1 * 10 / kDt);  // 0.1 mm of 2 cm: 5.3 time constants
+  CHECK(drive::SinkLag(0.0, 0.5 * drive::kSinkShown, p.tau, kDt) > 0.0);  // something to show: kept
+}
+
 }  // namespace
 
 int main() {
@@ -181,6 +213,7 @@ int main() {
   Friction();
   HubForces();
   Dust();
+  TyreSink();
   if (Failures() == 0) std::cout << "test_rover_drivetrain: all checks passed\n";
   return Failures() == 0 ? 0 : 1;
 }

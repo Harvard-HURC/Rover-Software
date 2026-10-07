@@ -34,6 +34,7 @@ from gz.msgs10.boolean_pb2 import Boolean  # noqa: E402  (after simulate set the
 from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402
 from gz.msgs10.particle_emitter_pb2 import ParticleEmitter  # noqa: E402
 from gz.msgs10.pose_v_pb2 import Pose_V  # noqa: E402
+from gz.msgs10.serialized_map_pb2 import SerializedStepMap  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.world_control_pb2 import WorldControl  # noqa: E402
@@ -417,6 +418,100 @@ class LooseSand(unittest.TestCase):
         self.assertTrue(np.all(np.abs(dig - 1.25) < 0.05), (dig.min(), dig.max()))
         self.assertEqual({w["surface"] for st in run.states if flat[0, 0] <= st["t"] < flat[-1, 0]
                           for w in st["wheels"].values()} - {""}, {"sand"})
+
+
+def component_type(name):
+    """gz-sim's id of a component type, as /world/<w>/state carries it: the 64-bit FNV-1a hash of its name."""
+    h = 0xCBF29CE484222325
+    for byte in name.encode():
+        h = ((h ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+POSE, NAME = component_type("gz_sim_components.Pose"), component_type("gz_sim_components.Name")
+PHYSICS_SYSTEM = '<plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>'
+SCENE_BROADCASTER = '<plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>'
+STATE_TOPIC = "/world/ground_test/state"  # ground_world's, with the SceneBroadcaster: what the Gazebo GUI draws
+
+
+def visual_poses(messages, name="tire_visual"):
+    """The visuals called `name` in /world/<w>/state messages (gz.msgs.SerializedStepMap) and their poses
+    after the message that created them (which carries every component): (entities, {entity: [(t, (x, y, z,
+    roll, pitch, yaw))]}), the pose in the visual's link."""
+    visuals, poses = set(), {}
+    for msg in messages:
+        t = msg.stats.sim_time.sec + msg.stats.sim_time.nsec * 1e-9
+        for entity, data in msg.state.entities.items():
+            components = {c.type: c.component for c in data.components.values()}
+            if NAME in components:
+                if components[NAME] == name.encode():
+                    visuals.add(entity)
+            elif entity in visuals and POSE in components:
+                poses.setdefault(entity, []).append((t, tuple(float(v) for v in components[POSE].split())))
+    return visuals, poses
+
+
+class DigSink(unittest.TestCase):
+    """The dig-in made visible (DriveParams.dig_sink, on by default; the
+    user's decision of 2026-10-07): each tyre's visual, never its collision,
+    is drawn (D - 1) x the ground's static sinkage lower, true scale. A spin
+    digs the wheels in to sand's D_max 2.0 on a sand patch, then the rover
+    drives out onto rock. The world has the SceneBroadcaster, whose
+    /world/<w>/state the Gazebo GUI draws from (test_render.DigCues has the
+    pictures). Runs: both solvers, the dig-in cues off (no sink, the plain
+    tyre: the rover before them) and on (the defaults)."""
+
+    CMD = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (3.5, 0.0, 0.0), (4.0, 0.5, 0.0)]
+
+    @classmethod
+    def setUpClass(cls):
+        X, Y = FLAT.grid()
+        raster = np.where(np.hypot(X, Y) < 1.2, GROUND["sand"][0], GROUND["rock"][0]).astype(np.uint8)
+        before = dataclasses.replace(physical(dig_sink=False), tread_tyre=False)
+        cls.runs = {}
+        for solver in SOLVERS:
+            for cues, params in ((False, before), (True, physical())):
+                with ground_world(FLAT, raster, ROWS, ground_options=OPTIONS, params=params, solver=solver) as world:
+                    path = Path(world)
+                    path.write_text(path.read_text().replace(PHYSICS_SYSTEM, PHYSICS_SYSTEM + SCENE_BROADCASTER))
+                    s = simulate(11.0, world=world, cmd=cls.CMD, trace_every=1,
+                                 subscribe=[(gen_model.DRIVETRAIN_TOPIC, StringMsg), (STATE_TOPIC, SerializedStepMap)])
+                cls.runs[solver, cues] = Run(s, [json.loads(m.data) for m in s.messages[gen_model.DRIVETRAIN_TOPIC]])
+
+    def test_physics_unchanged(self):
+        """The cues move visuals only: the base_link trace every step and the
+        drivetrain states are the same with them as without, on both
+        solvers."""
+        for solver in SOLVERS:
+            with self.subTest(solver=solver):
+                before, cued = self.runs[solver, False], self.runs[solver, True]
+                self.assertGreater(cued.wheel("dig", 0.0, 4.0).min(axis=1).max(), 1.95)  # every wheel dug in
+                self.assertEqual({w["surface"] for w in cued.states[-1]["wheels"].values()}, {"rock"})  # out
+                np.testing.assert_array_equal(before.state.trace, cued.state.trace)
+                self.assertEqual(before.states, cued.states)
+
+    def test_gui_gets_the_sink(self):
+        """/world/<w>/state carries each tyre visual's pose while it sinks (its
+        change is marked: Pose3d's == hides moves under 1 mm, so the
+        component's own change flag would never be set), as deep as (D - 1)
+        x sand's 2 cm, 2 cm at D_max; on the rock the tyres rise, and their
+        last pose sent is their SDF pose, exactly. With the sink off no tyre
+        pose is sent."""
+        sinkage = GROUND["sand"][1].sinkage_m
+        for solver in SOLVERS:
+            with self.subTest(solver=solver):
+                tyres, poses = visual_poses(self.runs[solver, True].state.messages[STATE_TOPIC])
+                self.assertEqual(len(tyres), 4)
+                self.assertEqual(set(poses), tyres)
+                for entity, rows in poses.items():
+                    depth = np.linalg.norm([pose[:3] for _, pose in rows], axis=1)  # the SDF pose: the link's origin
+                    self.assertGreater(len(rows), 10, entity)
+                    self.assertAlmostEqual(depth.max(), sinkage, delta=1e-5)
+                    self.assertEqual(rows[-1][1], (0.0,) * 6)
+                    self.assertLess(rows[-1][0], 10.5)  # it rose before the end
+                tyres, poses = visual_poses(self.runs[solver, False].state.messages[STATE_TOPIC])
+                self.assertEqual(len(tyres), 4)
+                self.assertEqual(poses, {})
 
 
 class Washboard(unittest.TestCase):
