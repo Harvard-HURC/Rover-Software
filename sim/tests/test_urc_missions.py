@@ -12,7 +12,8 @@ import numpy as np
 from worldfiles import WORLDS, gz_check, model_root, rock_vertices, sheet, terrain as world_terrain, vec
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import dem, lander, landscape, props, routes, rules, sdf, terrain, terrains  # noqa: E402
+from urc import appearance, dem, lander, landscape, props, realism, routes, rules, sdf, terrain, terrains  # noqa: E402
+from urc import textures  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.missions import MISSIONS, autonomy, delivery  # noqa: E402
 
@@ -241,6 +242,32 @@ class Autonomy(unittest.TestCase):
         steep = np.array([p for p in terrain.resample(easy, 1.0) if self.terrain.slope_deg(*p) > bare])
         self.assertTrue(len(steep))
         self.assertTrue(np.all(climb_limits("urc_autonomy", *steep.T) > bare))  # all on the rib
+
+    def test_zones_show_on_the_drape(self):
+        """The mission's zones are where its course needs them, not where
+        NAIP shows that ground, so each tints the drape (appearance.
+        tint_zones): the bentonite clay flat beside the drive from C2 stands
+        out from the sand sheet round it (CIE76 0.96 untinted) and leans to
+        the clay's palette; and there is no slab-joint layer (Terra weights
+        it by height, and the highest ground here is sand-sheet plain)."""
+        rgb, hf = realism.colour_map("urc_autonomy")
+        n = rgb.shape[0]
+        zone = self.sheet["terrain_zones"]["clay_flat"]
+        outline = np.array(zone["outline"])
+        xs = (np.arange(n) + 0.5) * hf.size / n - hf.size / 2
+        X, Y = np.meshgrid(xs, -xs)
+        box = (np.abs(X - zone["center"]["x"]) < 30) & (np.abs(Y - zone["center"]["y"]) < 30)
+        r, c = np.nonzero(box)
+        distance = terrain.path_distance(np.vstack([outline, outline[:1]]), X[r, c], Y[r, c])[0]
+        inside = np.array([cv2.pointPolygonTest(outline.astype(np.float32), (float(x), float(y)), False) > 0
+                           for x, y in zip(X[r, c], Y[r, c])])
+        mean = {k: textures.linear_to_srgb(rgb[r[m], c[m]].mean(axis=0))
+                for k, m in (("in", inside & (distance > 2.0)), ("ring", ~inside & (distance > 3.0) & (distance < 8.0)))}
+        self.assertGreater(float(appearance.delta_e(mean["in"], mean["ring"])), 5.0, mean)
+        clay = terrains.CLAY.appearance.palette.base
+        self.assertLess(appearance.delta_e(mean["in"], clay), appearance.delta_e(mean["ring"], clay))
+        self.assertNotIn("slab_joints", [d["key"] for d in self.sheet["terrain"]["details"]])
+        self.assertEqual(self.sheet["terrain"]["orthophoto"]["zone_tint"], appearance.ZONE_TINT)
 
     def test_terrain_is_the_dem(self):
         """The world's terrain is the USGS DEM: its zones only paint the ground."""

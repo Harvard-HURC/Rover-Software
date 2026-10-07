@@ -227,15 +227,18 @@ and a map.
   ochre ring when the wheel has dug in, dig > 1.05); in the side rail the turn
   asked (the drivetrain's applied command, so autonomy's too) and got (from
   ground truth), their ratio, 30 s of both, and per wheel the current, torque,
-  slip, dig factor and ground. A DiffDrive rover shows only the turn rows.
+  slip, dig factor and ground. A DiffDrive rover shows only the turn rows, and
+  released to autonomy no turn asked (the station sends none, and DiffDrive
+  does not report autonomy's); the drive bar's "You ask" reads – then.
   The turn rate is computed from successive ground-truth yaws (Known
   limitations).
 - **Map**: the world's orthophoto (`pixi run sim-maps`, served at
   `/map.jpg`; marked "Photo, out of date" when an input changed) or the
   hillshade of the sheet's heightmap (`/minimap.png`, tinted on one scale for
   every world: 0/8/30/90 m above the lowest point). On it: the places, the
-  rover and its 30 s track, the fly camera and the ground its picture covers;
-  a scale bar. The side map zooms (M) to 250 / 60 m around the rover; a click
+  rover and its track (points 0.3 m apart, its last 1.2 km, started anew when
+  the world is reset or restarts), the fly camera and the ground its picture
+  covers; a scale bar. The side map zooms (M) to 250 / 60 m around the rover; a click
   on it opens the Map view. Worlds without a sheet get a grid.
 
 How it works:
@@ -258,8 +261,11 @@ How it works:
   subscribing is dropped (see Gazebo lessons). Depth is coloured on a log
   scale from 0.1 to 40 m; black means no return.
 - The fly camera is controlled by topics only: the station publishes
-  `/fly_camera/cmd` at 20 Hz only while the page sends Fly input, and the
-  plugin's 0.3 s deadman (wall clock) stops it when the page goes quiet.
+  `/fly_camera/cmd` at 20 Hz while the page sends Fly input. A page that
+  loses focus or hides lets go of its fly keys at once; one that vanishes
+  (tab closed, network gone) leaves the station repeating the last command
+  until its 0.5 s deadman, then the plugin's 0.3 s deadman (wall clock)
+  stops the camera: within 0.8 s.
   Its spawn request blocks the station's event loop for up to 0.2 s the first
   time (the GIL lesson below); it is retried every 10 s while the camera does
   not report, and repeated after a world restart.
@@ -286,9 +292,15 @@ Stopping and sharing:
   "Simulation not running: waiting for it"; when the world returns the station
   spawns its cameras again.
 - A camera counts as present only while its plugin's state topic delivers
-  (5 Hz). The console says per camera "spawned", "already in the world", "not
-  spawned, the world has no /world/<w>/create (UserCommands system)", or that
-  its plugin does not report (`sim/build` missing from `GZ_SIM_SYSTEM_PLUGIN_PATH`).
+  (5-10 Hz of sim time); the plugins publish nothing while the world is
+  paused, so the camera and drivetrain states count until sim time too has
+  run on 1 s past them (a paused or slow world keeps them; on wall time alone
+  a paused world lost its fly camera and drivetrain readout, and the station
+  spawned the fly camera again and again). Nothing is spawned into a paused
+  world. The console says per camera "spawned", "already in the world", "not
+  spawned, the world has no /world/<w>/create (UserCommands system)", "spawn
+  requested; the world is paused", or that its plugin does not report
+  (`sim/build` missing from `GZ_SIM_SYSTEM_PLUGIN_PATH`).
 
 **Rover eye** (`models/eye_camera`, `EyeParams`): 960×540 at 20 Hz with the
 RGB-D sensor's 1.5 rad horizontal field of view. Near clip 0.1 m (it also
@@ -326,11 +338,20 @@ the multiplier (0.25–4); command components within ±4 (the fast key); a 0.2 s
 velocity lag and a 0.08 s view lag. Its floor is ground + 1 m under the
 camera and under the next 0.5 s of flight, and it is never below ground +
 0.3 m (measured: 0.995 m minimum clearance at 16× cruise over a 30 m, 31°
-hill). It stays within the terrain edge + 100 m and the highest terrain +
-2000 m. Orthographic projection is set from an `events::SceneUpdate` hook; its
+hill). The ground is the visual heightmap and, beyond the terrain's edge,
+the far field where that is higher (its `apron.json`): there the far DEM
+rises up to 17 m above the edge within the 100 m the camera may go, and the
+camera sat inside it. It stays within the terrain edge + 100 m and the
+highest terrain + 2000 m. A goto (a map click, R, a double-click) flies a
+smoothstep along the straight line, lifted over the ground under it (a line
+through a hill once pinned it to the 0.3 m floor, sliding up the slope).
+Orthographic projection is set from an `events::SceneUpdate` hook; its
 window is 2 h tan(hfov/2), h the height above the ground where it began, so
 switching does not jump and climbing zooms out; it looks straight down and
-has no cast shadows. It starts at its spawn pose and returns there on a world
+has no cast shadows. While orthographic the camera is drawn from 50 m above
+the highest ground it may fly over, whatever its height (the state reports
+its own): the near plane just under it cut away the terrain in its window
+that rose above it. It starts at its spawn pose and returns there on a world
 reset. The ground is read once from the visual heightmap when it is spawned
 (18–95 ms, about 0.3 s at 4097²). An idle fly camera costs 1.5–3.5 % of the
 step time, which is why the station spawns it only when first used.
@@ -429,9 +450,15 @@ every wheel contact grips. Every 1 ms step:
   Stribeck from μs to μk over 3 cm/s on firm ground; smooth spatial μ noise
   (σ 0.2 over 0.3 m); force-dependent slip, slip × |wheel speed × r| / load
   per contact (gz WheelSlip's convention: a stopped wheel has none, so a
-  parked rover does not creep). The rule reads the wheel's spin through the
-  controller's 5 ms speed filter: the 1 ms coupling of motor, contact and DART
-  otherwise makes wheels chatter at 250 Hz and parked rovers creep.
+  parked rover does not creep). The load is the contact's own: a cylinder
+  touches the ground at both tread edges, and the solver splits the wheel's
+  load between them as it likes (Dantzig evenly, PGS nearly all on the first
+  edge it visits, 90 / 2 N), so each edge's compliance comes from its load
+  in the previous step, which the wheel joint's transmitted torque gives
+  (within 0.05 N of the contact forces, at no cost; with even shares PGS
+  slipped 1.85× the design in sand). The rule reads the wheel's spin through
+  the controller's 5 ms speed filter: the 1 ms coupling of motor, contact and
+  DART otherwise makes wheels chatter at 250 Hz and parked rovers creep.
 - **Where the ground comes from**: on the heightmap, the world's `ground.png`
   under the contact (nearest sample); on the terrain model's other shapes,
   `ground.json`'s collision map (exact name, then prefix: `rocks_`, `slabs_`,
@@ -472,19 +499,22 @@ every wheel contact grips. Every 1 ms step:
 - **Reset**: `ISystemReset` clears the command, motors, ramps, dig-in and odometry.
 
 Measured with the physical rover on flat ground of one type (`pixi run
-sim-realism`, Dantzig, μ noise on), the turn-in-place ratio (yaw rate /
-command, wz 1 rad/s) against the quasi-static closed form of the design
-(wheels at (±0.45, ±0.40) m):
+sim-realism`, μ noise on), the turn-in-place ratio (yaw rate / command, wz
+1 rad/s) on both of DART's solvers against the quasi-static closed form of
+the design (wheels at (±0.45, ±0.40) m). PGS, the solver of four of the five
+worlds, gives each wheel μ times its own load, so the diagonal a turn unloads
+grips less and firm ground turns 0.02–0.04 below the closed form (gravel
+0.374 against 0.410, the most); every catalogue ground within ±0.04 on both:
 
-| Ground | Measured | Closed form |
-|---|---|---|
-| rock, slickrock, caprock | 0.432 | 0.436 |
-| manmade (pads, objects) | 0.431 | 0.434 |
-| clay crust | 0.397 | 0.401 |
-| regolith (the default) | 0.373 | 0.377 |
-| sand sheet | 0.322 | 0.328 |
-| sand | 0.248 | 0.261 |
-| wash sand | 0.169 | 0.182 |
+| Ground | Dantzig | PGS | Closed form |
+|---|---|---|---|
+| rock, slickrock, caprock | 0.432 | 0.411 | 0.436 |
+| manmade (pads, objects) | 0.431 | 0.404 | 0.434 |
+| clay crust | 0.397 | 0.369 | 0.401 |
+| regolith (the default) | 0.373 | 0.345 | 0.377 |
+| sand sheet | 0.322 | 0.308 | 0.328 |
+| sand | 0.248 | 0.253 | 0.261 |
+| wash sand | 0.169 | 0.181 | 0.182 |
 
 A 10 s spin in loose sand (yaw ratio in successive seconds), strong preset:
 0.145, 0.028, then 0.018 (0.07× fresh: it cannot turn, and drives out
@@ -493,9 +523,9 @@ straight); mild: 0.20, 0.22, then 0.19 (0.74×). Other measurements (`test_drive
 (PGS; the rocker pivots' moments unload one diagonal), loaded-wheel current
 9.75 A on μ 0.8; a 6.8 A current limit stalls the turn (7.5° in 5 s against
 115°); turn rise 0.31 s with the ramp, 53 ms without it, stop 27 ms; slip in
-sand at 0.5 m/s 20 %, torque 3.4 N·m; drift across a 20° slope over 3.5 m:
-rock 0.06 m, regolith 0.42 m, sand 1.65 m; a rover parked 60 s on 15°
-regolith or 20° sand moves under 1.2 mm.
+sand at 0.5 m/s 20 % on either solver (PGS 19.8 %), torque 3.4 N·m; drift
+across a 20° slope over 3.5 m: rock 0.06 m, regolith 0.42 m, sand 1.65 m; a
+rover parked 60 s on 15° regolith or 20° sand moves under 1.2 mm.
 
 The **solver** is set per world (`WorldBuilder(solver=...)`, recorded in the
 sheet's `physics`): PGS gives each wheel μ times its own load, which the
@@ -503,8 +533,10 @@ diagonal unloading needs; DART's default Dantzig sizes the friction limits
 from loads before friction. PGS in Delivery, Astrobiology, Autonomy and the
 proving ground; Dantzig in Equipment Servicing, where PGS with the lander's
 joints runs below real time, so per-wheel friction is approximate there.
-`rover_test.sdf` and the test worlds of `simulate.py` use Dantzig, on which
-the drivetrain tests were calibrated.
+`rover_test.sdf` and the test worlds of `simulate.py` use Dantzig; the
+calibration rows of `test_drivetrain.py` (spin ratio, slip, dig-in, drift,
+creep) run on both, and the proving ground's flat sand gives the test
+worlds' numbers on its PGS (0.37 m/s at 0.5 commanded, dig factor 1.26).
 
 ### Skid-steer friction
 
@@ -532,19 +564,32 @@ drivetrain on every wheel contact, terrain or object.
 - The ground does not deform: no ruts or tracks; sinkage is a static carve of
   the collision heightmap under each ground type (2 cm in sand, 3 cm in wash
   sand, 0.5 cm on regolith); dig-in raises resistance, not sinkage.
+- DART's cylinder–heightmap collision lets wheels into rough relief beyond
+  the carve: driving 10 m at 0.5 m/s the surface reaches into a wheel by
+  1–17 mm (p99) on the worlds' natural ground (the proving ground's badland
+  strip 16.8 mm, Astrobiology's roughest 11.4 mm, Delivery 8.2 mm, Autonomy
+  5.6 mm, sand sheet 1.4 mm), 2–3 cm on 5 cm RMS relief at any sample spacing;
+  the same surface as a mesh 0.5 mm. `test_urc_terrain` holds the badland
+  strip under 2.5 cm.
 - No stick-slip judder in slow turns on rock: a rigid rover turning in place
   slips at the yaw ratio where its slip is least, so the Stribeck drop has no
   first-order effect (design spec 6.9 target not met; tyre compliance gives
   a 22–24 Hz wheel hop instead). Revisit with the real wheels.
 - Strong dig-in also stalls straight climbs in loose ground: sand at about
-  10–15°, dusty clay at 12° (the proving ground's sand dune and clay slope,
-  Delivery's clay flank after 10 m).
+  10–15° (the proving ground's 15° sand dune, 0.6 m up it), dusty clay at about
+  15° (Delivery's clay flank after 10 m; the proving ground's 12° clay slope it
+  climbs at 0.39 m/s, its wheels dug in to 1.26).
 - The rover high-centres on drops of 0.6 m and more (Delivery's 0.6 and 1.0 m
   ledges, the proving ground's), with either drivetrain.
-- The depth image and point cloud see the dust: gz-rendering 8.2.2 ignores
-  `particle_scatter_ratio` (any value, 0 included). The emitters sit behind
-  the rear wheels and blow back, so a camera looking forward rarely sees it;
-  reversing into it or panning back does.
+- The depth image and point cloud see the dust (Q11 not met): gz-rendering
+  8.2.2 takes every particle pixel with any red for a depth return at a fixed
+  scatter ratio, and neither `<particle_scatter_ratio>` nor a ratio sent on
+  the emitter's topic reaches its shader. Only particles without a diffuse
+  stay out of the depth image, and they render black (the shipped rover's
+  did until 2026-10-07). The emitters sit behind the rear wheels and blow
+  back, so a camera looking forward rarely sees it; reversing into it or
+  panning back does. No colour range either: a particle keeps its sprite's
+  colour and opacity for its whole life and vanishes at its end.
 - No camera noise: SDF `<noise>` on an RGB-D camera aborts gz on Metal.
 - `/model/rover/ground_truth` (Gazebo's OdometryPublisher) occasionally
   reports a yaw rate off by 4π/dt for one message (−628 rad/s once in 25 s of
@@ -667,7 +712,7 @@ NAD83(2011) to WGS84(G2139) at epoch 2027.4, −0.79 m; NOAA VDatum,
 - The judges' easy route (`routes.easy_route`, 16° search limit on a 2 m grid)
   is 236 m with a max grade of 17.2° over 4 m. Where it crosses ground
   steeper than 15° it runs on a 12 m wide rib of bare caprock
-  (`autonomy.EASY_ROUTE_RIB`, traction only, invisible under the NAIP drape):
+  (`autonomy.EASY_ROUTE_RIB`; like every zone it tints the NAIP drape, below):
   the soil map's ground there climbs 22°, and a turning rover slid off a
   narrower rib on 21° side slopes. A skid-steer rover barely turns on such
   ground (4 % of the commanded yaw rate on 25° slickrock): a driver should
@@ -684,7 +729,13 @@ runs between the start, Post 1 and Post 2; the cliff wash 15–20 m out from
 the butte's foot). Loose scree on the butte's north face where the straight
 line from the start crosses it, gravel aprons beside the start and below the
 cliff, a dusty clay flat beside the drive from C2, slickrock on the crest and
-the rib. Zones only paint the ground: the terrain is the DEM.
+the rib. Zones only paint the ground: the terrain is the DEM. The mission
+puts them where its course needs them, not where NAIP shows that ground, so
+each zone's palette covers 0.6 of the drape inside it (`appearance.tint_zones`,
+NAIP's own light and shade kept, edges feathered over 1 m): the clay flat
+reads grey (CIE76 14 against the sand sheet round it; 1 untinted); zones whose
+palette is near the drape's colour change it little (gravel, scree, caprock
+2–3).
 
 | Rock group | Rocks (colliding) | Where |
 |---|---|---|
@@ -773,7 +824,9 @@ z. Objects stand on the carved ground (`WorldBuilder.ground`).
   downhill rills on badland. It is kept off engineered ground: a mission's
   `RELIEF` lists pads, graded ways and features (`landscape.keep_flat`; within
   2 cm of the designed shape). Wash channels stay smooth (flash floods; their
-  banks stay crossable). Autonomy's relief is the lidar's own.
+  banks stay crossable). Haystack knobs lie where their belt's mask is over
+  0.5, each faded whole by it (cut by a mask that fell over 2 m they made 3 m
+  walls of 60°). Autonomy's relief is the lidar's own.
 - **Roughness against MDRS** (plane-detrended RMS height in 4, 8, 16 m
   windows, `data/research/terrain_targets.json` from both lidar squares):
   every ground type's median lies within the real p25–p75; the natural ground
@@ -784,28 +837,39 @@ z. Objects stand on the carved ground (`WorldBuilder.ground`).
   `shrubs`, `imaged_shrubs`, `pebbles`): tabular sandstone slabs by the
   measured size-frequency of MDRS block fields (1–7 m: N(≥1) 1.69, N(≥2)
   0.81, N(≥4) 0.14 per 100 m², 8.3 % cover, against the table's 1.67, 0.74,
-  0.17 and 8.6 %) and badland edges; risers along benches; gravel within a
-  corridor of the course; shrubs at each type's density (meshes near the
-  course, dots in the colour map elsewhere); pebbles round the start and the
-  targets, at most 20,000 per world. All merged per 128 m chunk and kind into
-  the terrain's link: rocks, slabs and risers collide (OBJ; rock by
-  `ground.json`'s prefixes), shrubs and pebbles are visual only; visuals are
-  glTF with one primitive per colour. 1.0–1.9 M triangles per world.
+  0.17 and 8.6 %) and badland edges, tilted up to 30° but no further than
+  keeps their top out of the ground at the buried edge
+  (`world.slab_tilt`); risers along benches, their top falling back into the
+  ground behind the face (at most 15°: a step up from below, never a wall);
+  gravel within a corridor of the course; shrubs at each type's density, and
+  the tall wash-margin shrubs (0.5–2.5 m, 480/ha) on every wash's banks
+  (`features.Wash.margin`); meshes near the course, dots in the colour map
+  elsewhere; pebbles round the start and the targets, at most 20,000 per
+  world. All merged per 128 m chunk and kind into the terrain's link: rocks,
+  slabs and risers collide (OBJ; rock by `ground.json`'s prefixes), shrubs and
+  pebbles are visual only and stand on the drawn (uncarved) ground; visuals
+  are glTF with one primitive per colour. 1.0–1.9 M triangles per world.
 - **Colour** (design D11): Terra's layer 0 is a 4096² colour map over the
   terrain with a flat normal map. Synthetic worlds bake it from the ground
   raster (`appearance.colour_map`: palettes mottled over their p10–p90,
   badland strata on a dipping elevation ramp, slope and cavity shading, far
-  shrubs as dots); Autonomy drapes de-shaded NAIP. Over it three shared
-  detail layers (gravel lag 0.35, cracked silt 0.15, slab joints above a cap
-  height) with near-constant weights; layer 0 is compensated per texel in
-  linear light so the render shows the map plus zero-mean detail. The
+  shrubs as dots); Autonomy drapes de-shaded NAIP, its zones tinted in. Over
+  it three shared detail layers (gravel lag 0.35, cracked silt 0.15, slab
+  joints above a cap height; Autonomy has none of the last: its highest
+  ground is sand-sheet plain, not the butte's caps) with near-constant
+  weights; layer 0 is compensated per texel in linear light so the render
+  shows the map plus zero-mean detail. The
   rendered maps match their colour maps to a median CIE76 of 2.1–2.4
   (smoothed over 2 m; the realism report).
 - **Far field** (`urc/farfield.py`): a visual-only GLB per world, 60 × 80 km
-  from the 3DEP 60 km DEM on a 120 m grid with Earth curvature, textured by a
-  boosted NAIP 2021 overview, a hole under the terrain and its seam sunk 4 m
-  under synthetic terrain: the Henry Mountains and Factory Butte stand on the
-  horizon where they are. Cameras need clip far 80 km to see it (eye, chase, fly and the
+  from the 3DEP 60 km DEM on a 120 m grid with Earth curvature, textured by the
+  NAIP 2021 overview brought to NAIP 2024's colour (per-channel gains measured
+  over the Autonomy square; it was 17 % darker than the drape beside it) and
+  boosted alike, a hole under the terrain and every vertex within a grid step
+  of it sunk 4 m under the lowest terrain near it, Autonomy's lidar too (its
+  edge triangles showed through by up to 19 m): the Henry Mountains and
+  Factory Butte stand on the horizon where they are. `apron.json` beside the
+  mesh holds its heights round the terrain for the fly camera. Cameras need clip far 80 km to see it (eye, chase, fly and the
   rover's RGB have it).
 - **Light** (`urc/lighting.py`): the sun of the mission date, 2027-05-28 10:30
   MDT at MDRS (NOAA's algorithm: elevation 49.9°, azimuth 102.4°), colour
@@ -869,8 +933,10 @@ loops of its own.
     `sdf.GROUND`.
 - **Shared assets** (`urc/media.py`, `Media`): textures, meshes and glTF in
   `models/urc_media`, each named `<stem>_<hash>.<ext>`. The hash covers the
-  generator function, its arguments and its module's source, so a file is
-  made once and skipped while current (`media.texture`, `mesh`, `glb`,
+  generator function, its arguments with their defaults, the source of its
+  module and of every module of `urc` that module uses, and the contents of
+  the files its arguments name (a re-fetched raster), so a file is made once
+  and skipped while current (`media.texture`, `mesh`, `glb`,
   `detail`, `aruco`, `sign`, `quad`, `dust_puff`). A world's own model
   (`urc_terrain_<key>`) holds its heightmaps, `dem.tif`, ground map, colour
   map and merged clutter; `urc_farfield_<key>` its horizon.
@@ -933,8 +999,8 @@ the rest recipe gravel), 17 slabs, 79 shrubs, in 9 s.)
 
 `pixi run sim-worlds` (or `python sim/gen_worlds.py [world ...]`) writes
 `worlds/urc_<mission>.{sdf,json}` and `worlds/proving_ground.{sdf,json}` and the
-models they use, in about 55 s for all five (Autonomy 20 s, Astrobiology
-11 s, Delivery 10 s, proving ground 6 s, Equipment Servicing 4 s). Generation is
+models they use, in about 65 s for all five (Autonomy 23 s, Astrobiology
+20 s, Delivery 10 s, proving ground 6 s, Equipment Servicing 4 s). Generation is
 deterministic; edit the layouts in `urc/missions/`, not the output. Its pixi
 inputs are `gen_worlds.py`, `gen_model.py`, `urc/**/*.py`, the DEMs, the NAIP
 rasters, the relief swatches, the soil map and the roughness targets.
@@ -952,8 +1018,10 @@ rasters, the relief swatches, the soil map and the roughness targets.
   tiles shot straight down from 300 m above the highest terrain, each map
   pixel projected through its tile at its terrain height, seams cross-faded.
   A map is stale when any input changed (the world, every file it references,
-  the media patch; SHA1 in the `.json`); without arguments it renders the
-  missing and stale ones. Tall things lean, as in any orthophoto.
+  the media patch and the sun, sky and haze it is filled with; SHA1 in the
+  `.json`); what only physics reads (collisions, their heightmaps and meshes,
+  friction, the solver) is no input. Without arguments it renders the missing
+  and stale ones. Tall things lean, as in any orthophoto.
 
 ### Proving ground
 
@@ -970,10 +1038,11 @@ West of the road (strips run west):
   10°, 4 m landing, 7 m at 20°, 4 m landing, 5 m at 30°; then a plateau 6.85 m
   up and a 12° way down. A rover holds or climbs to atan(μ).
 - **Sand pit**: 10 m flat, then a 15° dune up and down. **Clay patch**: 10 m
-  flat, then 12° up and down. With the strong dig-in the rover crawls through
-  the flat sand at about 0.2 m/s and stalls on the dune and 2.7 m up the clay
-  slope as its slipping wheels dig in. **Slickrock slab**: 6 m flat, then 25°
-  up and down: crossed.
+  flat, then 12° up and down. With the strong dig-in the rover crosses the
+  flat sand at 0.37 m/s of 0.5 commanded (its wheels dug in to 1.26) and
+  stalls 0.6 m up the dune as its slipping wheels dig in to 2.0; it climbs
+  the clay slope at 0.39 m/s (dig 1.26). **Slickrock slab**: 6 m flat, then
+  25° up and down: crossed.
 - **Side slopes** of 10° and 20°, each 20 m long.
 - **Natural strips**, 40 m each, from the mission worlds' recipes: crusted
   sand sheet with its shrubs, a 12° badland slope with haystack knobs and
@@ -1100,8 +1169,17 @@ cost a wrong first attempt.
   Servicing's flat terrain cost +9 % per step through the lander's links.
   Collide bitmasks fix it (`sdf.GROUND` on terrain shapes, `ABOVE_GROUND` on
   the lander's parts).
-- **On a corrugated heightmap DART's cylinder wheels sink 5–15 cm and stall**
-  (DiffDrive's too); on a mesh of the same surface they ride the crests.
+- **DART's cylinder–heightmap collision lets wheels into relief**: on a
+  corrugated heightmap they sink 5–15 cm and stall (DiffDrive's too); on
+  smooth 5 cm RMS relief the surface reaches 2–3 cm into them (p99) at any
+  sample spacing; on a mesh of the same surface they ride it (0.5 mm). The
+  Bullet collision detector cut it to 1 cm but left wheels up to 9 mm above
+  the ground.
+- **A cylinder wheel touches flat ground at both tread edges, and the
+  solver splits the load**: Dantzig evenly, PGS nearly all on the first
+  contact it visits (90 / 2 N); per-contact friction or slip compliance must
+  follow each contact's own load (the wheel joint's transmitted torque gives
+  the split), or PGS and Dantzig disagree (1.85× the slip).
 - **Every shape costs time every step, touched or not**: 0.56–0.83 µs per
   collision shape and 0.10–0.18 µs per visual per 1 ms step. A separate static
   model costs about 2–4 µs and its bounding box is tested against the
@@ -1164,9 +1242,19 @@ cost a wrong first attempt.
   paused worlds in the Gazebo GUI.
 - **Particle emitters**: `<emitting>` defaults to true, and gz-sim creates
   emitters from link SDF even without the particle-emitter system; give them
-  `<emitting>false</emitting>` and an explicit `<topic>`.
-  `particle_scatter_ratio` has no effect on depth images here (dust shows at
-  any value; 0 is ignored as "unset").
+  `<emitting>false</emitting>` and an explicit `<topic>`. A particle material
+  without a `<diffuse>` renders black. Colour ranges are not applied
+  (`SetColorRange` is disabled, a `<color_range_image>` changed nothing):
+  the sprite carries colour and opacity. The depth camera takes every
+  particle pixel with any red for a return at a fixed scatter ratio:
+  `particle_scatter_ratio` (SDF or the emitter's topic) never reaches it, nor
+  does a camera `<visibility_mask>`.
+- **Orthographic near plane**: an orthographic camera clips at its near plane
+  just under it, and a custom projection with a near plane behind the camera
+  changed nothing; draw it from above whatever it must show (the window
+  depends only on the projection).
+- **`google::protobuf::Struct` fields**: take `fields()` after parsing; a
+  reference taken before `JsonStringToMessage` sees an empty map.
 - **RGB-D clip split**: an `rgbd_camera` reads `<depth_camera><clip>`
   separately, so the RGB can reach 80 km while the depth stays clipped at 40 m.
 - **Albedo-map alpha is tested at 0.5**: cut-outs work, feathered edges do
@@ -1247,7 +1335,7 @@ The eye and chase render 960×540, the fly camera 1280×720 at 20 Hz; the
 rover's RGB-D renders 1280×720 at its 15 Hz. The first picture comes 3–5 s
 after a world starts.
 
-**Generation and tools**: `sim-worlds` about 55 s for all five worlds;
+**Generation and tools**: `sim-worlds` about 65 s for all five worlds;
 `sim-maps` 64 s for all five (Autonomy 64 tiles in 23 s, the others 16 tiles
 in 9–10 s); `sim-realism` about 1 min (the spin runs included).
 

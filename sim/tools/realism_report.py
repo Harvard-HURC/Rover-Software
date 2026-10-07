@@ -15,7 +15,7 @@ The report holds, each with its target and whether it is met:
   by slope, with the overall exposure the sun and ambient give the ground;
 - the spin-in-place ratio per catalogue ground, measured with the physical
   rover on flat ground (headless Gazebo, tests/simulate.py), against the
-  closed form of design 5.6, and the dig-in of a sand spin under both presets.
+  closed form of design 5.6 on both of DART's solvers, and the dig-in of a sand spin under both presets.
 
 Usage: python sim/tools/realism_report.py [--no-physics] [--no-render]
 (about 3 minutes; the worlds must be generated, and the maps rendered and
@@ -128,8 +128,9 @@ def renders():
 
 
 def spins():
-    """Fresh spin ratio per catalogue ground (wz 1 rad/s, mean over 3-6 s), and a 10 s sand spin's ratio per
-    second under each dig-in preset."""
+    """Fresh spin ratio per catalogue ground (wz 1 rad/s, mean over 3-6 s) on DART's Dantzig ("fresh") and PGS
+    ("fresh_pgs": the solver of four of the five shipped worlds), and a 10 s sand spin's ratio per second under
+    each dig-in preset."""
     sys.path.insert(0, str(SIM_DIR / "tests"))
     import simulate  # noqa: E402  (sets the Gazebo environment)
     hf = terrain.Heightfield(32.0, 65)
@@ -137,28 +138,34 @@ def spins():
     rows = [simulate.ground_row(i, k, terrains.traction(terrains.TYPES[k]), terrains.TYPES[k].appearance.dust)
             for i, k in enumerate(keys)]
 
-    def run(seconds, key, params, row=None):
+    def run(seconds, key, params, row=None, solver=None):
         index = keys.index(key)
         table = [row if r["key"] == key and row else r for r in rows]
         raster = np.full((hf.n, hf.n), index, np.uint8)
-        with simulate.ground_world(hf, raster, table, params=params) as world:
+        with simulate.ground_world(hf, raster, table, params=params, solver=solver) as world:
             s = simulate.simulate(seconds, world=world, cmd=[(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)], trace_every=10)
         return s.trace
 
-    fresh = {}
-    for key in keys:
-        trace = run(6.0, key, simulate.physical(dig=False))
-        measured = float(trace[(trace[:, 0] >= 3.0) & (trace[:, 0] < 6.0), 7].mean())
-        expected = simulate.spin_ratio(terrains.TYPES[key].traction)
-        fresh[key] = {"measured": measured, "closed_form": expected, "met": abs(measured - expected) <= SPIN_TOLERANCE}
+    def fresh_spins(solver):
+        out = {}
+        for key in keys:
+            trace = run(6.0, key, simulate.physical(dig=False), solver=solver)
+            measured = float(trace[(trace[:, 0] >= 3.0) & (trace[:, 0] < 6.0), 7].mean())
+            expected = simulate.spin_ratio(terrains.TYPES[key].traction)
+            out[key] = {"measured": measured, "closed_form": expected,
+                        "met": abs(measured - expected) <= SPIN_TOLERANCE}
+        return out
+
+    fresh, fresh_pgs = fresh_spins(None), fresh_spins("pgs")
     dig = {}
     for preset in ("strong", "mild"):
         row = simulate.ground_row(keys.index("sand"), "sand", terrains.traction(terrains.SAND, preset), 0.8)
         trace = run(10.5, "sand", simulate.physical(), row)
         dig[preset] = [float(trace[(trace[:, 0] >= t) & (trace[:, 0] < t + 1), 7].mean())
                        for t in np.arange(0.5, 10.5, 1.0)]
-    return {"fresh": fresh, "sand_dig_in": dig,
-            "note": "flat ground of one type, mu noise on, Dantzig; dig_in: yaw ratio in each second of a spin"}
+    return {"fresh": fresh, "fresh_pgs": fresh_pgs, "sand_dig_in": dig,
+            "note": "flat ground of one type, mu noise on, Dantzig (fresh_pgs: PGS); dig_in: yaw ratio in each "
+                    "second of a spin (Dantzig)"}
 
 
 def hillshade(hf, window, n):

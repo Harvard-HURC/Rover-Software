@@ -54,6 +54,7 @@ import numpy as np
 SIM_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_DIR))
 sys.path.insert(0, str(SIM_DIR / "tests"))
+import gz_media  # noqa: E402  (the media patch and the light it is filled with)
 import gzenv  # noqa: E402
 import viewers  # noqa: E402
 import worldfiles  # noqa: E402  (temporary world copies, as the tests make them)
@@ -80,6 +81,9 @@ RATE = 10.0  # [Hz] tile camera (prototype)
 JPEG_QUALITY = 88  # 2-3.3 MB at 4096 px (prototype)
 MEDIA_DIFF = SIM_DIR / "patches" / "gz-rendering8-ogre2-media.diff"  # the media patch (gz_media.py)
 ROVER_INCLUDE = re.compile(r"<include>\s*<uri>model://rover</uri>.*?</include>", re.S)
+# What only physics reads, which no picture shows: collisions (collision heightmaps and meshes, surface
+# friction) and the world's physics settings.
+PHYSICS_ONLY = re.compile(r"<collision\b.*?</collision>|<physics\b.*?</physics>", re.S)
 MODEL_URI = re.compile(r"model://([^<>\s\"']+)")
 FILE_URI = re.compile(r"file://(/[^<>\s\"']+)")
 
@@ -131,15 +135,25 @@ def _key(path):
     return str(path.relative_to(SIM_DIR)) if path.is_relative_to(SIM_DIR) else str(path)
 
 
+def _shown(sdf_text):
+    """An SDF document without what only physics reads (PHYSICS_ONLY)."""
+    return PHYSICS_ONLY.sub("", sdf_text)
+
+
 def inputs(world_path):
     """{file: SHA1} of everything the map shows: the world SDF and every
     file referenced through model:// or file:// from it and from the models
     it includes (heightmaps, colour maps, meshes, textures), except the rover,
-    which the map leaves out; plus "media": which gz-rendering media render it
-    (the patch's SHA1, or "stock")."""
+    which the map leaves out, and what only physics reads (PHYSICS_ONLY: a
+    collision heightmap or mesh, surface friction or the solver changes no
+    picture, measured stale after a collision-only change); each SDF hashed
+    without those. Plus "media": which gz-rendering media render it (the
+    patch's SHA1 with the sun, sky and haze it is filled with, gz_media.tokens,
+    or "stock")."""
     dirs = _resource_dirs()
-    out = {_key(world_path): _sha1(world_path)}
-    pending = [ROVER_INCLUDE.sub("", Path(world_path).read_text())]
+    world_text = ROVER_INCLUDE.sub("", Path(world_path).read_text())
+    out = {_key(world_path): hashlib.sha1(_shown(world_text).encode()).hexdigest()}
+    pending = [_shown(world_text)]
     seen = set()
     while pending:
         text = pending.pop()
@@ -152,11 +166,18 @@ def inputs(world_path):
             if path is None:
                 out[uri] = "missing"
                 continue
-            out[_key(path)] = _sha1(path)
             if path.suffix == ".sdf":
-                pending.append(path.read_text())
+                shown = _shown(path.read_text())
+                out[_key(path)] = hashlib.sha1(shown.encode()).hexdigest()
+                pending.append(shown)
+            else:
+                out[_key(path)] = _sha1(path)
     patched = "GZ_RENDERING_RESOURCE_PATH" in gzenv.environment()
-    out["media"] = (_sha1(MEDIA_DIFF) if MEDIA_DIFF.is_file() else "patched") if patched else "stock"
+    if patched:
+        diff = MEDIA_DIFF.read_bytes() if MEDIA_DIFF.is_file() else b"patched"
+        out["media"] = hashlib.sha1(diff + json.dumps(gz_media.tokens(), sort_keys=True).encode()).hexdigest()
+    else:
+        out["media"] = "stock"
     return out
 
 

@@ -151,7 +151,8 @@ def swatch_field(windows, res_m, n, size, seed, block=SWATCH_BLOCK, feather=SWAT
     return num / np.sqrt(np.maximum(den, 1e-12))
 
 
-HAYSTACK_FULL = 0.98  # knobs stand only where the mask is at least this (haystack_heights)
+HAYSTACK_SHRINK = 0.5  # where the belt leaves no room, a knob shrinks to this fraction of the recipe's smallest
+# (A: the proving ground's 16 m badland strip, easing in over 2 m, holds none of 10 m and more)
 
 
 def haystack_heights(n, size, mask, seed, recipe):
@@ -160,18 +161,21 @@ def haystack_heights(n, size, mask, seed, recipe):
     recipe.diameter_m, each a raised cosine h = H cos^2(pi r / 2R) whose
     steepest flank is drawn between recipe.min_flank_deg and flank_deg
     (H = tan(flank) 2R / pi), placed at random apart from each other until
-    they cover 1 - recipe.floor of the masked area. A knob lies wholly
-    where the mask is HAYSTACK_FULL or more (its radius shrinks to fit,
-    down to the recipe's smallest): the caller fades it by the mask, and a
-    mask that falls over 2 m (the proving ground's strips) cut knobs into
-    3 m walls of 60 deg."""
+    they cover 1 - recipe.floor of the masked area. Each knob lies wholly
+    where the mask is over 0.5 (its radius shrinks to fit, down to
+    HAYSTACK_SHRINK of the recipe's smallest) and is as much lower as the
+    mask is there at its least, whole: the mask fades a belt's knobs, never
+    cuts one (multiplied by a mask that falls over 2 m, as the proving
+    ground's strips, knobs were cut into 3 m walls of 60 deg). Heights to add
+    as they are."""
     rng = np.random.default_rng(seed)
     res = size / (n - 1)
-    full = (np.asarray(mask) >= HAYSTACK_FULL).astype(np.uint8)
-    room = cv2.distanceTransform(np.pad(full, 1, constant_values=1), cv2.DIST_L2, 5)[1:-1, 1:-1] * res
-    inside = np.flatnonzero(room >= recipe.diameter_m[0] / 2)  # [m] to the nearest sample below FULL
+    mask = np.asarray(mask, float)
+    belt = (mask > 0.5).astype(np.uint8)
+    room = cv2.distanceTransform(np.pad(belt, 1, constant_values=1), cv2.DIST_L2, 5)[1:-1, 1:-1] * res
+    inside = np.flatnonzero(room >= HAYSTACK_SHRINK * recipe.diameter_m[0] / 2)  # [m] to the belt's edge
     out = np.zeros((n, n))
-    target = (1 - recipe.floor) * np.count_nonzero(np.asarray(mask) > 0.5) * res * res
+    target = (1 - recipe.floor) * np.count_nonzero(belt) * res * res
     knobs = np.zeros((max(1, int(target / (math.pi * (recipe.diameter_m[0] / 2) ** 2)) + 1), 3))  # x, y, radius
     count, cover, tries = 0, 0.0, 0
     while cover < target and tries < 50 * max(1, int(target / 100)) and len(inside) and count < len(knobs):
@@ -190,7 +194,9 @@ def haystack_heights(n, size, mask, seed, recipe):
         r0, r1 = max(int((y - radius) / res), 0), min(int(math.ceil((y + radius) / res)), n - 1)
         C, R = np.meshgrid(np.arange(c0, c1 + 1) * res, np.arange(r0, r1 + 1) * res)
         r = np.hypot(C - x, R - y)
-        out[r0:r1 + 1, c0:c1 + 1] += np.where(r < radius, height * np.cos(0.5 * np.pi * r / radius) ** 2, 0.0)
+        under = r < radius
+        fade = float(mask[r0:r1 + 1, c0:c1 + 1][under].min()) if under.any() else 0.0
+        out[r0:r1 + 1, c0:c1 + 1] += np.where(under, fade * height * np.cos(0.5 * np.pi * r / radius) ** 2, 0.0)
     return out
 
 
@@ -473,8 +479,8 @@ class Heightfield:
 
     def haystacks(self, mask, seed, recipe):
         """Adds rounded badland knobs (haystack_heights) where mask > 0.5,
-        faded by the mask."""
-        self.z += np.asarray(mask) * haystack_heights(self.n, self.size, mask, seed, recipe)
+        each faded whole by the mask under it."""
+        self.z += haystack_heights(self.n, self.size, mask, seed, recipe)
         return self
 
     def rills(self, mask, seed, recipe):

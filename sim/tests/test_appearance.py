@@ -329,6 +329,38 @@ class ColourMap(unittest.TestCase):
                                                     - textures.srgb_to_lab((230, 198, 158)))))
 
 
+class ZoneTint(unittest.TestCase):
+    def test_zones_show_on_an_orthophoto(self):
+        """A zone of a type the picture does not show (clay on sand sheet)
+        takes ZONE_TINT of its catalogue palette, the picture's light and
+        shade kept; one of a type the picture shows elsewhere takes that
+        ground's own colour there; the picture outside stays as it was."""
+        n, size = 256, 128.0
+        sheet, sand = terrains.TYPES["sand_sheet"], terrains.TYPES["sand"]
+        kinds = [sheet, terrains.CLAY, sand]
+        painted = np.zeros((n, n), np.int32)
+        painted[200:, :] = 2  # sand along the south: the picture shows it there
+        rgb = np.zeros((n, n, 3), np.uint8)
+        rgb[:] = (230, 198, 158)
+        rgb[200:] = (240, 215, 185)
+        rgb[1::3, ::3] = (220, 188, 150)  # light and shade
+        zones = np.full((n, n), -1, np.int32)
+        zones[60:100, 60:100] = 1  # clay
+        zones[60:100, 150:190] = 2  # sand, on the sand sheet
+        colours = A.zone_colours(rgb, painted, kinds)
+        self.assertEqual(colours[1], terrains.CLAY.appearance.palette.base)
+        self.assertEqual(colours[2], (240, 215, 185))
+        out = A.tint_zones(rgb, zones, colours, size)
+        np.testing.assert_array_equal(out[:40], rgb[:40])
+        lin = textures.srgb_to_linear
+        for (r, c), index in (((80, 80), 1), ((80, 170), 2)):
+            mean = lin(out[r - 6:r + 6, c - 6:c + 6]).reshape(-1, 3).mean(axis=0)
+            before = lin(rgb[r - 6:r + 6, c - 6:c + 6]).reshape(-1, 3).mean(axis=0)
+            target = lin(colours[index])
+            np.testing.assert_allclose(mean, (1 - A.ZONE_TINT) * before + A.ZONE_TINT * target, atol=0.02)
+            self.assertGreater(np.ptp(out[r - 6:r + 6, c - 6:c + 6, 1]), 3)  # the shade is still there
+
+
 class TerraLayers(unittest.TestCase):
     def test_compensation_reproduces_the_colour_map(self):
         """Design spec 11: Terra's lerp chain over the compensated layer 0

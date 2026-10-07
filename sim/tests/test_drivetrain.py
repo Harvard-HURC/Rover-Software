@@ -115,8 +115,9 @@ class SpinInPlace(unittest.TestCase):
     """Turning in place on flat ground of each kind, fresh (no dig-in): the
     yaw ratio is the closed-form root of design spec 5.6, +- 0.04 (physics),
     on both solvers. (PGS gives each wheel mu times its own load, so the
-    diagonal a turn unloads grips less: on firm ground it turns 0.02-0.03
-    below the closed form, measured 2026-10-07: rock 0.411, regolith 0.345.)"""
+    diagonal a turn unloads grips less: on firm ground it turns 0.02-0.04
+    below the closed form, measured 2026-10-07: rock 0.411, regolith 0.345,
+    gravel 0.374 against 0.410.)"""
 
     def test_ratio_per_ground(self):
         for solver in SOLVERS:

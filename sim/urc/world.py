@@ -404,7 +404,10 @@ class WorldBuilder:
             discs = [(*self.to_world(x, y, 0.0)[:2], d) for x, y, d in self._shrub_discs]
             ortho = appearance.ortho_colour_map(look["orthophoto"], self.origin, self.hf.size, n, dem_hf=surface,
                                                 units=units, inpaint_mask=appearance.disc_mask(discs, self.hf.size, n))
-            colour = appearance.tint_zones(ortho.rgb, self._zone_texels(n), self.legend.types, self.hf.size)
+            painted, zones = self._zone_texels(n)
+            colour = appearance.tint_zones(ortho.rgb, zones, appearance.zone_colours(ortho.rgb, painted,
+                                                                                      self.legend.types),
+                                           self.hf.size)
             self.sheet["terrain"]["orthophoto"] = {
                 "source": os.path.relpath(look["orthophoto"], self.worlds_dir),
                 "inpainted_share": round(float(ortho.inpainted.mean()), 4),
@@ -428,12 +431,13 @@ class WorldBuilder:
             colour_clipped=round(layers.clipped, 4))
 
     def _zone_texels(self, n):
-        """The ground type index of every texel of an n x n colour map where a
-        zone changed the paint rules' ground (nearest sample), -1 elsewhere."""
+        """(painted, zones) on the texels of an n x n colour map (nearest
+        sample): the paint rules' ground type index of every texel, and the
+        zones' where they changed it, -1 elsewhere."""
         painted = landscape.paint(self.hf, self.paint_rules, (), self.legend)
         index = np.clip(np.floor((np.arange(n) + 0.5) / n * (self.hf.n - 1) + 0.5).astype(int), 0, self.hf.n - 1)
         ground, base = (r[np.ix_(index, index)] for r in (self.ground_map(), painted))
-        return np.where(ground != base, ground.astype(np.int32), -1)
+        return base, np.where(ground != base, ground.astype(np.int32), -1)
 
     def _soil_units(self, n):
         """SSURGO map unit of every texel of an n x n colour map (deshade

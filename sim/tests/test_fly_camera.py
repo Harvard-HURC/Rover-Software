@@ -18,6 +18,7 @@ import time
 import unittest
 import xml.etree.ElementTree as ET
 from dataclasses import replace
+from unittest import mock
 from pathlib import Path
 
 import cv2
@@ -523,6 +524,43 @@ class MapTool(unittest.TestCase):
             key = "models/urc_terrain_equipment_servicing/heightmap.png"
             meta.write_text(json.dumps({"format": render_map.FORMAT, "inputs": {**found, key: "0" * 40}}))
             self.assertEqual(render_map.status(world, d), ("stale", [key]))
+
+    def test_physics_only_changes_keep_the_map_current(self):
+        """Collisions and physics settings are no input: a world differing only
+        in its collision heightmap, a collision mesh, a friction or the solver
+        has the same inputs (the proving ground's map went stale over a
+        collision-only washboard mesh); a visual's change, or the light the
+        media patch is filled with, is one."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            model = d / "models" / "urc_test_terrain"
+            model.mkdir(parents=True)
+            (model / "a.obj").write_text("v 0 0 0\n")
+            (model / "b.obj").write_text("v 0 0 0\n")
+
+            def write(collision_mesh, mu, solver, visual):
+                (model / "model.sdf").write_text(
+                    f'<sdf version="1.11"><model name="t"><link name="l"><collision name="c"><geometry><mesh>'
+                    f'<uri>model://urc_test_terrain/{collision_mesh}</uri></mesh></geometry><surface><friction>'
+                    f'<ode><mu>{mu}</mu></ode></friction></surface></collision><visual name="v"><geometry><box>'
+                    f'<size>{visual} 1 1</size></box></geometry></visual></link></model></sdf>')
+                world = d / "w.sdf"
+                world.write_text(f'<sdf version="1.11"><world name="w"><physics name="1ms" type="dart"><dart><solver>'
+                                 f'<solver_type>{solver}</solver_type></solver></dart></physics><include><uri>'
+                                 'model://urc_test_terrain</uri></include></world></sdf>')
+                return world
+
+            with mock.patch.object(render_map, "_resource_dirs", lambda: [d / "models"]):
+                base = render_map.inputs(write("a.obj", 1.0, "pgs", 1))
+                self.assertEqual(render_map.inputs(write("b.obj", 0.5, "dantzig", 1)), base)
+                self.assertNotEqual(render_map.inputs(write("a.obj", 1.0, "pgs", 2)), base)
+                self.assertNotIn("models/urc_test_terrain/a.obj", " ".join(base))
+                with mock.patch.object(render_map.gzenv, "environment",
+                                       lambda: {"GZ_RENDERING_RESOURCE_PATH": "patched", "GZ_SIM_RESOURCE_PATH": ""}):
+                    patched = render_map.inputs(write("a.obj", 1.0, "pgs", 1))["media"]
+                    hazier = dict(render_map.gz_media.tokens(), HAZE_BETA="1.000e-03")
+                    with mock.patch.object(render_map.gz_media, "tokens", lambda: hazier):
+                        self.assertNotEqual(render_map.inputs(write("a.obj", 1.0, "pgs", 1))["media"], patched)
 
 
 # --- Rendering, one world per gz sim subprocess ----------------------------------------------------

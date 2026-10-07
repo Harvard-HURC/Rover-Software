@@ -61,6 +61,7 @@ INPAINT_RADIUS_PX = 3
 ZONE_TINT = 0.6  # a mission zone's palette covers this much of the orthophoto inside it (A)
 ZONE_FEATHER_M = 1.0  # [m] Gaussian sigma of a zone's edge in the orthophoto (A)
 ZONE_TEXTURE_M = 4.0  # [m] the orthophoto's light and shade under a zone's colour, against this blur (A)
+ZONE_OWN_SHARE = 0.005  # a type the orthophoto shows on this share of the ground lends its zones its own colour (A)
 NAIP2024_ACQUIRED = datetime.date(2024, 7, 6)  # sim/data/imagery/route_area_naip2024.json (quarter-quad ..._20240706)
 
 
@@ -419,18 +420,18 @@ def ortho_colour_map(naip_path, origin: geo.Origin, size, n, dem_hf=None, units=
     return Ortho(textures.linear_to_srgb(boost.apply(textures.srgb_to_linear(rgb))), grown.astype(bool), sun)
 
 
-def tint_zones(rgb, zones, kinds, size):
+def tint_zones(rgb, zones, colours, size):
     """An orthophoto colour map (sRGB uint8, n x n x 3, over a `size` square)
     with its mission zones showing: zones (int, n x n) is the type index
-    of every texel inside a zone and -1 outside, kinds the TerrainType of
-    each index. On real ground a mission puts its zones where its course
-    needs them, not where the imagery shows that ground, so without this a
-    clay trap beside a drive looked like the sand sheet round it and the
-    caprock rib like the slope it climbs (design 5.7: zones carry their
-    colour). Inside a zone its palette covers ZONE_TINT of the picture,
-    times the picture's own light and shade (its luminance against a
-    ZONE_TEXTURE_M blur), the edge feathered over ZONE_FEATHER_M; in linear
-    light. Only the zones' bounding box is worked on."""
+    of every texel inside a zone and -1 outside, colours the sRGB colour of
+    each index (zone_colours). On real ground a mission puts its zones where
+    its course needs them, not where the imagery shows that ground, so
+    without this a clay trap beside a drive looked like the sand sheet round
+    it (design 5.7: zones carry their colour). Inside a zone its colour
+    covers ZONE_TINT of the picture, times the picture's own light and shade
+    (its luminance against a ZONE_TEXTURE_M blur), the edge feathered over
+    ZONE_FEATHER_M; in linear light. Only the zones' bounding box is worked
+    on."""
     inside = zones >= 0
     if not inside.any():
         return rgb
@@ -443,7 +444,7 @@ def tint_zones(rgb, zones, kinds, size):
     window = zones[r0:r1, c0:c1]
     palette = np.zeros(lin.shape, np.float32)
     for index in np.unique(window[window >= 0]):
-        palette[window == index] = textures.srgb_to_linear(kinds[int(index)].appearance.palette.base)
+        palette[window == index] = textures.srgb_to_linear(colours[int(index)])
     alpha = cv2.GaussianBlur((window >= 0).astype(np.float32), (0, 0), ZONE_FEATHER_M / texel)
     palette = cv2.GaussianBlur(palette, (0, 0), ZONE_FEATHER_M / texel) / np.maximum(alpha, 1e-6)[..., None]
     y = textures.luminance(lin)
@@ -451,6 +452,23 @@ def tint_zones(rgb, zones, kinds, size):
     a = (ZONE_TINT * alpha)[..., None]
     out = rgb.copy()
     out[r0:r1, c0:c1] = textures.linear_to_srgb((1 - a) * lin + a * palette * shade[..., None])
+    return out
+
+
+def zone_colours(rgb, painted, kinds, min_share=ZONE_OWN_SHARE):
+    """{type index: sRGB} for tint_zones: a type the imagery shows somewhere
+    (the paint rules put it on at least min_share of the texels, `painted`
+    n x n type indices) has the imagery's own median colour of it, so its
+    zones look like the same ground elsewhere in the picture (the catalogue's
+    sand palette is redder than NAIP's sand: CIE76 15, design 17.5); any
+    other type, its catalogue palette. Medians over every 4th texel each
+    way (a 4096^2 map is 16 M texels)."""
+    rgb, painted = rgb[::4, ::4], painted[::4, ::4]
+    out = {}
+    for index, kind in enumerate(kinds):
+        texels = painted == index
+        own = texels.mean() >= min_share
+        out[index] = tuple(int(v) for v in np.median(rgb[texels], axis=0)) if own else kind.appearance.palette.base
     return out
 
 

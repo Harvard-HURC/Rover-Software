@@ -313,8 +313,10 @@ class Relief(unittest.TestCase):
     def test_haystacks_stay_inside_their_belt(self):
         """Where the mask falls off (a 16 m strip easing in over 2 m, as the
         proving ground's natural strips; a belt fading over keep-flat's 5 m)
-        no knob is cut into a wall: the faded knobs' steepest flank stays
-        within the recipe's (it reached 60-77 deg)."""
+        no knob is cut into a wall: knobs lie where the mask is over 0.5,
+        each faded whole by it, so their steepest flank stays within the
+        recipe's (cut by the mask, it reached 60-77 deg), and none reaches
+        ground the mask keeps flat."""
         recipe = terrains.Haystacks()
         n, size = 513, 128.0
         c = np.linspace(-size / 2, size / 2, n)
@@ -322,9 +324,10 @@ class Relief(unittest.TestCase):
         for half_width, ease in ((8.0, 2.0), (30.0, 5.0)):
             with self.subTest(width=2 * half_width, ease=ease):
                 mask = terrain.smoothstep(0.0, ease, half_width - np.abs(Y))
-                h = mask * terrain.haystack_heights(n, size, mask, 5, recipe)
+                h = terrain.Heightfield(size, n).haystacks(mask, 5, recipe).z
                 self.assertGreater(h.max(), 1.0)  # knobs there are
                 self.assertLess(terrain.slope_map(h, size / (n - 1)).max(), recipe.flank_deg + 3)
+                self.assertEqual(np.abs(h[mask < 0.5]).max(), 0.0)
 
     def test_rills_run_downslope(self):
         """Rill traces descend the slope they are carved into (design 5.4: a

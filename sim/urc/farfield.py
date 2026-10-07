@@ -60,12 +60,14 @@ def build(models_dir, media, name, origin: geo.Origin, terrain, blend_m=2 * SPAC
     returns the name.
 
     Triangles wholly over the terrain square are dropped, and every vertex
-    within blend_m of the square lies SINK below the lowest terrain within a
-    grid step of it, blending into the real landscape farther out: the
-    triangles that cross the edge reach a grid step inside it, and the mesh
-    must not show through there, on synthetic terrain or on a real DEM (the
-    far DEM's 120 m triangles span the lidar's washes, which lie up to 19 m
-    lower, measured on Autonomy when its seam was only sunk SINK)."""
+    within a grid step of the square lies SINK below the lowest terrain
+    within a grid step of it, blending into the real landscape over blend_m
+    farther out: the triangles that cross the edge reach a grid step inside
+    it, and the mesh must not show through there, on synthetic terrain or on
+    a real DEM (the far DEM's 120 m triangles span the lidar's washes, which
+    lie up to 19 m lower, measured on Autonomy when its seam was only sunk
+    SINK; with the blend starting at the edge a corner of Delivery showed
+    0.6 m)."""
     d = dem.read_geotiff(FAR_DEM)
     (south, west), (north, east) = d.bounds
     margin = 2 * max(d.dlat, d.dlon)  # [deg] keep every vertex inside the DEM's pixel centres
@@ -87,7 +89,7 @@ def build(models_dir, media, name, origin: geo.Origin, terrain, blend_m=2 * SPAC
     k = 2 * int(math.ceil(SPACING / terrain.res)) + 1
     low = cv2.erode(terrain.z.astype(np.float32), np.ones((k, k), np.uint8))
     seam = _lookup(terrain, low, X, Y)  # the lowest ground under any triangle of the vertex's
-    w = np.clip(outside / blend_m, 0, 1)
+    w = np.clip((outside - SPACING) / blend_m, 0, 1)  # every vertex of a triangle that reaches the square sunk
     w = w * w * (3 - 2 * w)
     Z = (1 - w) * (seam - SINK) + w * Z
     N = appearance.surface_normals(Z, SPACING)

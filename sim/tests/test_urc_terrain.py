@@ -34,6 +34,11 @@ from urc.missions import COURSES, MISSIONS, delivery, proving_ground  # noqa: E4
 from urc import world as world_module  # noqa: E402
 from urc.world import COLLIDING, MAX_SINKAGE, ROCK_BURY, SLAB_BURY, Layer, WorldBuilder, add_relief, site  # noqa: E402
 
+import gz.math7  # noqa: E402,F401  (lets gz.sim8 return Pose3d values)
+from gz.msgs10.twist_pb2 import Twist  # noqa: E402
+from gz.sim8 import Link, Model, TestFixture, World, world_entity  # noqa: E402
+from gz.transport13 import Node  # noqa: E402
+
 TARGETS = Path(landscape.RELIEF_DIR).parent / "research" / "terrain_targets.json"
 WORLDS_WITH_ZONES = ("urc_delivery", "urc_astrobiology", "urc_equipment_servicing", "urc_autonomy", "proving_ground")
 SOLVERS = {"urc_equipment_servicing": "dantzig"}  # every other world: pgs (gates G2, G5)
@@ -973,6 +978,65 @@ class ProvingGround(unittest.TestCase):
         self.assertGreater(rocks["garden_10cm"]["count"], rocks["garden_40cm"]["count"])
 
 
+WHEEL_LINKS = ("wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr")
+
+
+def wheel_poses(world, seconds, speed):
+    """Run `world` with the rover driving straight at `speed` from 1 s on:
+    rows of sim time and each wheel link's world pose (x, y, z, qw, qx, qy, qz),
+    every 10 ms."""
+    node = Node()
+    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    twist = Twist()
+    rows, links = [], {}
+
+    def pre(info, ecm):
+        if not links:
+            rover = Model(World(world_entity(ecm)).model_by_name(ecm, "rover"))
+            links.update({name: Link(rover.link_by_name(ecm, name)) for name in WHEEL_LINKS})
+        if info.iterations % 20 == 0:
+            twist.linear.x = speed if info.iterations >= 1000 else 0.0
+            publisher.publish(twist)
+
+    def post(info, ecm):
+        if info.iterations % 10 == 0:
+            row = [info.iterations / 1000]
+            for name in WHEEL_LINKS:
+                pose = links[name].world_pose(ecm)
+                q = pose.rot()
+                row += [pose.pos().x(), pose.pos().y(), pose.pos().z(), q.w(), q.x(), q.y(), q.z()]
+            rows.append(row)
+
+    fixture = TestFixture(world)
+    fixture.on_pre_update(pre)
+    fixture.on_post_update(post)
+    fixture.finalize()
+    fixture.server().run(True, round(seconds * 1000), False)
+    return np.array(rows)
+
+
+def wheel_penetration(rows, height):
+    """How far [m] the surface height(x, y) reaches into each wheel's cylinder
+    (radius and width from gen_model.Params), per row of wheel_poses and wheel:
+    the surface sampled every 5 mm under the hub."""
+    p = gen_model.Params()
+    grid = np.arange(-0.2, 0.2001, 0.005)
+    GX, GY = (g.ravel() for g in np.meshgrid(grid, grid))
+    out = []
+    for row in rows:
+        for k in range(len(WHEEL_LINKS)):
+            x, y, z, qw, qx, qy, qz = row[1 + 7 * k: 8 + 7 * k]
+            R = np.array([[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+                          [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+                          [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]])
+            P = np.stack([GX, GY, height(x + GX, y + GY) - z])
+            local = R.T @ P  # the wheel's frame: its axle along y
+            inside = (np.abs(local[1]) <= p.wheel_width / 2) & (P[2] < 0)
+            out.append(float(np.max(p.wheel_radius - np.hypot(local[0][inside], local[2][inside])))
+                       if inside.any() else 0.0)
+    return np.array(out)
+
+
 class ProvingGroundPhysics(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1013,6 +1077,25 @@ class ProvingGroundPhysics(unittest.TestCase):
         pose = self.run_on(p["x"] - 3.0, p["y"], 0.0, 0.0, 30.0, cmd=(0.5, 0.0), lift=0.05)
         self.assertGreater(pose[0], p["x"] + 10.0, pose)
         self.assertLess(abs(pose[1] - p["y"]), 1.0, pose)
+
+    def test_wheels_on_the_relief_of_a_heightmap(self):
+        """DART's cylinder-heightmap collision lets wheels into rough relief
+        (5 cm RMS of 1-4 m relief: 2-3 cm at p99 at any sample spacing, the
+        same surface as a mesh 0.5 mm; Gazebo lessons). On the proving
+        ground's natural badland strip, the roughest of the worlds' natural
+        ground, the surface reaches into a wheel at most 2.5 cm (p99) beyond
+        the carve, while the rover drives 8 m up it at 0.5 m/s (measured
+        2026-10-07: p99 16.8 mm; 1-17 mm across the worlds' natural ground)."""
+        p = self.sheet["points"]["natural_badland"]
+        heading = math.radians(p["heading_deg"])
+        x, y = p["x"] + 3.0 * math.cos(heading), p["y"] + 3.0 * math.sin(heading)
+        surface = sheets.terrain(self.sheet, sheets.path("proving_ground"), collision=True)
+        with world_copy("proving_ground", rover=(x, y, heading), lift=0.1) as world:
+            wheels = wheel_poses(world, 18.0, 0.5)
+        reach = wheel_penetration(wheels[wheels[:, 0] > 2.0], surface.height)  # [m] after the spawn settles
+        moved = math.dist(wheels[0, 1:3], wheels[-1, 1:3])
+        self.assertGreater(moved, 7.0)
+        self.assertLess(float(np.percentile(reach, 99)), 0.025, np.percentile(reach, [50, 90, 99, 100]))
 
     def test_twist_ditch_turns_the_rockers_to_their_limit(self):
         ditch = self.sheet["points"]["articulation"]["twist_ditch"]
