@@ -3,6 +3,10 @@
 Gazebo's Python TestFixture runs the server inside this process, so a run is
 repeatable: commands go out over gz-transport every 20 ms of sim time, and
 the state is read from the entity-component manager after the last step.
+The rover is model://rover or one built from gen_model Params (the physical
+drivetrain: physical()), on flat ground (world_sdf) or on a synthetic terrain
+with a ground map (ground_world: heightmap, ground.png and ground.json as the
+drivetrain reads them, design spec 9.1).
 
 cpu_time_per_step() measures what a world costs instead (the realism design's
 section 10.3): plain `gz sim -s -r --iterations N` processes, their CPU time
@@ -10,6 +14,9 @@ from the kernel minus a one-step start-up run, while twist_publisher drives
 the rover from outside the server (no Python in its step).
 """
 import contextlib
+import dataclasses
+import json
+import math
 import os
 import re
 import shutil
@@ -22,11 +29,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
 from worldfiles import SIM_DIR, temp_sdf
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 import gzenv  # noqa: E402
-from urc import sdf, terrains  # noqa: E402
+from urc import sdf, terrain, terrains  # noqa: E402
 
 # Set before Gazebo starts (gzenv): where model://rover and the plugins live,
 # and a private transport partition so tests never talk to a running simulation.
@@ -58,13 +67,15 @@ class State:
     poses: dict  # link name -> (x, y, z, roll, pitch, yaw) in the world
     rocker_peak: float = 0.0  # the largest |rocker angle| during the run [rad]
     messages: dict = field(default_factory=dict)  # topic -> messages received
+    trace: np.ndarray = None  # with trace_every: rows (t, x, y, z, roll, pitch, yaw, yaw rate) of base_link
 
 
 def world_sdf(extra="", spawn_z=0.02, rover_uri=ROVER_URI, default_surface=None, solver=None):
     """Flat ground (DART, 1 ms steps), the rover at the origin, plus `extra` SDF.
     default_surface: a terrains.TYPES key or TerrainType for the ground (its
-    Coulomb mu in the SDF, which DART honours on a plane); solver: one of
-    SOLVERS (None: DART's default)."""
+    Coulomb mu in the SDF, which DART honours on a plane; the physical
+    drivetrain takes a plane's ground from its own default surface instead,
+    see world_file); solver: one of SOLVERS (None: DART's default)."""
     surface = ""
     if default_surface is not None:
         kind = terrains.TYPES[default_surface] if isinstance(default_surface, str) else default_surface
@@ -127,14 +138,26 @@ def rover_model(params):
         yield model.as_uri()
 
 
+def physical(**drive):
+    """Params of the rover with the physical drivetrain, its DriveParams
+    changed by `drive`; the command timeout runs on sim time, so runs repeat
+    exactly."""
+    return gen_model.Params(drive=gen_model.DriveParams(mode="physical", cmd_timeout_clock="sim", **drive))
+
+
 @contextlib.contextmanager
 def world_file(world=None, extra="", spawn_z=0.02, rover_uri=None, params=None, default_surface=None, solver=None):
     """Path of the world to run: world_sdf(extra, spawn_z, ...) when world is
     None, else the SDF file `world` (a copy when its rover or solver change).
-    The rover: rover_uri, or one built from Params `params`, or model://rover."""
+    The rover: rover_uri, or one built from Params `params`, or model://rover.
+    A physical rover built from params takes default_surface as its
+    drivetrain's default surface, which is what it feels on a plane."""
     with contextlib.ExitStack() as stack:
         if params is not None:
             assert rover_uri is None, "rover_uri or params, not both"
+            if default_surface is not None and params.drive.mode == "physical":
+                drive = dataclasses.replace(params.drive, default_surface=default_surface)
+                params, default_surface = dataclasses.replace(params, drive=drive), None
             rover_uri = stack.enter_context(rover_model(params))
         if world is None:
             text = world_sdf(extra, spawn_z, rover_uri or ROVER_URI, default_surface, solver)
@@ -158,20 +181,22 @@ def twist_at(schedule, t):
 
 
 def simulate(seconds, extra="", spawn_z=0.02, cmd=(0.0, 0.0), subscribe=(), world=None, rover_uri=None, params=None,
-             default_surface=None, solver=None):
+             default_surface=None, solver=None, trace_every=0, publish_until=None):
     """Run for `seconds` of sim time and return the final State.
 
     cmd: (vx [m/s], wz [rad/s]) sent from the start, or a schedule
-    [(t [s], vx, wz), ...] (twist_at), sent every 20 ms from the start.
+    [(t [s], vx, wz), ...] (twist_at), sent every 20 ms from the start and,
+    with publish_until [s], only until then.
     subscribe: (topic, message class) pairs to record during the run.
     world: an SDF file to run instead of world_sdf(extra, spawn_z).
     rover_uri, params, default_surface, solver: see world_file.
+    trace_every: record base_link every that many steps (State.trace).
     """
     with world_file(world, extra, spawn_z, rover_uri, params, default_surface, solver) as world_path:
-        return _run(seconds, cmd, subscribe, world_path)
+        return _run(seconds, cmd, subscribe, world_path, trace_every, publish_until)
 
 
-def _run(seconds, cmd, subscribe, world_path):
+def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None):
     node = Node()
     messages = {topic: [] for topic, _ in subscribe}
     for topic, msg_type in subscribe:
@@ -184,6 +209,7 @@ def _run(seconds, cmd, subscribe, world_path):
     handles = {}
     last = {}
     peak = [0.0]
+    trace = []
 
     def pre_update(info, ecm):
         if not handles:
@@ -192,6 +218,9 @@ def _run(seconds, cmd, subscribe, world_path):
             handles["links"] = {n: Link(model.link_by_name(ecm, n)) for n in LINKS}
             for joint in handles["rockers"].values():
                 joint.enable_position_check(ecm, True)
+            handles["links"]["base_link"].enable_velocity_checks(ecm, True)
+        if publish_until is not None and info.iterations / 1000 > publish_until:
+            return
         if info.iterations % 20 == 0:
             if scripted:
                 twist.linear.x, twist.angular.z = twist_at(cmd, info.iterations / 1000)
@@ -203,6 +232,9 @@ def _run(seconds, cmd, subscribe, world_path):
         last["rockers"] = {n: j.position(ecm) for n, j in handles["rockers"].items()}
         last["poses"] = {n: link.world_pose(ecm) for n, link in handles["links"].items()}
         peak[0] = max([peak[0]] + [abs(q[0]) for q in last["rockers"].values() if q])
+        if trace_every and info.iterations % trace_every == 0:
+            rate = handles["links"]["base_link"].world_angular_velocity(ecm)
+            trace.append((info.iterations / 1000, *_xyzrpy(last["poses"]["base_link"]), rate.z() if rate else 0.0))
 
     fixture = TestFixture(world_path)
     fixture.on_pre_update(pre_update)
@@ -212,12 +244,104 @@ def _run(seconds, cmd, subscribe, world_path):
     if not last:
         raise RuntimeError(f"Gazebo did not step {world_path}; see the [Err] lines above")
     rockers = {n: q[0] for n, q in last["rockers"].items()}
-    return State(rockers, {n: _xyzrpy(pose) for n, pose in last["poses"].items()}, peak[0], messages)
+    return State(rockers, {n: _xyzrpy(pose) for n, pose in last["poses"].items()}, peak[0], messages,
+                 np.array(trace) if trace_every else None)
 
 
 def _xyzrpy(pose):
     p, r = pose.pos(), pose.rot().euler()
     return (p.x(), p.y(), p.z(), r.x(), r.y(), r.z())
+
+
+# --- Worlds with a ground map ----------------------------------------------------------------
+
+def ground_row(index, key, traction, dust=0.0):
+    """One row of ground.json's traction table (design spec 9.1): a type
+    index in ground.png, its key and a terrains.Traction."""
+    return dict(index=index, key=key, **dataclasses.asdict(traction), dust=dust)
+
+
+def ground_json(hf, rows, default=None, collisions=None, prefixes=None, terrain_default=None, object_default=None):
+    """The ground.json document of terrain hf (design spec 9.1): rows from
+    ground_row; default: the index of samples the table lacks (the first
+    row's); collisions, prefixes: the terrain's other shapes; terrain_default,
+    object_default: keys for the terrain's unmapped shapes and for objects."""
+    return {"format": "rover-ground/2", "size_m": hf.size, "samples": hf.n,
+            "default": rows[0]["index"] if default is None else default, "types": rows,
+            "collisions": collisions or {}, "prefixes": prefixes or {}, "terrain_default": terrain_default,
+            "object_default": object_default}
+
+
+def surface_pose(hf, x, y, yaw, lift=0.02):
+    """(x, y, z, roll, pitch, yaw) that puts a model's base `lift` above the
+    terrain hf at (x, y), tilted to its slope there and heading `yaw`."""
+    d = 0.5
+    gx = (hf.height(x + d, y) - hf.height(x - d, y)) / (2 * d)
+    gy = (hf.height(x, y + d) - hf.height(x, y - d)) / (2 * d)
+    n = np.array([-gx, -gy, 1.0]) / math.sqrt(gx * gx + gy * gy + 1)
+    tilt = np.eye(3)
+    angle = math.acos(n[2])  # the rotation from up to the normal
+    if angle > 1e-9:
+        k = np.cross([0.0, 0.0, 1.0], n) / math.sin(angle)
+        K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        tilt = tilt + math.sin(angle) * K + (1 - math.cos(angle)) * K @ K
+    heading = np.array([[math.cos(yaw), -math.sin(yaw), 0], [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]])
+    position = np.array([x, y, hf.height(x, y)]) + lift * n
+    return (*position, *sdf.matrix_to_rpy((tilt @ heading).tolist()))
+
+
+@contextlib.contextmanager
+def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_options=None, terrain_extra="",
+                 extra="", rover_uri=ROVER_URI, params=None, solver=None):
+    """Path of a world on a synthetic terrain with a ground map, in a
+    temporary directory. hf: a terrain.Heightfield centred on the origin, the
+    collision heightmap (shifted so its lowest sample is z = 0, as Gazebo
+    needs; a flat one gets a 1 mm north-west corner sample, because Gazebo
+    scales by the highest pixel). ground: (n, n) type indices, ground.png;
+    rows and ground_options (ground_json's keywords): ground.json. The rover:
+    model rover_uri, or one built from Params `params`, at rover = (x, y,
+    yaw), `lift` above the terrain and tilted to its slope. terrain_extra:
+    SDF of more shapes in the terrain's link; extra: SDF of more models."""
+    z = np.asarray(hf.z, dtype=float) - float(np.min(hf.z))
+    if z.max() <= 0:
+        z[0, 0] = 0.001
+    surface = terrain.Heightfield(hf.size, hf.n, z)
+    ground = np.asarray(ground, dtype=np.uint8)
+    assert ground.shape == (hf.n, hf.n), "ground.png lies on the heightmap's grid"
+    with contextlib.ExitStack() as stack:
+        directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="ground_world_")))
+        if params is not None:
+            assert rover_uri == ROVER_URI, "rover_uri or params, not both"
+            rover_uri = stack.enter_context(rover_model(params))
+        _, z_max = surface.write_png(directory / "heightmap.png", 0.0, float(z.max()))
+        Image.fromarray(ground, mode="L").save(directory / "ground.png")
+        (directory / "ground.json").write_text(json.dumps(ground_json(surface, rows, **(ground_options or {}))))
+        pose = " ".join(f"{v:.9g}" for v in surface_pose(surface, *rover, lift))
+        world = directory / "world.sdf"
+        world.write_text(f"""<?xml version="1.0"?>
+<sdf version="1.11">
+  <world name="ground_test">
+    <physics name="1ms" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>0</real_time_factor>{_solver_sdf(solver)}
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <model name="terrain">
+      <static>true</static>
+      <link name="link">
+        <collision name="heightmap_collision">
+          <geometry><heightmap><uri>{(directory / "heightmap.png").as_uri()}</uri>
+            <size>{hf.size} {hf.size} {z_max}</size><pos>0 0 0</pos></heightmap></geometry>
+        </collision>
+        {terrain_extra}
+      </link>
+    </model>
+    {extra}
+    <include><uri>{rover_uri}</uri><name>rover</name><pose>{pose}</pose></include>
+  </world>
+</sdf>
+""")
+        yield str(world)
 
 
 # --- Cost: CPU time per step --------------------------------------------------------------
