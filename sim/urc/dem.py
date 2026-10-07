@@ -119,7 +119,7 @@ def read_raster(path):
         raise ValueError(f"{path}: {len(bands)} bands; 1, 3 or 4 are supported")
     if len(bands) > 1:
         bands = bands[[2, 1, 0, 3][:len(bands)]]
-    return bands.astype(np.float32), (tie[3], scale[0], 0.0, tie[4], 0.0, -scale[1])
+    return bands.astype(np.float32, copy=False), (tie[3], scale[0], 0.0, tie[4], 0.0, -scale[1])
 
 
 def to_heightfield(dem, origin: geo.Origin, size, n, center):

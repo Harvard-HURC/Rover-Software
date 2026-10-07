@@ -139,11 +139,11 @@ def world_file(world=None, extra="", spawn_z=0.02, rover_uri=None, params=None, 
         if world is None:
             text = world_sdf(extra, spawn_z, rover_uri or ROVER_URI, default_surface, solver)
             yield stack.enter_context(temp_sdf(text))
-        elif rover_uri is None and solver is None:
-            assert default_surface is None, "default_surface applies to world_sdf's ground only"
+            return
+        assert default_surface is None, "default_surface applies to world_sdf's ground only"
+        if rover_uri is None and solver is None:
             yield str(world)
         else:
-            assert default_surface is None, "default_surface applies to world_sdf's ground only"
             yield stack.enter_context(temp_sdf(variant_sdf(Path(world).read_text(), rover_uri, solver)))
 
 
