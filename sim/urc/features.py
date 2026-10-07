@@ -4,9 +4,11 @@ A feature acts twice. shape(hf) edits the heightfield before the
 WorldBuilder exists (the world frame depends on the finished terrain);
 dress(w) adds what lies on it: its zones (terrains.py: they paint the
 ground raster, and with friction tiles they are friction zones) and blocks
-(ground type rock in ground.json). Engineered features also name the ground
-micro-relief must leave alone (keep_flat(), landscape.keep_flat). A world
-lists its features, saying only where and how big:
+(ground type rock in ground.json). Features with zones also say roughly
+where they will paint before they are dressed (footprints(): a zone's
+irregular outline is drawn when it is dressed), and engineered features name
+the ground micro-relief must leave alone (keep_flat(), landscape.keep_flat).
+A world lists its features, saying only where and how big:
 
     FEATURES = [features.Patch("sand_flat", terrains.SAND, 150, 62, 14), ...]
     features.shape(hf, FEATURES)    # in make_terrain()
@@ -62,6 +64,12 @@ def _rect(start, yaw, u0, u1, v0, v1):
     return [_axis_point(start, yaw, u, v) for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
 
 
+def _disc(x, y, radius, count=64):
+    """Layout polygon of a circle."""
+    return [(x + radius * math.cos(a), y + radius * math.sin(a))
+            for a in (2 * math.pi * k / count for k in range(count))]
+
+
 @dataclass(frozen=True)
 class Patch:
     """A natural zone of `kind`: an irregular patch up to `radius` around
@@ -82,6 +90,10 @@ class Patch:
     def shape(self, hf):
         if self.level:
             hf.level(self.x, self.y, self.radius + terrains.TILE_REACH, self.falloff)
+
+    def footprints(self):
+        """Its zone as a disc of the mean edge radius of its outline (meshes.blob_outline)."""
+        return [(_disc(self.x, self.y, self.radius * (1 - self.irregularity / 2)), self.kind)]
 
     def dress(self, w):
         w.zone(self.key, self.kind, self.x, self.y, self.radius, self.irregularity)
@@ -123,6 +135,9 @@ class Wash:
                                  f"{self.half_width} m half-width of the wash floor")
             hf.channel(self.path, self.depth, self.half_width, self.falloff)
         shape(hf, self.patches)
+
+    def footprints(self):
+        return [f for patch in self.patches for f in patch.footprints()]
 
     def dress(self, w):
         dress(w, self.patches)
@@ -171,6 +186,11 @@ class Slope:
         yaw = math.atan2(self.top[1] - self.foot[1], self.top[0] - self.foot[0])
         half = self.width / 2 + 1.5
         return [_rect(self.foot, yaw, 0.0, math.dist(self.foot, self.top) + self.run_on, -half, half)]
+
+    def footprints(self):
+        yaw = math.atan2(self.top[1] - self.foot[1], self.top[0] - self.foot[0])
+        return [(_rect(self.foot, yaw, 0.0, math.dist(self.foot, self.top), -self.width / 2, self.width / 2),
+                 self.kind)]
 
     def dress(self, w):
         (fx, fy), (tx, ty) = self.foot, self.top
@@ -231,6 +251,10 @@ class Lane:
 
     def keep_flat(self):
         return [_rect(self.start, self.yaw, 0.0, self.length, -self.width / 2, self.width / 2)]
+
+    def footprints(self):
+        return [(_rect(self.start, self.yaw, 0.0, s.length or self.length, s.offset - s.width / 2,
+                       s.offset + s.width / 2), s.kind) for s in self.surfaces]
 
     def dress(self, w):
         for surface in self.surfaces:

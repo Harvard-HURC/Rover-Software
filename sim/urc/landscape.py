@@ -155,12 +155,16 @@ class Canvas:
 def paint(hf, rules, zones=(), legend=None):
     """The ground raster of a Heightfield (uint8 Legend indices on its grid,
     row 0 north): DEFAULT_GROUND, then each rule in order, then each zone's
-    outline with its type, later ones winning."""
+    outline with its type, later ones winning. zones: terrains.Zone (a
+    world's, WorldBuilder.zones) or features with footprints() (their zones
+    roughly, before a world dresses them: for relief())."""
     canvas = Canvas(hf, legend or Legend())
     for rule in rules:
         rule.paint(canvas)
     for zone in zones:
-        canvas.fill(canvas.polygon(zone.outline), zone.kind)
+        parts = [(zone.outline, zone.kind)] if hasattr(zone, "outline") else getattr(zone, "footprints", list)()
+        for outline, kind in parts:
+            canvas.fill(canvas.polygon(outline), kind)
     return canvas.raster
 
 

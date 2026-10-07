@@ -107,6 +107,22 @@ class Painting(unittest.TestCase):
             painted = raster == self.legend.index(zone.kind)
             np.testing.assert_array_equal(painted[clear], inside[clear], zone.key)
 
+    def test_features_paint_where_their_zones_will(self):
+        """Before a world dresses them, features paint their zones' footprints
+        (for relief): a lane surface exactly, a patch as its disc."""
+        hf = flat(64.0, 257)
+        lane = features.Lane("lane", (-20.0, -10.0), 0.3, 5.0, ((20.0, 0.0),),
+                             (features.Surface("clay", terrains.CLAY, 5.0),))
+        patch = features.Patch("sand", terrains.SAND, 10.0, 12.0, 8.0)
+        early = landscape.paint(hf, [], [lane, patch], legend=self.legend)
+        zones = [terrains.rect("clay", terrains.CLAY, *lane.at(10.0), 20.0, 5.0, yaw=0.3),
+                 terrains.blob("sand", terrains.SAND, 10.0, 12.0, 8.0, seed=3)]
+        dressed = landscape.paint(hf, [], zones, legend=self.legend)
+        clay, sand = self.legend.index("clay"), self.legend.index("sand")
+        np.testing.assert_array_equal(early == clay, dressed == clay)
+        a, b = early == sand, dressed == sand
+        self.assertGreater((a & b).sum() / (a | b).sum(), 0.75)
+
     def test_ground_json(self):
         """ground.json (design 9.1): the legend with every traction field,
         dust, the collision map, prefixes and defaults; the dig-in preset."""
