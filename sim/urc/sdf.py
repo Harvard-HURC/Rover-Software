@@ -200,10 +200,13 @@ def joint(model, name, kind, parent, child, axis=(0, 0, 1), lower=None, upper=No
     return element
 
 
-def camera(sensor, hfov, size, clip, image_format=None):
+def camera(sensor, hfov, size, clip, image_format=None, noise=None, depth_clip=None):
     """A sensor's <camera>: horizontal field of view [rad], picture (width,
     height) [px] and clip planes (near, far) [m] (the rover's RGB-D camera,
-    the driver station's viewers)."""
+    the driver station's viewers). noise: Gaussian stddev of the picture
+    [0-1]; depth_clip: an RGB-D camera's own depth range (near, far) [m],
+    which gz-sensors applies to the depth image only, so the colour image can
+    reach further (design spec D14)."""
     element = sub(sensor, "camera")
     sub(element, "horizontal_fov", hfov)
     image = sub(element, "image")
@@ -214,11 +217,29 @@ def camera(sensor, hfov, size, clip, image_format=None):
     planes = sub(element, "clip")
     sub(planes, "near", clip[0])
     sub(planes, "far", clip[1])
+    if depth_clip is not None:
+        depth = sub(sub(element, "depth_camera"), "clip")
+        sub(depth, "near", depth_clip[0])
+        sub(depth, "far", depth_clip[1])
+    if noise is not None:
+        gaussian = sub(element, "noise")
+        sub(gaussian, "type", "gaussian")
+        sub(gaussian, "mean", 0.0)
+        sub(gaussian, "stddev", noise)
     return element
 
 
 def plugin(parent, filename, name, **params):
-    element = sub(parent, "plugin", filename=filename, name=name)
+    return _children(sub(parent, "plugin", filename=filename, name=name), params)
+
+
+def group(parent, tag, **params):
+    """<tag> holding one element per parameter, like plugin(): a plugin's nested parameters."""
+    return _children(sub(parent, tag), params)
+
+
+def _children(element, params):
+    """One child element per parameter; a list repeats its tag."""
     for key, value in params.items():
         for v in value if isinstance(value, list) else [value]:
             sub(element, key, v)

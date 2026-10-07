@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Unit tests for sim/gen_model.py (no physics; pixi run sim-test)."""
+import dataclasses
 import unittest
 import xml.etree.ElementTree as ET
 
-from worldfiles import gz_check, temp_sdf, vec
+from worldfiles import MODELS, gz_check, temp_sdf, vec
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-from urc import sdf  # noqa: E402
+from urc import sdf, terrains  # noqa: E402
 
 P = gen_model.Params()
 
@@ -120,6 +121,160 @@ class Structure(unittest.TestCase):
             result = gz_check(path)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Valid", result.stdout)
+
+
+class DiffDriveVariant(unittest.TestCase):
+    def test_default_output_is_unchanged(self):
+        """The default rover (DriveParams.mode "diffdrive") is what wave 0
+        generated, byte for byte: the tracked models/rover/model.sdf (design
+        spec D22)."""
+        self.assertEqual(P.drive.mode, "diffdrive")
+        self.assertEqual(gen_model.build_sdf(P), (MODELS / "rover" / "model.sdf").read_text())
+
+    def test_unknown_modes_are_refused(self):
+        for drive in (gen_model.DriveParams(mode="servo"), gen_model.DriveParams(mode="physical", dig="deep")):
+            with self.assertRaises(ValueError):
+                gen_model.build_sdf(dataclasses.replace(P, drive=drive))
+
+
+class PhysicalVariant(unittest.TestCase):
+    """DriveParams(mode="physical"): plugins/rover_drivetrain.cpp, the realism
+    camera and the dust emitters (design spec 6.2, 7)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.params = dataclasses.replace(P, drive=gen_model.DriveParams(mode="physical"))
+        cls.sdf = gen_model.build_sdf(cls.params)
+        cls.model = ET.fromstring(cls.sdf).find("model")
+        cls.plugin = cls.model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+
+    def test_drivetrain_replaces_diffdrive(self):
+        self.assertIsNone(self.model.find("plugin[@name='gz::sim::systems::DiffDrive']"))
+        self.assertEqual(self.plugin.get("filename"), "RoverDrivetrain")
+        d = self.params.drive
+        expect = {"topic": gen_model.CMD_VEL_TOPIC, "odom_topic": gen_model.ODOM_TOPIC, "tf_topic": gen_model.TF_TOPIC,
+                  "state_topic": gen_model.DRIVETRAIN_TOPIC, "frame_id": "odom", "child_frame_id": "base_link",
+                  "cmd_timeout_clock": "wall"}
+        for tag, value in expect.items():
+            self.assertEqual(self.plugin.findtext(tag), value, tag)
+        numbers = {"cmd_timeout": 0.5, "track": 2 * P.pivot_y, "radius": P.wheel_radius, "track_multiplier": 1.0,
+                   "motor/gear": 50.0, "motor/efficiency": 0.8, "motor/current_limit": 20.0, "motor/voltage": 24.0,
+                   "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 40.0,
+                   "controller/accel": d.accel, "controller/max_speed": P.wheel_speed,
+                   "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0,
+                   "contact/dig_rate_gain": 5.0, "contact/dig_max_gain": 4.0, "dust_rule/max_rate": d.dust_max}
+        for tag, value in numbers.items():
+            self.assertAlmostEqual(float(self.plugin.findtext(tag)), value, msg=tag)
+        self.assertEqual(self.plugin.findtext("contact/dig"), "true")
+        self.assertEqual(self.plugin.findtext("contact/default_surface"), "regolith")
+        self.assertEqual(self.plugin.findtext("contact/object_surface"), "manmade")
+        wheels = [(w.findtext("name"), w.findtext("joint"), w.findtext("link"), w.findtext("side"))
+                  for w in self.plugin.findall("wheel")]
+        self.assertEqual(wheels, [(f"{e}{s}", f"wheel_{e}{s}_joint", f"wheel_{e}{s}", side)
+                                  for side, s in (("left", "l"), ("right", "r")) for e in "fr"])
+
+    def test_dig_presets(self):
+        """The strong preset is the default (the user's choice); mild keeps the
+        catalogue's dig-in, off has none."""
+        def contact(dig):
+            drive = gen_model.DriveParams(mode="physical", dig=dig)
+            model = ET.fromstring(gen_model.build_sdf(dataclasses.replace(P, drive=drive))).find("model")
+            return model.find("plugin[@filename='RoverDrivetrain']/contact")
+
+        for preset, gains in (("mild", (1.0, 1.0)), ("strong", (5.0, 4.0))):
+            self.assertEqual(contact(preset).findtext("dig"), "true")
+            self.assertEqual((float(contact(preset).findtext("dig_rate_gain")),
+                              float(contact(preset).findtext("dig_max_gain"))), gains)
+        self.assertEqual(contact("off").findtext("dig"), "false")
+
+    def test_surface_rows_come_from_the_catalogue(self):
+        """The default and object surfaces' traction, for worlds without a ground map."""
+        rows = {row.findtext("key"): row for row in self.plugin.findall("contact/surface")}
+        self.assertIn("regolith", rows)
+        for key, row in rows.items():
+            kind = terrains.TYPES[key]
+            for field in dataclasses.fields(terrains.Traction):
+                self.assertAlmostEqual(float(row.findtext(field.name)), getattr(kind.traction, field.name),
+                                       msg=field.name)
+            self.assertAlmostEqual(float(row.findtext("dust")), kind.appearance.dust)
+
+    def test_wheel_joints_and_tyres(self):
+        """Effort 1000 N m (DART never clamps the torque), velocity limit 16 rad/s
+        (never a hidden brake); isotropic tyre mu, the drivetrain sets every contact."""
+        for joint in self.model.findall("joint"):
+            if joint.get("name").startswith("wheel_"):
+                self.assertEqual(float(joint.findtext("axis/limit/effort")), 1000.0)
+                self.assertEqual(float(joint.findtext("axis/limit/velocity")), 16.0)
+        for ode in self.model.iter("ode"):
+            self.assertEqual((float(ode.findtext("mu")), float(ode.findtext("mu2"))), (1.0, 1.0))
+            self.assertIsNone(ode.find("fdir1"))
+        self.assertEqual(len(list(self.model.iter("ode"))), 4)
+
+    def test_dust_emitters(self):
+        """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
+        until the drivetrain says so, an explicit topic, unseen by depth and
+        point cloud (scatter ratio 0, Q11)."""
+        for side, s in (("left", "l"), ("right", "r")):
+            emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
+            self.assertEqual(emitter.findtext("emitting"), "false")
+            self.assertEqual(emitter.findtext("particle_scatter_ratio"), "0")
+            topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
+            self.assertEqual(emitter.findtext("topic"), topic)
+            self.assertIn(topic, [d.findtext("topic") for d in self.plugin.findall("dust")])
+            x, _, z = vec(emitter.findtext("pose"))[:3]
+            self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
+            self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), self.params.drive.dust_box / 2)  # on the ground
+
+    def test_realism_camera(self):
+        """RGB 1280x720 to 80 km, depth clipped at 0.1-40 m, noise 0.06 (design spec 7, D14)."""
+        camera = self.model.find("link[@name='camera_tilt_link']/sensor[@name='camera']/camera")
+        self.assertEqual((int(camera.findtext("image/width")), int(camera.findtext("image/height"))), (1280, 720))
+        self.assertEqual(float(camera.findtext("clip/far")), 80_000.0)
+        depth = camera.find("depth_camera/clip")
+        self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
+        self.assertEqual(camera.findtext("noise/type"), "gaussian")
+        self.assertEqual(float(camera.findtext("noise/stddev")), 0.06)
+
+    def test_gz_accepts_it(self):
+        with temp_sdf(self.sdf) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Valid", result.stdout)
+
+
+class TyreCompliance(unittest.TestCase):
+    """Params.tire_compliance (design spec 6.7, phase 2): each wheel hangs from its
+    rocker through an axial and a radial sprung hub."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.params = dataclasses.replace(P, tire_compliance=True, drive=gen_model.DriveParams(mode="physical"))
+        cls.sdf = gen_model.build_sdf(cls.params)
+        cls.model = ET.fromstring(cls.sdf).find("model")
+
+    def test_hub_chain(self):
+        joints = {j.get("name"): j for j in self.model.findall("joint")}
+        for side, s in (("left", "l"), ("right", "r")):
+            for e in "fr":
+                wheel = f"wheel_{e}{s}"
+                axial, radial = joints[f"{wheel}_tire_axial"], joints[f"{wheel}_tire_radial"]
+                self.assertEqual((axial.findtext("parent"), axial.findtext("child")),
+                                 (f"rocker_{side}", f"{wheel}_hub_axial"))
+                self.assertEqual((radial.findtext("parent"), radial.findtext("child")),
+                                 (f"{wheel}_hub_axial", f"{wheel}_hub_radial"))
+                self.assertEqual(joints[f"{wheel}_joint"].findtext("parent"), f"{wheel}_hub_radial")
+                for joint, axis, (stiffness, damping) in ((axial, [0, 1, 0], P.tire_axial),
+                                                         (radial, [0, 0, 1], P.tire_radial)):
+                    self.assertEqual(joint.get("type"), "prismatic")
+                    self.assertEqual(vec(joint.findtext("axis/xyz")), axis)
+                    self.assertEqual(float(joint.findtext("axis/dynamics/spring_stiffness")), stiffness)
+                    self.assertEqual(float(joint.findtext("axis/dynamics/damping")), damping)
+                    self.assertEqual(float(joint.findtext("axis/limit/upper")), P.tire_travel)
+
+    def test_gz_accepts_it(self):
+        with temp_sdf(self.sdf) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class ChaseCameraModel(unittest.TestCase):
