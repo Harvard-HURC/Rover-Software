@@ -419,6 +419,11 @@ class Clutter(unittest.TestCase):
             self.assertLess(z.max() - z.min(), 0.1)  # along the contour
             self.assertTrue(0.1 <= riser.height <= 1.0 and 1.0 <= riser.depth <= 3.0)
         self.assertGreater(np.median([np.linalg.norm(np.diff(r.path, axis=0), axis=1).sum() for r in risers]), 15.0)
+        level = landscape.place(flat(128.0, 257), np.full((257, 257), self.legend.index("slickrock"), np.uint8),
+                                "risers", np.random.default_rng(6), legend=self.legend)
+        self.assertGreater(len(level), 10)  # level benches too: straight on in a random direction
+        for riser in level:
+            self.assertGreaterEqual(np.linalg.norm(np.diff(riser.path, axis=0), axis=1).sum(), landscape.RISER_MIN)
         cliff = plane(0.0, 0.0, 128.0, 257)
         cliff.z[:, 128:] = 5.0  # a 5 m face down the middle
         raster = np.full((257, 257), self.legend.index("slickrock"), np.uint8)

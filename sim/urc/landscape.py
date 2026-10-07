@@ -52,6 +52,7 @@ KEEP_FLAT_EASE = 5.0  # [m] relief eases in over this from engineered ground (de
 EASY_ROUTE_FLAT = 3.0  # [m] half-width kept flat round a judges' easy route (design 5.4)
 STEP_DEG = 45.0  # ground this steep is already a ledge face: no riser there (M: risers are > 45 deg faces)
 RISER_STEP = 1.0  # [m] riser trace step
+RISER_MIN = 2.0  # [m] shorter riser pieces (cut off by the edge of their ground) are dropped (A)
 RISER_SMOOTH = 4.0  # [m] risers follow the contours of the surface blurred this much (A)
 
 
@@ -604,38 +605,44 @@ def rise_traces(hf, where, recipe, rng):
     """Risers along contours where `where` holds (a terrains.Risers recipe):
     seeds on a jittered grid of a pitch drawn from recipe.spacing_m, each a
     segment of length U(segment_m) traced RISER_STEP at a time both ways
-    along the contour of the surface blurred RISER_SMOOTH (all seeds at once),
-    stopping where it leaves `where`; a riser that would cross ground
-    steeper than STEP_DEG (a face the DEM or the macro shape already has) is
-    dropped."""
+    along the contour of the surface blurred RISER_SMOOTH (all seeds at once;
+    on level ground straight on in a random direction), stopping where it
+    leaves `where`. A riser that would cross ground steeper than STEP_DEG (a
+    face the DEM or the macro shape already has) or is shorter than
+    RISER_MIN is dropped."""
     n = hf.n
     g_row, g_col = (terrain.blur(g, RISER_SMOOTH / hf.res) for g in np.gradient(hf.z, hf.res))  # (rill_traces)
     steep = terrain.slope_map(hf.z, hf.res) > STEP_DEG
     pitch = rng.uniform(*recipe.spacing_m) / hf.res
-    grid = np.stack(np.meshgrid(np.arange(0.0, n - 1, pitch), np.arange(0.0, n - 1, pitch), indexing="ij"),
-                    axis=-1).reshape(-1, 2)
-    seeds = np.clip(grid + rng.uniform(0, pitch, grid.shape), 0, n - 1)
-    ok = where[np.round(seeds[:, 0]).astype(int), np.round(seeds[:, 1]).astype(int)]
-    seeds = seeds[ok]
+    lattice = np.stack(np.meshgrid(np.arange(0.0, n - 1, pitch), np.arange(0.0, n - 1, pitch), indexing="ij"),
+                       axis=-1).reshape(-1, 2)
+    seeds = np.clip(lattice + rng.uniform(0, pitch, lattice.shape), 0, n - 1)
+    seeds = seeds[where[np.round(seeds[:, 0]).astype(int), np.round(seeds[:, 1]).astype(int)]]
     if not len(seeds):
         return []
     lengths = rng.uniform(*recipe.segment_m, len(seeds))
     heights = rng.uniform(*recipe.height_m, len(seeds))
     depths = rng.uniform(*recipe.depth_m, len(seeds))
+    heading = rng.uniform(0, 2 * math.pi, len(seeds))
+    level = np.stack([np.sin(heading), np.cos(heading)], axis=1)  # for seeds on level ground, (row, col)
 
     def at(grid, q):
         r, c = (np.clip(np.round(q[:, k]).astype(int), 0, n - 1) for k in (0, 1))
         return grid[r, c]
 
+    def along(q, previous):
+        """Unit contour direction at q (row, col), turned to keep on from `previous`."""
+        t = np.stack([-at(g_col, q), at(g_row, q)], axis=1)
+        norm = np.linalg.norm(t, axis=1)
+        t = np.where((norm > 1e-9)[:, None], t / np.maximum(norm, 1e-9)[:, None], previous)
+        return np.where((np.sum(t * previous, axis=1) < 0)[:, None], -t, t)
+
     def trace(sign):
         p, alive = seeds.copy(), np.ones(len(seeds), bool)
         points, live = [p.copy()], [alive.copy()]
-        tangent = np.stack([-at(g_col, p), at(g_row, p)], axis=1)  # along the contour, in (row, col)
+        tangent = along(p, level)
         for k in range(int(max(lengths) / 2 / RISER_STEP)):
-            t = np.stack([-at(g_col, p), at(g_row, p)], axis=1)
-            t = np.where((np.sum(t * tangent, axis=1) < 0)[:, None], -t, t)  # keep going the same way
-            norm = np.linalg.norm(t, axis=1)
-            t = np.where((norm > 1e-9)[:, None], t / np.maximum(norm, 1e-9)[:, None], tangent)
+            t = along(p, tangent)
             q = p + sign * RISER_STEP / hf.res * t
             inside = (q >= 0).all(axis=1) & (q <= n - 1).all(axis=1)
             alive &= inside & ((k + 1) * RISER_STEP <= lengths / 2)
@@ -651,7 +658,7 @@ def rise_traces(hf, where, recipe, rng):
     out = []
     for s in range(len(seeds)):
         path = np.concatenate([back[s, 1:live_b[s].sum()][::-1], forward[s, :live_f[s].sum()]])
-        if len(path) < 2 or steep[np.round(path[:, 0]).astype(int), np.round(path[:, 1]).astype(int)].any():
+        if (len(path) - 1) * RISER_STEP < RISER_MIN or steep[tuple(np.round(path).astype(int).T)].any():
             continue
         xy = np.stack([hf.center[0] - hf.size / 2 + path[:, 1] * hf.res,
                        hf.center[1] + hf.size / 2 - path[:, 0] * hf.res], axis=1)
