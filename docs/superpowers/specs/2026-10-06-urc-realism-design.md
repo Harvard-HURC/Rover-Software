@@ -1,12 +1,11 @@
 # URC realism: real ground, a physical drivetrain, believable pictures and a free-fly map — design
 
 Date: 2026-10-06
-Status: design for review, **revision 2**. Revision 1 was critiqued twice, once for physics and data fidelity
-and once for feasibility and engineering. Every finding is accepted, accepted with a different fix, or rejected
-in §16 (Review), with reasons. Nothing here is implemented. This spec drives the implementation workflow that
-runs after the current one has finished. The current workflow covers: terrain building blocks with the one
-catalogue `sim/urc/terrains.py`, the rover-eye view, and reuse consolidation. All prototypes were built
-outside the repo.
+Status: **implemented** (2026-10-07), in waves 0–3 on git branches merged into `main` (WS-0; WS-D, WS-T1,
+WS-A, WS-F1; WS-T2 in phases T2a and T2b, WS-F2; WS-V). This document is revision 2 of the design as it was
+reviewed, kept as written, except §5.8 (updated by WS-0) and this status. What changed during implementation,
+and where each goal and calibration target stands, is in §17 (Changes during implementation). The code is the
+reference; `sim/README.md` describes it as built.
 
 Inputs (research of 2026-10-06). Every number below comes from one of these or carries a label:
 
@@ -1398,3 +1397,195 @@ diagnosis and fix were taken. **Accepted, different fix** means the diagnosis wa
 - **Analytic loaded-wheel current on a μ 0.8 slab.** 9.7 A, matching the prototype's 9.7–9.8 A.
 - **Not run in Gazebo.** Parked-rover creep under revision 1's floor, the dig-in dynamics and the bulldozing
   force are analytic predictions. WS-D's tests are the first runs.
+
+## 17. Changes during implementation
+
+Implemented 2026-10-06 to 2026-10-07. Each workstream reported its deviations; the wave gates merged them; WS-V
+(wave 3) ran the full suite, the performance budgets, the maps, the realism report and the mission slow tests,
+tuned what the targets needed and wrote this section. Measurements are on the M4 of §10.1, (M) as before.
+
+### 17.1 The user's decisions (2026-10-06), as built
+
+| Q | Decision | Built as |
+|---|---|---|
+| Q1 | Astrobiology keeps its layout, with real micro-relief | As decided (relief swatches, badland belts, slabs, risers) |
+| Q2 | Equipment Servicing on Dantzig, approximate per-wheel friction, no lander optimisation | Dantzig there (gate G5: PGS 0.86× by CPU time). The lander's collisions got collide bitmask `ABOVE_GROUND` (17.2): a filter, not an optimisation of the lander, but listed for the user to confirm |
+| Q3 | Keep all data | Nothing deleted; the far-field rasters moved to `sim/data/dem` and `sim/data/imagery` |
+| Q4 | No wet variant | Not built |
+| Q5 | In Fly a gamepad still drives; Fly/Map marked sim only; no referee logging | As decided |
+| Q6 | No CC0 texture downloads | Procedural detail textures |
+| Q7 | Placeholder motor numbers, D20 | Gear 50, efficiency 0.8, 20 A, all in `gen_model.DriveParams` |
+| Q8 | Wheel type unknown | Spec's assumption; tyre compliance off |
+| Q9 | git worktrees | One per workstream |
+| Q10 | Raw turn physics, `track_multiplier` 1.0; the station shows commanded vs achieved yaw rate | As decided (station Drivetrain panel and "got N %") |
+| Q11 | Depth and point cloud do not see dust | **Not achievable** in gz-rendering 8.2.2: `particle_scatter_ratio` has no effect on depth (dust shows at 1e-6, 0.65 and 1.0; 0 is ignored). The emitters sit behind the rear wheels, so a forward camera rarely sees it. `test_render` keeps the target as an expected failure |
+| Q12 | Strong dig-in by default, mild available | Strong on loose sand, wash sand and dusty clay; mild under a switch (`terrains.DIG`). The crusted sand sheet keeps mild values under both (17.2) |
+| Q14 | Leebench as sand sheet + regolith with sparse gravel | As decided (`landscape.SSURGO_UNITS`) |
+
+Folded-in known issues: the rover RGB-D is 1280×720 (a 20 cm tag decodes to 5 m square on; 2.5 m before); the
+drivetrain has a 0.5 s command timeout on the wall clock (overrides E10's 0; Gazebo GUI Teleop's button mode
+needs `cmd_timeout` 0); every world's origin altitude is ellipsoidal through one helper (`world.site`, synthetic
+worlds dropped 20.9 m); `props.shrub` is deleted.
+
+### 17.2 Changes to the design
+
+**Drivetrain and contact (§6).**
+- Slip compliance applies in both friction branches (§6.4, D23 said zero while sticking): the contact of a wheel
+  rolling under traction counts as sticking, so the literal rule gave 0.0 % slip in sand instead of 20 %. A
+  stopped wheel still has none: parked rovers move ≤ 1.2 mm in 60 s on 15° regolith and 20° sand.
+- The contact rule reads the wheel's spin through the controller's 5 ms speed filter: with the raw joint speed,
+  parked wheels chattered at 250 Hz (±0.1 rad/s) and a rover parked across 29° regolith crept at 2 cm/s.
+- `rr_w0` 0.05 rad/s (7.5 mm/s at the hub) instead of 0.2: at 0.2 a rover dug in by the strong preset kept
+  creeping round at 0.25× the fresh rate instead of stopping.
+- Hub forces act in the contact plane (axle × contact normal); the dig factor D is the state and carries over
+  between ground types; odometry uses the mean of each side's wheel angles.
+- Wheel loads from `JointTransmittedWrench` (gate G8: within 2.6 % of contact loads, cheaper); no
+  `<load_source>` element and no `ContactSensorData`.
+- The strong preset is the catalogue's own values (`terrains.DIG` is the one switch, read by `ground.json` and
+  by the rover's surface rows); the plugin's gain knobs were removed. It applies to loose ground only (sand,
+  wash sand, dusty clay). WS-V gave the crusted sand sheet its mild values under both presets: with the strong
+  ones a pure-pursuit driver's corrections dug the rover in on 13° of it, and it is half the ground of every
+  synthetic world; the user's decision named loose sand.
+- WS-V retuned the PI integral `ki` 40 → 160 V/rad (integral time 25 ms, (A)): the turn without the ramp rose to
+  90 % in 118 ms, the IR drop under load waiting on a 0.1 s integral; now 53 ms (target < 60 ms). Every other
+  §6.9 row was re-run with it.
+- Washboard target re-baselined (17.4): the torque std the wheels need to roll the rover over ±4 cm crests is
+  N r × steepest slope / √2 = 3.8 N·m; the < 1.5 N·m target came from the prototype on the proving ground's
+  corrugated heightmap, into which wheels sink (below). The chatter the target was after is the ripple above
+  5 Hz, 0.8–1.0 N·m.
+- Command timeout default 0.5 s, wall clock (the user's issue; E10's 0 for GUI Teleop is a parameter).
+- No SDF camera noise: `<noise>` on an `rgbd_camera` aborts gz on Metal (Ogre RenderingAPIException).
+- `rover_test.sdf` and the test worlds of `simulate.py` stay on Dantzig, on which `test_drivetrain` was
+  calibrated (§6.6 suggested PGS there). The DiffDrive variant is no longer byte-identical to the wave-0 rover
+  (§11): since T2a every rover carries the HD camera and the dust emitters.
+
+**Ground (§5).**
+- Friction tiles are deleted entirely, and `features.Patch` lost `level` and `falloff`: zones only paint.
+- Terrain targets re-derived over both lidar squares (`terrain_targets.json`); the slickrock swatch is cut with
+  σ 2 m, not 8 m (window H's 8–32 m relief is its ledges; no amplitude fitted at 8 m).
+- Slab targets are the measured tables less the features of 7 m and more (§1); measured N(≥4) is −17 % against
+  that, −42 % against the raw table.
+- Wash channels have banks of at most 15° (`features.WASH_BANK`; Delivery's wash grew from ~28 to ~55 m wide),
+  no micro-relief, and soft `sand` floors: on `wash_sand` under the strong preset a dug-in rover climbs 1°.
+- Delivery and Astrobiology got badland belts (7 and 8 zones of 50–110 m, off the course and the units) to reach
+  the real square's rough tail; synthetic faces over 20° paint `badland_slope` (rock has no relief recipe);
+  Delivery's stage-1 sand flat is kept flat and its relief halved near the start; Equipment Servicing's ground
+  is clay crust with sand-sheet patches.
+- Autonomy's easy route crosses ground steeper than 15° on a 12 m rib of caprock (`EASY_ROUTE_RIB`, traction
+  only): the soil map's ground there climbs 22° and the rim is 23–26°. Delivery's clay flank stops a straight
+  climb by dig-in after 10 m, not by sliding.
+- Terrain shapes carry collide bitmask `GROUND`, the lander's parts `ABOVE_GROUND`: a heightmap's bounding box
+  spans its height range, so relief that raised Equipment Servicing's top from 1.1 to 2.5 m put ~140 lander
+  links into the heightfield narrowphase (+9 % per step).
+- WS-V: the proving ground's washboard rides a collision mesh (`WorldBuilder.surface_mesh`, the collision
+  heightmap dipped 0.2 m under it): on the corrugated heightmap alone DART's wheels sink 5–15 cm and the rover
+  stalled 1–4 m in, with either drivetrain. It now crosses at ~0.45 m/s.
+- Clutter budgets: pebbles thinned to 20,000 per world; recipe gravel only in corridors of the course.
+
+**Appearance (§5.7, §7).**
+- No detail decals and no alpha-cut shrub cards (gate G4: alpha is tested at 0.5, no feathering).
+- NAIP's sun elevation comes from the acquisition date: fitted, its vertical component came out negative.
+- Detail textures are rescaled to the colour map's mean before compensation (shared, unscaled ones clipped 78 %
+  of Autonomy's texels; now 1–6 %).
+- The NAIP 2024 boost was not re-tuned (×1.25 saturation, ×1.1 contrast, (A)): there are no ground photos to
+  tune against (Q13).
+- WS-V raised the sun's intensity 1.4 → 1.9: at 1.4 the rendered maps came out at 0.77 of their colour maps
+  (CIE76 8.0–8.5, failing §1's ≤ 5); at 1.9 sunlit flat ground renders at 1.00 of its colour map and the median
+  CIE76 is 2.1–2.4. The ambient barely moves it (0.32 → 0.50 gave 0.83).
+- Far field 60.6 × 79.7 km (D14 said 65 × 80).
+
+**Fly camera, map and station (§8).**
+- The fly camera's floor samples its whole next 0.5 s along both the velocity and the target velocity, with a
+  lag of min(0.1 s, time to arrival / 4): the two-point rule reached the 0.3 m hard floor at 16× cruise over a
+  30 m hill (now 0.995 m clearance).
+- The orthographic window is tied to the height above ground where orthographic began, so panning keeps the
+  scale and climbing zooms out; §11's "orthographic object size equal at 40 and 80 m" test was replaced by a
+  projection check (box-top width 22 px against 23.4 expected).
+- `SetWorldPoseCmd` is sent every step (sent only on change, motion started 5 steps late).
+- The WebSocket `fly` message carries held key codes and the right stick (`{keys, axes}`), mapped in Python
+  (`drive.fly_command`, unit-tested), not `{move, turn, fast}`.
+- The station computes the turn rate from successive ground-truth yaws: OdometryPublisher's twist spiked to
+  −628 rad/s (4π/dt) once in 1233 messages.
+- The ChaseCamera terrain floor was built; the lens flare was not.
+
+**Performance and tests (§10, §11).**
+- CPU time per step counts gz's helper threads and reads 13–29 % below the wall-clock real-time factor an idle
+  machine reaches. `test_perf` judges the §10.3 floor by wall clock and prints both (WS-0's open question,
+  decided by WS-V: the wall clock is what an operator gets; CPU time stays the measure for ratios).
+- `tests/test_realism.py` (no GPU) and `tools/realism_report.py` (GPU, `pixi run sim-realism`) share
+  `urc/realism.py`; the report writes `sim/data/research/realism_report.json` and
+  `realism_contact_sheet.jpg`.
+- The mission slow tests drive with pure pursuit on ground truth that never turns in place (arcs of ≥ 1.5 m
+  radius: a spin in sand digs in, which is intended), on routes planned on a 1 m grid that treats digging
+  ground as half dug in; Autonomy's easy route with a 4 m look-ahead. `pixi run sim-slow` runs them;
+  `pixi run sim-perf` adds the drivetrain cost test.
+
+### 17.3 Status against §1 ("Done when")
+
+| Goal | Verdict | Measured (2026-10-07) |
+|---|---|---|
+| Roughness per type within the real p25–p75 at 4/8/16 m | **Met** | Every painted type with enough windows in Delivery, Astrobiology and Equipment Servicing (sand sheet, badland slope, block field, slickrock, clay crust): e.g. sand sheet 2.03/4.85/10.26 cm against 1.55–4.08/3.17–7.89/5.47–15.26; badland 6.5/18.9/48.1 against 4.4–10.5/13.3–28.0/36.7–67.4 |
+| Each synthetic world's natural ground p50 and p90 within ±30 % of the real square | **Met** for Delivery and Astrobiology; **not met** for Equipment Servicing, by design | Delivery −18/−26 %, −7/−22 %, +4/−22 % (p50/p90 at 4/8/16 m); Astrobiology −4/−16 %, +7/−16 %, +20/−21 %; Equipment Servicing −32/−51 %, −20/−56 %, −12/−66 %: rule 1.d's "relatively flat" site (4 m p50 1.82 cm, §5.2 asks ≤ 2 cm) |
+| Block fields: N(≥1), N(≥2), N(≥4) within ±30 %, 8–9 % cover by 1–7 m blocks | **Met** (against the table less features ≥ 7 m) | 1.69/0.81/0.14 per 100 m² against 1.67/0.74/0.17; cover 8.3 %; badland edges 0.54/0.28/0.074 against 0.55/0.27/0.074 |
+| Sand: fresh spin 0.26 ± 0.04 | **Met** | 0.248 (closed form 0.261) |
+| Sand: a sustained spin slows to 0.6–0.8× (§6.5 mild) | **Replaced by the user's strong default, met**; mild met | Strong: 0.145 in the first second, 0.018 (0.07×) from the third: the rover cannot turn and drives out at ~0.22 m/s of 0.3 commanded. Mild: 0.19–0.22, 0.74× |
+| Wheels sit 2–3 cm into sand on screen | **Met** (by construction, checked in physics) | Collision carve 2 cm under sand, 3 cm under wash sand: a parked rover rests 0.030 m lower on wash sand than on the visual surface, 0.025 m lower than on regolith |
+| Dust scales with speed, slip and surface | **Met** for the rate; dust in depth not avoided (Q11) | Rate test: sand > 3× rock; one "off" when stopped |
+| Autonomy from the 0.5 m lidar and NAIP 2024 | **Met** | 4097² over 2048 m; de-shaded NAIP 2024 |
+| Rendered map vs its colour map, smoothed CIE76 ≤ 5 | **Met** (after WS-V's sun change) | Median 2.35 Delivery, 2.34 Astrobiology, 2.11 Equipment Servicing, 2.44 Autonomy; p90 2.9–4.6 |
+| Colour map vs boosted NAIP ≤ 5 outside de-shaded and inpainted ground | **Met** | Median 0.52 on slopes < 5°, 0.72 at 5–10°, 1.17 at 10–20°, 2.28 over 20° (p90 6.3 there: the de-shading) |
+| Every ground type carries traction with sources or (A); Autonomy's ground from SSURGO | **Met** | `terrains.py`; Autonomy's ground shares (sand sheet, clay crust, silt flat, badland slope, rock, sand) 47.40/21.20/14.98/11.88/2.74/1.67 % against the soil map's 47.47/21.20/14.98/11.88/2.74/1.65 % |
+| §6.9 met | **Partly**: every row but the slow-turn judder (17.4) | |
+| Terrain no longer mirror-like | **Met** | `test_render`: brightest 0.1 % of sunlit ground ≤ p99 + 15 DN with the patched media (stock: glint) |
+| Sky, haze, mission sun and a visible far field in every URC world and station view | **Met** | Every URC world includes its far field and the mission sun; eye, chase, fly and rover RGB clip at 80 km; the patched media draw sky and haze (Metal) |
+| Fly view ≥ 15 fps (G6), never enters the ground, follow/top/ortho; Map view with an orthophoto and live markers | **Met** | Fly 1280×720 main with the eye small: 20/20 fps at real-time factor 0.99–1.00 in all four URC worlds; eye + chase 20/20; onboard RGB 14–15 of its 15 Hz with chase 19. Minimum clearance 0.995 m at 16× cruise over a 30 m hill. Maps: `pixi run sim-maps`, 64 s for five worlds |
+| Spin ratio per surface ± 0.04 of the closed form | **Met** | All 21 catalogue grounds within 0.004–0.013 below the closed form (realism report: rock 0.432/0.436, regolith 0.373/0.377, sand 0.248/0.261, wash sand 0.169/0.182) |
+| Stick-slip judder on rock | **Not met** | 0.012 peak-to-peak/mean (target ≥ 0.8); 17.4 |
+| Stall at 0.7× / no stall at 1.3× the analytic current | **Met** | 6.8 A: 7.5° in 5 s (6.5 % of unlimited); 12.6 A: ≥ 85 %; monotonic |
+| Dig-in on loose sand | **Met** (strong default) | as above |
+| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach) |
+| One catalogue, shared assets | **Met** | `terrains.TYPES`, `landscape` recipes, `urc_media`, `WorldBuilder`; missions say where and how much |
+
+### 17.4 Status against §6.9
+
+| Behaviour | Verdict | Measured |
+|---|---|---|
+| Spin in place per catalogue type | Met | 17.3 |
+| Spin on objects and tiles | Met | landing pad (manmade), step top (rock), μ 0.2 shape, SDF μ 0.5 object: each within ±0.04 |
+| Mean wheel torque on μ-only lanes | Met | 2.53 N·m at μ 0.2 (2.54), 12.04 N·m at μ 0.95 (12.06) |
+| Diagonal load split (PGS) | Met | 175/43/51/182 N at μ 1; 161/56/64/170 N at μ 0.8 |
+| Current on a μ 0.8 slab | Met | loaded 9.75 A, light 4.3–4.4 A |
+| Stall at a current limit | Met | 17.3 |
+| Rise and stop | Met (after `ki` 160) | with the ramp 0.31 s (0.33 ± 20 %); without: rise 53 ms (< 60), stop 27 ms (< 40) |
+| Slow spin judder on a μ 0.8 slab | **Not met** | 0.012 (≥ 0.8). A rigid rover turning in place slips at the yaw ratio where its slip is least, c²/(a²+c²), so the Stribeck drop has no first-order effect; the prototype's 1.26 came from its run with tyre compliance and PGS. With `Params.tire_compliance` 0.41 (Dantzig) / 0.78 (PGS) at the 22–24 Hz wheel hop, not 0.5–5 Hz. Sand stays smooth (0.009). Kept as an expected failure; revisit with the real wheels (Q8) |
+| Loose sand straight | Met | slip 20.0 %, torque 3.38 N·m |
+| Dig-in on sand | Met for both presets | 17.3 |
+| Washboard | Re-baselined, met | torque std 3.5–3.9 N·m against the climb's 3.8 ± 30 %; above 5 Hz 0.8–1.0 N·m (< 1.5) |
+| Spin on a 20° side slope | Met | slid 0.66 m (0.4–1.0) |
+| Drift across a 20° side slope | Met | rock 0.062, regolith 0.422, sand 1.646 m against 0.064/0.394/1.59 (the formula times 1/(1 − forward slip): the slip law scales with the wheel's speed) |
+| Parked 60 s | Met | ≤ 1.2 mm |
+| Hold angle vs heading | Met on flat ground under tilted gravity, without backlash and μ noise | holds at atan(μs) − 2° at 0/30/45/90°, slides at + 2°. With the 1.5° backlash a rover released at 30° to the fall line rolls through the dead band and slides at 29.8° (a rover that drove there has its backlash taken up) |
+| Odometry / true yaw | Met | 1/ratio ± 15 % |
+| Calibration lanes | Met | μ 0.2 slides, μ 0.95 holds |
+| Cost vs DiffDrive ≤ +25 % | Met | +9.5 % (rover_test), +7.4 % (Delivery) |
+
+### 17.5 Open
+
+- Design changes the user has not yet approved: the Autonomy caprock rib, the 15° wash banks and soft-sand wash
+  floors, dig-in stopping Delivery's clay flank and the proving ground's sand dune and clay slope, zones that no
+  longer level the ground, badland belts as round zones, recipe and NAIP shrubs instead of hand-placed ones, no
+  zone decals, the lander's collide bitmask (Q2), the sand sheet's mild dig-in under the strong preset.
+- Strong dig-in also stalls straight climbs in loose ground (sand about 10–15°, dusty clay 12°); the user's
+  decision spoke of spins.
+- The synthetic worlds' palettes are more saturated than the real ground as Autonomy drapes it: the sand
+  sheet's (237, 176, 132) against Autonomy's draped sand sheet (230, 198, 158), CIE76 14.3; sand 14.7; silt flat
+  9.1; clay crust 5.5 (§5.7's rule takes chroma from the Munsell colour, the drape from NAIP). From above the
+  synthetic worlds read as orange blobs on beige (`realism_contact_sheet.jpg`). Ground photos (Q13) would settle
+  which is right.
+- The slow-turn judder (17.4); dust in depth (Q11); no camera noise.
+- The rover high-centres on drops of 0.6 m and more (Delivery's 0.6 and 1.0 m ledges), with either drivetrain;
+  the course goes round them.
+- `/model/rover/ground_truth`'s twist spikes (OdometryPublisher); ROS consumers should differentiate the pose.
+- Equipment Servicing reaches 1.40× by wall clock (1.00× by CPU time): above the 1.1× floor, the 1.3× target
+  only by wall clock.
+- The GLSL half of the media patch is untested (Metal only); the NAIP 2024 boost is untuned (Q13).

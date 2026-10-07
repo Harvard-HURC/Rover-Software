@@ -712,5 +712,141 @@
   }
  },
  "contact_sheet": "data/research/realism_contact_sheet.jpg",
- "seconds": 30.4
+ "spin": {
+  "fresh": {
+   "gravel": {
+    "measured": 0.40602843992749,
+    "closed_form": 0.4095941001174218,
+    "met": true
+   },
+   "sand": {
+    "measured": 0.24791819725101366,
+    "closed_form": 0.26080246786402156,
+    "met": true
+   },
+   "scree": {
+    "measured": 0.387728288695967,
+    "closed_form": 0.39164810156763236,
+    "met": true
+   },
+   "clay": {
+    "measured": 0.26016562382919467,
+    "closed_form": 0.27301582575315564,
+    "met": true
+   },
+   "slickrock": {
+    "measured": 0.43223714019933435,
+    "closed_form": 0.43555730415052113,
+    "met": true
+   },
+   "regolith": {
+    "measured": 0.37311039214932995,
+    "closed_form": 0.3774145286606621,
+    "met": true
+   },
+   "pavement": {
+    "measured": 0.4220501886992539,
+    "closed_form": 0.42540858788151753,
+    "met": true
+   },
+   "mudstone": {
+    "measured": 0.3704356122191294,
+    "closed_form": 0.37481085275346243,
+    "met": true
+   },
+   "bentonite": {
+    "measured": 0.3704356122191294,
+    "closed_form": 0.37481085275346243,
+    "met": true
+   },
+   "caprock": {
+    "measured": 0.43223714019933435,
+    "closed_form": 0.43555730415052113,
+    "met": true
+   },
+   "biocrust": {
+    "measured": 0.35961844938573867,
+    "closed_form": 0.3643398093547089,
+    "met": true
+   },
+   "gypsum": {
+    "measured": 0.4047097483371648,
+    "closed_form": 0.4083171639543886,
+    "met": true
+   },
+   "sand_sheet": {
+    "measured": 0.32164670406528617,
+    "closed_form": 0.328346254257261,
+    "met": true
+   },
+   "wash_sand": {
+    "measured": 0.16896020133720313,
+    "closed_form": 0.181900896327907,
+    "met": true
+   },
+   "fan_pavement": {
+    "measured": 0.4220501886992539,
+    "closed_form": 0.42540858788151753,
+    "met": true
+   },
+   "clay_crust": {
+    "measured": 0.39686551922744767,
+    "closed_form": 0.4006409234574485,
+    "met": true
+   },
+   "badland_slope": {
+    "measured": 0.3704356122191294,
+    "closed_form": 0.37481085275346243,
+    "met": true
+   },
+   "silt_flat": {
+    "measured": 0.4057955135307125,
+    "closed_form": 0.40938818580046366,
+    "met": true
+   },
+   "rock": {
+    "measured": 0.43223714019933435,
+    "closed_form": 0.43555730415052113,
+    "met": true
+   },
+   "block_field": {
+    "measured": 0.387728288695967,
+    "closed_form": 0.39164810156763236,
+    "met": true
+   },
+   "manmade": {
+    "measured": 0.43101542903982476,
+    "closed_form": 0.43430950081121067,
+    "met": true
+   }
+  },
+  "sand_dig_in": {
+   "strong": [
+    0.14483630993108168,
+    0.02791924350456487,
+    0.018454864914779247,
+    0.018425290853860715,
+    0.01842503499902066,
+    0.018425087269717068,
+    0.01842911917657656,
+    0.018419250629876312,
+    0.018380492269262562,
+    0.018347769593791488
+   ],
+   "mild": [
+    0.19934421423782997,
+    0.21913563270020928,
+    0.19873021424265186,
+    0.1904700350821967,
+    0.1860207368300947,
+    0.19030759348842566,
+    0.19378703065821912,
+    0.19089153489758867,
+    0.19521068242098039,
+    0.19430393258583897
+   ]
+  },
+  "note": "flat ground of one type, mu noise on, Dantzig; dig_in: yaw ratio in each second of a spin"
+ },
+ "seconds": 58.1
 }

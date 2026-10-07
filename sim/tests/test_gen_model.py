@@ -125,6 +125,9 @@ class Structure(unittest.TestCase):
             x, _, z = vec(emitter.findtext("pose"))[:3]
             self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
             self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), P.drive.dust_box / 2)  # on the ground
+            sprite = emitter.findtext("material/pbr/metal/albedo_map")  # the soft puff, tracked with the model
+            self.assertEqual(sprite, f"model://rover/{gen_model.DUST_SPRITE}")
+            self.assertTrue((MODELS / "rover" / gen_model.DUST_SPRITE).is_file())
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:

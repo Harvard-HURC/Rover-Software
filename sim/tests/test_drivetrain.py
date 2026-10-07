@@ -127,9 +127,9 @@ class SpinInPlace(unittest.TestCase):
 
 class SpinOnObjects(unittest.TestCase):
     """Every wheel contact gets the friction circle, not only the terrain's
-    (today's DART rule cannot turn in place on box friction): the landing
+    (DART's own rule cannot turn in place on box friction): the landing
     pad (an object without SDF friction: manmade), a step top and a mu 0.2
-    friction tile (terrain shapes, by ground.json's collision map), an object
+    box (terrain shapes, by ground.json's collision map), an object
     whose SDF sets mu 0.5 (mu_s = mu_k = 0.5, crr 0.015, slip 0.05). Each turns
     at its surface's closed-form ratio +- 0.04 (physics, regression of D1)."""
 
