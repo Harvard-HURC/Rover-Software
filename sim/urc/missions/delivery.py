@@ -19,11 +19,11 @@ line of sight):
 The ground (1.c.ii: "soft sandy areas, gravel, rough stony areas, rock and
 boulder fields, vertical drops and steep loosely consolidated slopes"): a
 soft sand flat in stage 1, a gravel plain on the way out, bentonite clay on
-the crate hill's flank, wash sand along the wash floor and a loose scree chute up
+the crate hill's flank, sand along the wash floor and a loose scree chute up
 the steep mesa are zones of their ground (urc/terrains.py, urc/features.py);
 two rough stony areas (rock gardens), the boulder field and the ledges.
 Around them the ground is painted (PAINT): packed regolith with patches of
-crusted sand sheet, wash sand on the wash floor, badland on ground steeper
+crusted sand sheet, soft sand on the wash floor, badland on ground steeper
 than 20 deg and round the steep mesa, its sandstone cap shedding a block
 field; badland belts (BADLANDS) lie in the rougher country away from the
 course. Every type carries its MDRS micro-relief (world.add_relief: real
@@ -93,7 +93,7 @@ BADLANDS = [features.Patch(f"badlands_{k}", terrains.BADLAND_SLOPE, x, y, r, irr
                                            (-20.0, 420.0, 70.0), (870.0, 820.0, 80.0), (600.0, 820.0, 60.0),
                                            (880.0, 560.0, 50.0)))]
 PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120.0, cover=0.3),
-         landscape.Along(tuple(WASH), "wash_sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
+         landscape.Along(tuple(WASH), "sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
          landscape.Hills((LANDFORMS[1],), slope="badland_slope", cap="caprock"),
          landscape.Below("caprock", "block_field", reach_m=30.0)]
 PADS = [(*C2[:2], 30.0), (*GATE, 4.0), (*TOOLBOX, 5.0), (*ASTRONAUT_A, 4.0), (*ASTRONAUT_B, 4.0), (*WATER_JUG, 3.0),

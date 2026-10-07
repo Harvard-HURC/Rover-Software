@@ -78,7 +78,7 @@ def fast_copy(world, rover, lift=0.05):
         yield path
 
 
-def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
+def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0, res=1.0):
     """A route (world (x, y)) from start to goal with grades up to max_slope
     (routes.easy_route) that keeps `clearance` past the rover's half width
     from every rock, slab or riser taller than ROCK_STOP and off ground
@@ -88,7 +88,10 @@ def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
     as walls in the terrain. Ground that digs in climbs as with its wheels
     half dug in (DUG): a pure-pursuit driver's corrections spin them in (on
     the strong preset a rover stalls on 13 deg of sand sheet it entered dug
-    in, measured on Delivery's crate hill). None if there is none."""
+    in, measured on Delivery's crate hill). The search grid is `res`
+    metres (routes.easy_route): on 2 m the micro-relief's blocked spots,
+    blurred, close passages the rover fits through. None if there is
+    none."""
     hf = terrain(world)
     s = sheet(world)
     ground = sheets.ground(s, sheets.path(world))
@@ -103,11 +106,12 @@ def clear_route(world, start, goal, max_slope, clearance=1.0, margin=3.0):
     cols = np.round((tall[:, 0] - hf.center[0] + hf.size / 2) / hf.res).astype(int)
     rows = np.round((hf.center[1] + hf.size / 2 - tall[:, 1]) / hf.res).astype(int)
     rocks = np.zeros_like(blocked)
-    rocks[rows, cols] = 1
+    inside = (rows >= 0) & (rows < hf.n) & (cols >= 0) & (cols < hf.n)  # a slab at the edge reaches past it
+    rocks[rows[inside], cols[inside]] = 1
     reach = int(math.ceil((ROVER_HALF_WIDTH + clearance) / hf.res))
     blocked |= cv2.dilate(rocks, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * reach + 1,) * 2))
     walls = heightfields.Heightfield(hf.size, hf.n, hf.z + 100.0 * blocked, hf.center)
-    found = routes.easy_route(walls, start, goal, max_slope)
+    found = routes.easy_route(walls, start, goal, max_slope, res=res)
     return None if found is None else found[0]
 
 

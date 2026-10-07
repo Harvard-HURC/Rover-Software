@@ -41,8 +41,8 @@ rover works and stay in the photo elsewhere.
   Stay! the astronaut walks on to STAY_TO, more than 20 m away (1.e.vii);
   Fetch! (1.e.viii); Come! (1.e.ix); Give! (1.e.x).
 
-The ground follows the DEM (urc/terrains.py, urc/features.py): loose wash sand
-on the floors of the washes that drain past the butte (the north one runs
+The ground follows the DEM (urc/terrains.py, urc/features.py): soft sand on
+the floors of the washes that drain past the butte (the north one runs
 between the start, Post 1 and Post 2), loose scree on the butte's north face
 where the straight line from the start crosses it, gravel on the aprons at its
 feet, bentonite clay on the plain the rover crosses from C2 and bare

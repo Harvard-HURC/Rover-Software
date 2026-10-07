@@ -17,11 +17,11 @@ entry in the sheet:
 Sub-surface sampling (10 cm, 1.b.vi) is not simulated: the sheet gives each
 unit's notes instead.
 
-The ground the rover crosses (urc/terrains.py, urc/features.py): loose wash
-sand along the wash floor, bentonite clay aprons at the feet of the banded hills,
+The ground the rover crosses (urc/terrains.py, urc/features.py): soft sand
+along the wash floor, bentonite clay aprons at the feet of the banded hills,
 a loose scree chute up the east face of the small hill; talus on the hill
 slopes, two rock fields and the ledge's blocks. Around them the ground is
-painted (PAINT): packed regolith with patches of crusted sand sheet, wash
+painted (PAINT): packed regolith with patches of crusted sand sheet, soft
 sand on the wash floor, the hills' badland slopes banded maroon, grey and
 white (STRATA) under sandstone caps that shed block fields, bare slickrock
 on the sandstone ledge; badland belts (BADLANDS) lie out towards the site's
@@ -74,7 +74,7 @@ BADLANDS = [features.Patch(f"badlands_{k}", terrains.BADLAND_SLOPE, x, y, r, irr
                                            (-380.0, -330.0, 90.0), (60.0, 400.0, 70.0), (-60.0, -400.0, 70.0),
                                            (430.0, 60.0, 60.0), (-430.0, 40.0, 60.0)))]
 PAINT = [landscape.Base("regolith"), landscape.Noise("sand_sheet", feature_m=120.0, cover=0.3),
-         landscape.Along(tuple(WASH), "wash_sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
+         landscape.Along(tuple(WASH), "sand", half_width=6.0), landscape.Steeper(20.0, "badland_slope"),
          landscape.Hills(tuple(HILLS), slope="badland_slope", cap="caprock"),
          landscape.Hills((LANDFORMS[-1],), slope="slickrock", cap="slickrock"),  # the sandstone ledge
          landscape.Below("caprock", "block_field", reach_m=30.0)]
