@@ -12,9 +12,10 @@ tests. West of the road, strips run west:
   on the far side at 12 deg. A rover holds or climbs a grade up to atan(mu)
   (11, 19, 27, 35, 44 deg);
 - sand, clay and slickrock: each a flat stretch, then a slope up and down
-  (the strong dig-in, terrains.DIG: the rover stalls on the 15 deg sand dune
-  and 2.7 m up the 12 deg clay slope as its slipping wheels dig in, measured;
-  it crosses the slickrock's 25 deg);
+  (the strong dig-in, terrains.DIG: the rover crosses the flat sand at 0.37
+  m/s of 0.5, its wheels dug in to 1.26, and stalls 0.6 m up the 15 deg sand
+  dune as they dig in to 2.0; it climbs the 12 deg clay slope at 0.39 m/s,
+  measured on PGS; it crosses the slickrock's 25 deg);
 - side slopes of 10 and 20 deg across the direction of travel;
 - three strips of natural ground, from the same recipes as the mission
   worlds' (terrains.py): crusted sand sheet with its shrubs, a 12 deg badland
@@ -135,7 +136,7 @@ def build(models_dir, worlds_dir, media):
         steepest = max(abs(grade) for _, grade in lane.segments)
         traction = terrains.traction(kind)
         climb, hold = round(traction.climb_deg), round(traction.hold_deg)
-        digs = ", but slipping wheels dig in and stall well below that" if traction.dig_rate else ""
+        digs = ", but slipping wheels dig in and can stall below that" if traction.dig_rate else ""
         w.station(lane.key, *lane.start, title, f"{kind.title} (holds a parked rover up to {hold} deg, climbs up "
                   f"to {climb} deg{digs}): {lane.describe()}.",
                   [title.upper(), f"CLIMBS {climb} DEG", f"{steepest:.0f} DEG SLOPES"],

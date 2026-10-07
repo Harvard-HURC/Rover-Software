@@ -167,8 +167,8 @@ Click the page to drive; the rover holds still while the page lacks focus.
 |---|---|
 | W / S | forward / back (hold) |
 | A / D | turn left / right (hold) |
-| Shift | twice the preset (capped at 1.5 m/s, 1.5 rad/s) |
-| 1 / 2 / 3 | speed preset 0.25 / 0.6 / 1.2 m/s (0.4 / 0.8 / 1.2 rad/s) |
+| Shift | twice the preset (capped at 3 m/s, 1.5 rad/s) |
+| 1 – 5 | speed preset 0.25 / 0.6 / 1.2 / 2 / 3 m/s (0.4 / 0.8 / 1.2 / 1.2 / 1.2 rad/s) |
 | Space | stop now |
 | ← → ↑ ↓ | eye and onboard views: look left, right, up, down (1 rad/s); chase view: orbit, raise, lower |
 | mouse drag on the video | eye and onboard views: look around (the point under the pointer stays under it); chase view: orbit |
@@ -437,7 +437,7 @@ every wheel contact grips. Every 1 ms step:
   `track_multiplier` is 1.0: the raw skid-steer response, which the team's
   driver compensates (the user's choice; Clearpath ships 1.875 for Husky).
 - **Motor** per wheel (`rover_drivetrain.hh`, `DriveParams`): a DC motor
-  (24 V, 0.46 Ω, kt = ke 0.0445; Husky A200), gearbox 50 at efficiency 0.8,
+  (48 V, 0.46 Ω, kt = ke 0.0445; the Husky A200 motor at twice its 24 V, for 3 m/s), gearbox 50 at efficiency 0.8,
   current limit 20 A (35.6 N·m at the wheel), driveline 1500 N·m/rad with 1.5°
   backlash, a PI speed controller (kp 4 V/(rad/s), ki 160 V/rad, back-EMF
   feed-forward) integrated in 4 substeps, applied as the wheel joint's
@@ -1341,10 +1341,10 @@ after a world starts.
 
 **Generation and tools**: `sim-worlds` about 65 s for all five worlds;
 `sim-maps` 64 s for all five (Autonomy 64 tiles in 23 s, the others 16 tiles
-in 9–10 s); `sim-realism` about 1 min (the spin runs included).
+in 9–10 s); `sim-realism` about 80 s (the spin runs on both solvers included).
 
-**Tests**: `pixi run sim-test` 438 tests in 593 s (11 min with the build
-and the generation): 8 skipped (the opt-in performance and slow tests), 2
+**Tests**: `pixi run sim-test` 460 tests in about 700 s (13 min with the
+build and the generation): 8 skipped (the opt-in performance and slow tests), 2
 expected failures (the slow-turn judder, dust in depth); `ctest --test-dir
 sim/build` 2 C++ programs; `sim-slow` (the mission routes)
 41 min for its 6 tests, all arriving: Autonomy's easy route

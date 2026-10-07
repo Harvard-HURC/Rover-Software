@@ -263,6 +263,8 @@ const TOGGLES = {  // every view
   Digit1: () => send({t: "preset", n: 1}),
   Digit2: () => send({t: "preset", n: 2}),
   Digit3: () => send({t: "preset", n: 3}),
+  Digit4: () => send({t: "preset", n: 4}),
+  Digit5: () => send({t: "preset", n: 5}),
   Escape: () => toggleHelp(false),
 };
 const VIEW_TOGGLES = {
@@ -476,6 +478,10 @@ function tick() {
   if (state.view !== "fly") {
     pan += hold("KeyJ", "KeyL") * LOOK_RATE * dt;
     tilt += hold("KeyK", "KeyI") * LOOK_RATE * dt;
+  }
+  if (state.view !== "fly" && state.flying) {  // left the Fly view in flight: let the camera go at once
+    send({t: "fly", keys: [], axes: [0, 0]});
+    state.flying = false;
   }
   if (state.view === "fly") {
     const flyKeys = [...state.held].filter((k) => FLY_KEYS.has(k));

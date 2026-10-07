@@ -568,12 +568,12 @@ to 90 % in 24 ms and stops in 16 ms (M, prototype). With it, the rise is about s
 
 | Parameter | Value | Basis |
 |---|---|---|
-| Motor | 24 V, R 0.46 Ω, kt = ke 0.0445 N·m/A | Husky A200 motor (R [18]) |
+| Motor | 48 V (was 24 V), R 0.46 Ω, kt = ke 0.0445 N·m/A | Husky A200 motor (R [18]) at twice its voltage, for 3 m/s (user 2026-10-07) |
 | Gear, efficiency | 50, 0.8 (datasheet alternative 51, 0.7) | Prototype (M); IMS 3-stage planetary (R [22]) |
 | Rotor inertia | 1.2e-5 kg·m² (0.03 kg·m² at the wheel) | (A), consistent with Husky 0.08 kg·m² at 78.71:1 [18] |
 | No-load current, output friction | 1.0 A, 0.05 N·m·s | (A) (REV NEO 1.8 A free [22]) |
 | Current limit | 20 A → 35.6 N·m at the wheel | (M) prototype; user's motor range 10–40 N·m; traction limit μ·N·r ≈ 17–27 N·m |
-| Free speed | 24/(0.0445·50) = 10.8 rad/s → 1.62 m/s; clamp 10 rad/s | — |
+| Free speed | 48/(0.0445·50) = 21.6 rad/s → 3.24 m/s; clamp 20 rad/s (3 m/s; was 24 V, 10 rad/s until the user raised the top speed 2026-10-07) | — |
 | Driveline | 1500 N·m/rad, 2 N·m·s/rad, backlash 1.5° (0.026 rad) | (A): 12 mm × 0.1 m steel shaft ≈ 1600 N·m/rad; IMS backlash 0.8–2.5° [22] |
 | PI | kp 4 V/(rad/s), ki 40 V/rad, feed-forward ke·N | (M) prototype tuning |
 | Ramp | 8 rad/s² (1.2 m/s²) | (A), to be replaced by the real controller's value (Q7) |
@@ -1543,7 +1543,7 @@ worlds dropped 20.9 m); `props.shrub` is deleted.
 | Stick-slip judder on rock | **Not met** | 0.012 peak-to-peak/mean (target ≥ 0.8); 17.4 |
 | Stall at 0.7× / no stall at 1.3× the analytic current | **Met** | 6.8 A: 7.5° in 5 s (6.5 % of unlimited); 12.6 A: ≥ 85 %; monotonic |
 | Dig-in on loose sand | **Met** (strong default) | as above |
-| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach) |
+| The missions keep their meaning; mission tests pass | **Met**, with design changes for the user to approve (17.5) | `pixi run sim-test`: 438 tests OK (8 opt-in skipped; 2 expected failures: the judder and dust in depth); after the review fixes 460 (17.6); slow route drives: all 6 pass (Autonomy's easy route 233 m in 332 s of the 360 allowed; Post 2; the astronaut walk; Delivery's 11 legs, 1823 m; Astrobiology's 3 legs; Equipment Servicing's approach) |
 | One catalogue, shared assets | **Met** | `terrains.TYPES`, `landscape` recipes, `urc_media`, `WorldBuilder`; missions say where and how much |
 
 ### 17.4 Status against §6.9
