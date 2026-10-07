@@ -16,8 +16,10 @@ docs/superpowers/specs/2026-10-06-urc-realism-design.md, section 6, D22):
 "physical", the default, plugins/rover_drivetrain.cpp (a DC motor per wheel
 driving it by torque, every wheel contact gripping like the ground under
 it), or "diffdrive", Gazebo's DiffDrive (every wheel a velocity servo on
-anisotropic tyres), kept for A/B tests and cost comparisons. The camera and
-the dust emitters are the same in both.
+anisotropic tyres), kept for A/B tests and cost comparisons. The camera is
+the same in both, and so are the dust emitters when DriveParams.dust adds
+them (off by default: the rover raises no visible dust, user decision
+2026-10-07).
 """
 import dataclasses
 import math
@@ -114,8 +116,16 @@ class DriveParams:
     wheel_velocity: float = 32.0  # [rad/s]
     odom_rate: float = 50.0  # [Hz]
     state_rate: float = 50.0  # [Hz] DRIVETRAIN_TOPIC
-    # Dust behind the rear wheels (design spec 6.5, D15): particles per second = dust factor x
-    # (speed_gain x hub speed + slip_gain x slip speed) x dig factor, at most dust_max (A gains).
+    # Dust behind the rear wheels (design spec 6.5, D15), the one switch. Off, the default: the rover raises no
+    # visible dust and the model has no particle emitter (user decision 2026-10-07: clean depth images and point
+    # clouds over visible dust). gz-rendering 8.2.2's depth shader takes any visible particle for a return, so
+    # with dust on the depth image and point cloud see it (Q11 "depth does not see dust" not met,
+    # tests/test_render.py); with none they cannot. On: an emitter behind each rear wheel in both drive modes,
+    # its rate set by the physical drivetrain (<dust>, <dust_rule>), for when gz-rendering honours
+    # <particle_scatter_ratio>.
+    dust: bool = False
+    # Particles per second = dust factor x (speed_gain x hub speed + slip_gain x slip speed) x dig factor, at
+    # most dust_max (A gains).
     dust_rate: float = 10.0  # [Hz] commands to the emitters
     dust_speed_gain: float = 8.0  # [1/m]
     dust_slip_gain: float = 25.0  # [1/m]
@@ -364,18 +374,20 @@ def _add_rocker(model, p, side, sign):
         _shape(link, f"{end}_arm", sdf.box(bar), pose, ROCKER_COLOR)
     sdf.joint(model, f"{name}_joint", "revolute", "base_link", name, (0, 1, 0), -p.rocker_limit, p.rocker_limit,
               damping=p.rocker_damping)
-    _add_dust_emitter(link, p, f"dust_r{side[0]}")
+    if p.drive.dust:
+        _add_dust_emitter(link, p, f"dust_r{side[0]}")
 
 
 def _add_dust_emitter(link, p, name):
     """A particle emitter at the ground behind the rocker's rear wheel (on the rocker: a wheel link spins),
-    idle until the physical drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not
-    emitting (SDF's default is to emit). Each particle is the soft puff sprite DUST_SPRITE, which carries the
-    dust's colour and opacity (DriveParams.dust_alpha; gz-rendering 8 applies no colour range). The material
-    needs its white diffuse: particles without one render black (measured). The depth image and point cloud
-    see the dust (Q11 not met, tests/test_render.py): the depth shader takes every particle pixel with any red
-    for a return, at a fixed scatter ratio that neither <particle_scatter_ratio> nor the emitter's topic
-    reaches (measured); only black particles stay out of it."""
+    idle until the physical drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). Added only with
+    DriveParams.dust, off by default (user decision 2026-10-07); tests/test_render.py builds one directly. It
+    starts not emitting (SDF's default is to emit). Each particle is the soft puff sprite DUST_SPRITE, which
+    carries the dust's colour and opacity (DriveParams.dust_alpha; gz-rendering 8 applies no colour range). The
+    material needs its white diffuse: particles without one render black (measured). The depth image and point
+    cloud see the dust (Q11 not met, tests/test_render.py): the depth shader takes every particle pixel with any
+    red for a return, at a fixed scatter ratio that neither <particle_scatter_ratio> nor the emitter's topic
+    reaches (measured); only black particles stay out of it. Hence the switch: Q11 is met by having no dust."""
     d = p.drive
     emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
     behind = p.wheel_dx + p.wheel_radius + d.dust_box / 4
@@ -453,20 +465,22 @@ def _add_plugins(model, p):
 
 
 def _add_drivetrain(model, p):
-    """plugins/rover_drivetrain.cpp, set from DriveParams (design spec 6.2)."""
+    """plugins/rover_drivetrain.cpp, set from DriveParams (design spec 6.2). The dust elements (dust_rate,
+    <dust>, <dust_rule>) only with DriveParams.dust: without them the drivetrain drives no emitter."""
     d = p.drive
+    dust = dict(dust_rate=d.dust_rate) if d.dust else {}
     plugin = sdf.plugin(model, "RoverDrivetrain", "rover_sim::RoverDrivetrain", topic=CMD_VEL_TOPIC,
                         cmd_timeout=d.cmd_timeout, cmd_timeout_clock=d.cmd_timeout_clock, odom_topic=ODOM_TOPIC,
                         tf_topic=TF_TOPIC, frame_id="odom", child_frame_id="base_link",
                         odom_publish_frequency=d.odom_rate, state_topic=DRIVETRAIN_TOPIC, state_rate=d.state_rate,
-                        dust_rate=d.dust_rate, track=2 * p.pivot_y, radius=p.wheel_radius,
-                        track_multiplier=d.track_multiplier)
+                        **dust, track=2 * p.pivot_y, radius=p.wheel_radius, track_multiplier=d.track_multiplier)
     for side, s, _ in SIDES:
         for _, e, _ in ENDS:
             sdf.group(plugin, "wheel", name=f"{e}{s}", joint=f"wheel_{e}{s}_joint", link=f"wheel_{e}{s}", side=side)
-    for side, s, _ in SIDES:
-        sdf.group(plugin, "dust", wheel=f"wheel_r{s}", topic=DUST_TOPIC.format(link=f"rocker_{side}",
-                                                                                emitter=f"dust_r{s}"))
+    if d.dust:
+        for side, s, _ in SIDES:
+            sdf.group(plugin, "dust", wheel=f"wheel_r{s}", topic=DUST_TOPIC.format(link=f"rocker_{side}",
+                                                                                    emitter=f"dust_r{s}"))
     sdf.group(plugin, "motor", voltage=d.voltage, resistance=d.resistance, kt=d.kt, ke=d.ke, gear=d.gear,
               efficiency=d.efficiency, rotor_inertia=d.rotor_inertia, free_current=d.free_current,
               output_friction=d.output_friction, current_limit=d.current_limit)
@@ -479,8 +493,9 @@ def _add_drivetrain(model, p):
                         object_surface=d.object_surface)
     for row in surface_rows(d.default_surface, d.object_surface):
         sdf.group(contact, "surface", **row)
-    sdf.group(plugin, "dust_rule", speed_gain=d.dust_speed_gain, slip_gain=d.dust_slip_gain, max_rate=d.dust_max,
-              min_speed=d.dust_min_speed)
+    if d.dust:
+        sdf.group(plugin, "dust_rule", speed_gain=d.dust_speed_gain, slip_gain=d.dust_slip_gain,
+                  max_rate=d.dust_max, min_speed=d.dust_min_speed)
 
 
 def surface_rows(*keys):
@@ -508,7 +523,8 @@ def __getattr__(name):
 
 def write_dust_sprite(path, p=None):
     """The rover's dust sprite (DUST_SPRITE): textures.dust_puff in the catalogue's dust colour at
-    DriveParams.dust_alpha."""
+    DriveParams.dust_alpha. main() writes it whether or not DriveParams.dust is on, so the emitters find it
+    when the switch is, and so do tests/test_render.py's."""
     from urc import terrains, textures  # here: the catalogue imports the texture generators
     textures.dust_puff(path, terrains.DUST_RGB, (p or Params()).drive.dust_alpha)
 

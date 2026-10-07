@@ -138,7 +138,8 @@ class PhysicalRover(unittest.TestCase):
         self.assertEqual({w["surface"] for w in state["wheels"].values()}, {self.PARAMS.drive.default_surface})
 
     def test_loads_in_rover_test(self):
-        """The test ground, with its particle-emitter system for the dust."""
+        """The test ground, with its particle-emitter system (idle: the rover has
+        dust emitters only with DriveParams.dust, off by default)."""
         with world_copy("rover_test") as world:
             s = simulate(1.0, world=world, params=self.PARAMS)
         _, _, z, roll, pitch, _ = s.poses["base_link"]

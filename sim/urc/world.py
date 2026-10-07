@@ -65,7 +65,9 @@ SYSTEMS = (
     ("gz-sim-imu-system", "gz::sim::systems::Imu", {}),
     ("gz-sim-navsat-system", "gz::sim::systems::NavSat", {}),
     ("gz-sim-sensors-system", "gz::sim::systems::Sensors", {"render_engine": "ogre2"}),
-    ("gz-sim-particle-emitter-system", "gz::sim::systems::ParticleEmitter", {}),  # the drivetrain's wheel dust
+    # The drivetrain's wheel dust: idle unless the rover has emitters (gen_model.DriveParams.dust, off by default
+    # since the user's decision of 2026-10-07); kept so that switch alone brings the dust back.
+    ("gz-sim-particle-emitter-system", "gz::sim::systems::ParticleEmitter", {}),
 )
 CHUNK = 128.0  # [m] clutter is merged into one mesh per square this size and kind
 ROCK_BURY = 0.08  # rocks sink this fraction of their size below the ground under their base

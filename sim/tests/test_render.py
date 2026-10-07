@@ -1,6 +1,8 @@
 """Rendered pictures of the appearance assets (design spec section 11,
 "Rendering"): the patched media's sky, Terra roughness and haze, the far
-field, merged GLB clutter, and what the haze and dust leave alone (depth).
+field, merged GLB clutter, what the haze leaves alone (depth), and the
+record of the rover's opt-in dust (gen_model.DriveParams.dust, off by
+default since the user's decision of 2026-10-07): drawn, and seen by depth.
 
 Gazebo's ogre2 starts once per process, so every picture is taken in a
 subprocess of its own (this file run with --render) from a small world built
@@ -298,8 +300,9 @@ class Render(unittest.TestCase):
 
     @staticmethod
     def dust():
-        """The rover's own dust emitter (gen_model, its sprite from sim/models/rover) emitting at 400 /s, ten
-        times the drivetrain's most, 2 m in front of the camera."""
+        """The rover's own dust emitter (gen_model._add_dust_emitter, which the rover has only with
+        DriveParams.dust; its sprite from sim/models/rover) emitting at 400 /s, ten times the drivetrain's most,
+        2 m in front of the camera."""
         link = ET.Element("link", name="link")
         gen_model._add_dust_emitter(link, gen_model.Params(), "e")
         emitter = link.find("particle_emitter")
@@ -320,9 +323,10 @@ class Render(unittest.TestCase):
         self.assertGreater(np.abs(stock[self.RGBD[1]].astype(int) - patched[self.RGBD[1]].astype(int)).max(), 5)
 
     def test_dust_is_drawn(self):
-        """The rover's dust shows in the colour image as dust: pale tan, its
-        sprite's colour (terrains.DUST_RGB), not black (an emitter material
-        without a diffuse draws black smoke, measured)."""
+        """The rover's opt-in dust (DriveParams.dust, off by default) shows in
+        the colour image as dust: pale tan, its sprite's colour
+        (terrains.DUST_RGB), not black (an emitter material without a diffuse
+        draws black smoke, measured). Kept for when the switch comes back on."""
         plain, dusty = self.rgbd(), self.rgbd(self.dust())
         before, after = plain[self.RGBD[1]].astype(int), dusty[self.RGBD[1]].astype(int)
         changed = np.abs(after - before).max(axis=-1) > 8
@@ -341,8 +345,11 @@ class Render(unittest.TestCase):
         <particle_scatter_ratio> 1e-6, 0.1 and 1 changed 8,710, 8,640 and
         8,601 of 76,800 pixels, and so did ratios sent on the emitter's
         topic. Only a particle material without a diffuse stays out of the
-        depth image, and it renders black. Kept as an expected failure: it
-        starts passing when a ratio is honoured."""
+        depth image, and it renders black. Hence the user's decision of
+        2026-10-07: the rover has no dust by default (DriveParams.dust off,
+        test_gen_model.Dust), and Q11 is met by its absence. Kept as an
+        expected failure, the record for the opt-in switch: it starts passing
+        when a ratio is honoured, and then the dust can come back on."""
         plain, dusty = self.rgbd(), self.rgbd(self.dust())
         self.assertTrue(self.same_depth(plain[self.RGBD[0]], dusty[self.RGBD[0]]))
 

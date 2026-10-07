@@ -310,7 +310,7 @@ class SmallWorld(unittest.TestCase):
         world_sdf = ET.parse(self.world_path).getroot()
         self.assertEqual(world_sdf.findtext("world/physics/dart/solver/solver_type"), "pgs")
         names = [p.get("name") for p in world_sdf.iter("plugin")]
-        self.assertIn("gz::sim::systems::ParticleEmitter", names)  # the drivetrain's wheel dust
+        self.assertIn("gz::sim::systems::ParticleEmitter", names)  # wheel dust, with DriveParams.dust on
         for key, name in (("ground_map", "ground.png"), ("ground_legend", "ground.json")):
             path = self.world_path.parent / self.sheet["terrain"][key]
             self.assertEqual(path.resolve(), (self.dir / name).resolve())

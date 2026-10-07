@@ -14,7 +14,9 @@
 //   min(mu) per box direction, cannot turn a skid-steer rover in place, so no wheel contact is left to it.
 //   The rule reads a wheel's spin through the controller's 5 ms speed filter (OnContact says why).
 // - rolling resistance and bulldozing as hub forces, scaled by each wheel's dig-in state (D5, D21).
-// - the dust emitters behind the rear wheels get a rate from speed, slip and the ground (D15).
+// - the dust emitters behind the rear wheels, if the model has them (<dust>), get a rate from speed, slip and
+//   the ground (D15). gen_model.py writes them only with DriveParams.dust, off by default (user decision
+//   2026-10-07: depth and point clouds see any visible particle); without <dust> nothing is advertised or sent.
 // - no-slip odometry (gz::math::DiffDriveOdometry) and tf as DiffDrive publishes them, and the drivetrain's
 //   state as JSON (spec 9.3).
 //
@@ -267,6 +269,7 @@ class RoverDrivetrain : public gz::sim::System,
         ecm.CreateComponent(collision, gz::sim::components::EnableContactSurfaceCustomization(true));
       }
     }
+    // The emitters to drive, if any (none by default: DriveParams.dust); a wheel without one raises no dust.
     for (auto e = sdf->FindElement("dust"); e; e = e->GetNextElement("dust")) {
       const auto link = e->Get<std::string>("wheel", "").first;
       for (auto& w : wheels_) {
@@ -645,7 +648,8 @@ class RoverDrivetrain : public gz::sim::System,
     state_pub_.Publish(msg);
   }
 
-  /// Each rear emitter's rate (spec 6.5): emitting only while dust rises; an "off" goes out once.
+  /// Each rear emitter's rate (spec 6.5): emitting only while dust rises; an "off" goes out once. Wheels
+  /// without an emitter (every wheel, without <dust>) are skipped: no rate is computed or sent.
   void PublishDust() {
     for (auto& w : wheels_) {
       if (w.dust_topic.empty()) continue;

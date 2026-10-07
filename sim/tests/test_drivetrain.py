@@ -655,15 +655,21 @@ class Interfaces(unittest.TestCase):
                                        delta=0.04)
 
     def test_dust(self):
-        """The rear emitters get a rate from speed, slip and the ground's dust
-        factor (design spec 6.5): nothing while parked, emitting while driving,
-        more on sand than on rock, and one "off" when the rover stops."""
-        topic = gen_model.DUST_TOPIC.format(link="rocker_left", emitter="dust_rl")
+        """With DriveParams.dust on (off by default, the user's decision of
+        2026-10-07) the rear emitters get a rate from speed, slip and the
+        ground's dust factor (design spec 6.5): nothing while parked, emitting
+        while driving, more on sand than on rock, and one "off" when the rover
+        stops. With the switch off, the same drive on sand sends nothing to
+        either emitter's topic."""
+        topics = [gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{side[0]}")
+                  for side in ("left", "right")]
+        schedule = [(0.0, 0.0, 0.0), (1.0, 0.5, 0.0), (4.0, 0.0, 0.0)]
         rates = {}
         for key in ("sand", "rock"):
-            run = drive(6.0, [(0.0, 0.0, 0.0), (1.0, 0.5, 0.0), (4.0, 0.0, 0.0)], key, rover=(-4.0, 0.0, 0.0),
-                        subscribe=[(topic, ParticleEmitter)])
-            messages = run.state.messages[topic]
+            run = drive(6.0, schedule, key, params=physical(dig=False, dust=True), rover=(-4.0, 0.0, 0.0),
+                        subscribe=[(topic, ParticleEmitter) for topic in topics])
+            self.assertTrue(run.state.messages[topics[1]])  # the right emitter too
+            messages = run.state.messages[topics[0]]
             self.assertTrue(messages and messages[0].emitting.data)
             self.assertFalse(messages[-1].emitting.data)  # stopped
             self.assertEqual(sum(not m.emitting.data for m in messages), 1)
@@ -672,6 +678,11 @@ class Interfaces(unittest.TestCase):
         expected = GROUND["sand"][2] * (P.drive.dust_speed_gain * 0.4 + P.drive.dust_slip_gain * 0.1)
         self.assertAlmostEqual(rates["sand"], expected, delta=0.25 * expected)  # 0.5 m/s at 20 % slip
         self.assertGreater(rates["sand"], 3 * rates["rock"])
+        self.assertFalse(physical().drive.dust)
+        off = drive(6.0, schedule, "sand", params=physical(dig=False), rover=(-4.0, 0.0, 0.0),
+                    subscribe=[(topic, ParticleEmitter) for topic in topics])
+        self.assertGreater(off.state.trace[-1, 1], -3.5)  # it drove (from x = -4)
+        self.assertEqual({topic: off.state.messages[topic] for topic in topics}, {topic: [] for topic in topics})
 
     def test_reset(self):
         """A world reset (ISystemReset) clears the drivetrain: the last command

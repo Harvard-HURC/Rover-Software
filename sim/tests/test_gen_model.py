@@ -17,6 +17,8 @@ from urc import sdf, terrains  # noqa: E402
 
 P = gen_model.Params()
 DIFFDRIVE = dataclasses.replace(P, drive=gen_model.DriveParams(mode="diffdrive"))
+DUST = dataclasses.replace(P, drive=dataclasses.replace(P.drive, dust=True))  # the opt-in dust (DriveParams.dust)
+DUST_PLUGIN_TAGS = ("dust_rate", "dust", "dust_rule")  # the drivetrain's dust elements
 
 
 class Inertia(unittest.TestCase):
@@ -118,33 +120,6 @@ class Structure(unittest.TestCase):
         self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
         self.assertIsNone(camera.find("noise"))
 
-    def test_dust_emitters(self):
-        """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
-        until the drivetrain says so, an explicit topic; a white diffuse (without
-        one the particles render black) and no colour range or scatter ratio,
-        which gz-rendering 8 does not apply: the sprite carries the dust's
-        colour and opacity (DriveParams.dust_alpha)."""
-        for side, s in (("left", "l"), ("right", "r")):
-            emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
-            self.assertEqual(emitter.findtext("emitting"), "false")
-            for dead in ("particle_scatter_ratio", "color_start", "color_end", "color_range_image"):
-                self.assertIsNone(emitter.find(dead), dead)
-            self.assertEqual(vec(emitter.findtext("material/diffuse")), [1.0, 1.0, 1.0, 1.0])
-            topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
-            self.assertEqual(emitter.findtext("topic"), topic)
-            x, _, z = vec(emitter.findtext("pose"))[:3]
-            self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
-            self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), P.drive.dust_box / 2)  # on the ground
-            sprite = emitter.findtext("material/pbr/metal/albedo_map")  # the soft puff, tracked with the model
-            self.assertEqual(sprite, f"model://rover/{gen_model.DUST_SPRITE}")
-            self.assertTrue((MODELS / "rover" / gen_model.DUST_SPRITE).is_file())
-        with tempfile.TemporaryDirectory() as tmp:
-            gen_model.write_dust_sprite(Path(tmp) / "puff.png")
-            written = np.asarray(Image.open(Path(tmp) / "puff.png"))
-        np.testing.assert_array_equal(np.asarray(Image.open(MODELS / "rover" / gen_model.DUST_SPRITE)), written)
-        self.assertAlmostEqual(written[..., 3].max() / 255, 0.72 * P.drive.dust_alpha, delta=0.02)
-        np.testing.assert_array_equal(written[64, 64, :3], np.round(np.array(terrains.DUST_RGB) * 255))
-
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:
             result = gz_check(path)
@@ -154,9 +129,11 @@ class Structure(unittest.TestCase):
 
 class TrackedModel(unittest.TestCase):
     def test_the_default_rover_is_physical_and_tracked(self):
-        """The default rover (DriveParams.mode "physical", design spec D22) is
-        the tracked models/rover/model.sdf, byte for byte."""
+        """The default rover (DriveParams.mode "physical", design spec D22;
+        no dust, the user's decision of 2026-10-07) is the tracked
+        models/rover/model.sdf, byte for byte."""
         self.assertEqual(P.drive.mode, "physical")
+        self.assertFalse(P.drive.dust)
         self.assertEqual(gen_model.build_sdf(P), (MODELS / "rover" / "model.sdf").read_text())
 
     def test_unknown_modes_are_refused(self):
@@ -193,13 +170,20 @@ class DiffDriveVariant(unittest.TestCase):
                 self.assertEqual(float(joint.findtext("axis/limit/effort")), P.wheel_effort)
 
     def test_only_the_drive_differs(self):
-        """Camera, dust emitters, sensors and links are the default rover's."""
+        """Camera, sensors and links are the default rover's, and so are the
+        dust emitters: none by default, the same two with DriveParams.dust."""
         default = ET.fromstring(gen_model.build_sdf(P)).find("model")
-        for path in ("link[@name='camera_tilt_link']/sensor", "link[@name='rocker_left']/particle_emitter",
-                     "link[@name='base_link']/sensor[@name='gnss']"):
+        for path in ("link[@name='camera_tilt_link']/sensor", "link[@name='base_link']/sensor[@name='gnss']"):
             self.assertEqual(ET.tostring(self.model.find(path)), ET.tostring(default.find(path)), path)
         self.assertEqual([link.get("name") for link in self.model.findall("link")],
                          [link.get("name") for link in default.findall("link")])
+        def emitters(params):
+            return [ET.tostring(e) for e in ET.fromstring(gen_model.build_sdf(params)).iter("particle_emitter")]
+
+        self.assertEqual(emitters(DIFFDRIVE), [])
+        dusty = emitters(dataclasses.replace(DIFFDRIVE, drive=dataclasses.replace(DIFFDRIVE.drive, dust=True)))
+        self.assertEqual(len(dusty), 2)
+        self.assertEqual(dusty, emitters(DUST))
 
 
 class PhysicalVariant(unittest.TestCase):
@@ -226,8 +210,7 @@ class PhysicalVariant(unittest.TestCase):
                    "motor/gear": 50.0, "motor/efficiency": 0.8, "motor/current_limit": 20.0, "motor/voltage": 48.0,
                    "driveline/backlash": d.backlash, "controller/kp": 4.0, "controller/ki": 160.0,
                    "controller/accel": d.accel, "controller/max_speed": P.wheel_speed,
-                   "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0,
-                   "dust_rule/max_rate": d.dust_max}
+                   "contact/v_stribeck": d.v_stribeck, "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0}
         for tag, value in numbers.items():
             self.assertAlmostEqual(float(self.plugin.findtext(tag)), value, msg=tag)
         self.assertEqual(self.plugin.findtext("contact/dig"), "true")
@@ -283,12 +266,101 @@ class PhysicalVariant(unittest.TestCase):
             self.assertIsNone(ode.find("fdir1"))
         self.assertEqual(len(list(self.model.iter("ode"))), 4)
 
+    def test_gz_accepts_it(self):
+        with temp_sdf(self.sdf) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Valid", result.stdout)
+
+
+class Dust(unittest.TestCase):
+    """DriveParams.dust, the one switch for the rover's wheel dust (design
+    spec 6.5, D15). Off by default (the user's decision of 2026-10-07): in
+    gz-rendering 8.2.2 the depth image and point cloud see any visible
+    particle (tests/test_render.py), so Q11 (depth does not see dust) is met
+    by having no dust. On: the emitters and the drivetrain's dust elements as
+    they were, for when gz-rendering honours a scatter ratio."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.default = ET.fromstring(gen_model.build_sdf(P)).find("model")
+        cls.tracked = ET.parse(MODELS / "rover" / "model.sdf").getroot().find("model")
+        cls.sdf = gen_model.build_sdf(DUST)
+        cls.model = ET.fromstring(cls.sdf).find("model")
+        cls.plugin = cls.model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+
+    def test_off_by_default(self):
+        """The default rover, generated and tracked (model://rover), has no
+        particle emitter in either drive mode, so no camera, depth image or
+        point cloud can see dust; its drivetrain drives none (no dust
+        elements), while the same rover with the switch on has both."""
+        self.assertFalse(P.drive.dust)
+        diffdrive = ET.fromstring(gen_model.build_sdf(DIFFDRIVE)).find("model")
+        for name, model in (("generated", self.default), ("tracked", self.tracked), ("diffdrive", diffdrive)):
+            self.assertEqual(list(model.iter("particle_emitter")), [], name)
+        for name, model in (("generated", self.default), ("tracked", self.tracked)):
+            plugin = model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+            self.assertIsNotNone(plugin, name)
+            for tag in DUST_PLUGIN_TAGS:
+                self.assertEqual(plugin.findall(tag), [], (name, tag))
+        self.assertEqual(len(list(self.model.iter("particle_emitter"))), 2)
+        for tag in DUST_PLUGIN_TAGS:
+            self.assertTrue(self.plugin.findall(tag), tag)
+
+    def test_switch_adds_only_the_dust(self):
+        """With the switch on the model is the default one plus the two
+        emitters and the drivetrain's dust elements, nothing else."""
+        model = ET.fromstring(self.sdf).find("model")  # a copy to strip
+        plugin = model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+        dust = [(link, e) for link in model.findall("link") for e in link.findall("particle_emitter")]
+        dust += [(plugin, e) for tag in DUST_PLUGIN_TAGS for e in plugin.findall(tag)]
+        self.assertEqual(len(dust), 2 + 1 + 2 + 1)  # emitters, dust_rate, <dust> per rear wheel, <dust_rule>
+        for parent, element in dust:
+            parent.remove(element)
+        canonical = lambda e: ET.canonicalize(ET.tostring(e), strip_text=True)  # noqa: E731  (no indentation)
+        self.assertEqual(canonical(model), canonical(self.default))
+
+    def test_dust_emitters(self):
+        """Behind each rear wheel, on its rocker (a wheel link spins): not emitting
+        until the drivetrain says so, an explicit topic; a white diffuse (without
+        one the particles render black) and no colour range or scatter ratio,
+        which gz-rendering 8 does not apply: the sprite carries the dust's
+        colour and opacity (DriveParams.dust_alpha). The sprite is written with
+        the model whether or not the switch is on."""
+        for side, s in (("left", "l"), ("right", "r")):
+            emitter = self.model.find(f"link[@name='rocker_{side}']/particle_emitter[@name='dust_r{s}']")
+            self.assertEqual(emitter.findtext("emitting"), "false")
+            for dead in ("particle_scatter_ratio", "color_start", "color_end", "color_range_image"):
+                self.assertIsNone(emitter.find(dead), dead)
+            self.assertEqual(vec(emitter.findtext("material/diffuse")), [1.0, 1.0, 1.0, 1.0])
+            topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
+            self.assertEqual(emitter.findtext("topic"), topic)
+            x, _, z = vec(emitter.findtext("pose"))[:3]
+            self.assertLess(x, -(P.wheel_dx + P.wheel_radius))  # behind the rear tyre
+            self.assertAlmostEqual(z - (P.wheel_dz - P.wheel_radius), P.drive.dust_box / 2)  # on the ground
+            sprite = emitter.findtext("material/pbr/metal/albedo_map")  # the soft puff, tracked with the model
+            self.assertEqual(sprite, f"model://rover/{gen_model.DUST_SPRITE}")
+            self.assertTrue((MODELS / "rover" / gen_model.DUST_SPRITE).is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            gen_model.write_dust_sprite(Path(tmp) / "puff.png")
+            written = np.asarray(Image.open(Path(tmp) / "puff.png"))
+        np.testing.assert_array_equal(np.asarray(Image.open(MODELS / "rover" / gen_model.DUST_SPRITE)), written)
+        self.assertAlmostEqual(written[..., 3].max() / 255, 0.72 * P.drive.dust_alpha, delta=0.02)
+        np.testing.assert_array_equal(written[64, 64, :3], np.round(np.array(terrains.DUST_RGB) * 255))
+
     def test_drivetrain_drives_the_dust(self):
-        """The drivetrain commands the rear emitters on their topics."""
+        """The drivetrain commands the rear emitters on their topics, at
+        dust_rate, by the dust rule (DriveParams' gains)."""
+        d = DUST.drive
         for side, s in (("left", "l"), ("right", "r")):
             topic = gen_model.DUST_TOPIC.format(link=f"rocker_{side}", emitter=f"dust_r{s}")
-            self.assertIn((f"wheel_r{s}", topic), [(d.findtext("wheel"), d.findtext("topic"))
-                                                   for d in self.plugin.findall("dust")])
+            self.assertIn((f"wheel_r{s}", topic), [(e.findtext("wheel"), e.findtext("topic"))
+                                                   for e in self.plugin.findall("dust")])
+        numbers = {"dust_rate": d.dust_rate, "dust_rule/speed_gain": d.dust_speed_gain,
+                   "dust_rule/slip_gain": d.dust_slip_gain, "dust_rule/max_rate": d.dust_max,
+                   "dust_rule/min_speed": d.dust_min_speed}
+        for tag, value in numbers.items():
+            self.assertAlmostEqual(float(self.plugin.findtext(tag)), value, msg=tag)
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:

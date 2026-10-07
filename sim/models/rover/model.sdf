@@ -391,26 +391,6 @@
           <diffuse>0.35 0.35 0.38 1</diffuse>
         </material>
       </visual>
-      <particle_emitter name="dust_rl" type="box">
-        <pose>-0.6625 0 -0.225 0 -0.6 3.14159265</pose>
-        <emitting>false</emitting>
-        <size>0.25 0.25 0.25</size>
-        <particle_size>0.2 0.2 0.2</particle_size>
-        <lifetime>1.6</lifetime>
-        <rate>0</rate>
-        <min_velocity>0.15</min_velocity>
-        <max_velocity>0.5</max_velocity>
-        <scale_rate>1</scale_rate>
-        <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
-        <material>
-          <diffuse>1 1 1 1</diffuse>
-          <pbr>
-            <metal>
-              <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>
-            </metal>
-          </pbr>
-        </material>
-      </particle_emitter>
     </link>
     <joint name="rocker_left_joint" type="revolute">
       <parent>base_link</parent>
@@ -596,26 +576,6 @@
           <diffuse>0.35 0.35 0.38 1</diffuse>
         </material>
       </visual>
-      <particle_emitter name="dust_rr" type="box">
-        <pose>-0.6625 0 -0.225 0 -0.6 3.14159265</pose>
-        <emitting>false</emitting>
-        <size>0.25 0.25 0.25</size>
-        <particle_size>0.2 0.2 0.2</particle_size>
-        <lifetime>1.6</lifetime>
-        <rate>0</rate>
-        <min_velocity>0.15</min_velocity>
-        <max_velocity>0.5</max_velocity>
-        <scale_rate>1</scale_rate>
-        <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
-        <material>
-          <diffuse>1 1 1 1</diffuse>
-          <pbr>
-            <metal>
-              <albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map>
-            </metal>
-          </pbr>
-        </material>
-      </particle_emitter>
     </link>
     <joint name="rocker_right_joint" type="revolute">
       <parent>base_link</parent>
@@ -764,7 +724,6 @@
       <odom_publish_frequency>50</odom_publish_frequency>
       <state_topic>/model/rover/drivetrain</state_topic>
       <state_rate>50</state_rate>
-      <dust_rate>10</dust_rate>
       <track>0.8</track>
       <radius>0.15</radius>
       <track_multiplier>1</track_multiplier>
@@ -792,14 +751,6 @@
         <link>wheel_rr</link>
         <side>right</side>
       </wheel>
-      <dust>
-        <wheel>wheel_rl</wheel>
-        <topic>/model/rover/link/rocker_left/particle_emitter/dust_rl/cmd</topic>
-      </dust>
-      <dust>
-        <wheel>wheel_rr</wheel>
-        <topic>/model/rover/link/rocker_right/particle_emitter/dust_rr/cmd</topic>
-      </dust>
       <motor>
         <voltage>48</voltage>
         <resistance>0.46</resistance>
@@ -862,12 +813,6 @@
           <dust>0</dust>
         </surface>
       </contact>
-      <dust_rule>
-        <speed_gain>8</speed_gain>
-        <slip_gain>25</slip_gain>
-        <max_rate>40</max_rate>
-        <min_speed>0.05</min_speed>
-      </dust_rule>
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/model/rover/joint_states</topic>
