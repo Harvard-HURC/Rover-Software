@@ -57,7 +57,8 @@ FLATNESS.
 
 A tile's mu is a tuning knob standing in for the whole traction (a rover
 holds or climbs a slope up to about atan(mu)): today's zone types keep
-theirs, and a type added since has the net traction mu_k - crr. The tyres
+theirs, and a type added since has its net traction mu_k - crr (bare rock
+and objects 1.0, like slickrock). The tyres
 have mu 1.0 along the tread and 0.5 across it (gen_model.Params), so a zone
 mu above 1.0 changes nothing, and one above 0.5 only the grip along the
 tread.
