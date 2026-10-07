@@ -1,0 +1,42 @@
+{
+ "what": "Unthrottled sim speed (sim seconds per wall second) and gz-server CPU (ps %cpu, median) over 15 s, urc_equipment_servicing copy, one 960x540 20 Hz camera watched by a subscriber unless noted. Machine had other load (load average 7-8), so compare within a batch. Scripts: prototype/exp4_cpu.py, prototype/exp7_unsub.py. Measured 2026-10-06.",
+ "batch_1": [
+  {"config": "static camera, no plugin", "sim_per_wall": 1.32, "cpu_pct": 124.6},
+  {"config": "plugin idle, SetWorldPoseCmd every step, PreRender hook connected", "sim_per_wall": 0.739, "cpu_pct": 203.2},
+  {"config": "plugin flying 4 m/s, PreRender hook connected", "sim_per_wall": 0.851, "cpu_pct": 220.2}
+ ],
+ "batch_2": [
+  {"config": "dynamic camera body, no plugin", "sim_per_wall": 1.272, "cpu_pct": 124.1},
+  {"config": "plugin idle, pose set once (only_on_change), PreRender hook", "sim_per_wall": 0.705, "cpu_pct": 204.6},
+  {"config": "plugin flying, only_on_change, PreRender hook", "sim_per_wall": 0.748, "cpu_pct": 208.3},
+  {"config": "static model, pose written to components::Pose, PreRender hook, idle", "sim_per_wall": 0.84, "cpu_pct": 214.7},
+  {"config": "same, flying", "sim_per_wall": 0.714, "cpu_pct": 197.1}
+ ],
+ "batch_3": [
+  {"config": "plugin idle, SetWorldPoseCmd every step, NO render hook", "sim_per_wall": 1.041, "cpu_pct": 123.2},
+  {"config": "plugin flying, NO render hook", "sim_per_wall": 0.901, "cpu_pct": 119.0},
+  {"config": "plugin idle, PreRender hook", "sim_per_wall": 0.507, "cpu_pct": 187.6},
+  {"config": "static camera, no plugin", "sim_per_wall": 1.012, "cpu_pct": 126.2}
+ ],
+ "batch_4_hook_event": [
+  {"config": "static camera, no plugin", "sim_per_wall": 1.041, "cpu_pct": 122.6},
+  {"config": "plugin idle, no hook", "sim_per_wall": 1.179, "cpu_pct": 122.0},
+  {"config": "plugin idle, hook on events::PreRender", "sim_per_wall": 0.648, "cpu_pct": 200.0},
+  {"config": "plugin idle, hook on events::SceneUpdate", "sim_per_wall": 1.043, "cpu_pct": 117.9},
+  {"config": "plugin idle, hook on events::PostRender", "sim_per_wall": 0.73, "cpu_pct": 214.4},
+  {"config": "plugin idle, hook on events::Render", "sim_per_wall": 0.712, "cpu_pct": 210.1}
+ ],
+ "unwatched_camera_1280x720_20hz": {
+  "no extra camera": [1.441, 1.411, 1.371, 1.395],
+  "camera, nobody subscribed": [1.39, 1.229, 1.393, 1.392],
+  "camera, subscribed": [1.348, 1.221, 1.325, 1.38]
+ },
+ "python_blocking_service_request": {
+  "what": "node.request('/world/<w>/set_pose', ..., timeout) from Python (gz.transport13), prototype/exp3b_service.py, exp3c_gil.py, exp3d_gil.py",
+  "no subscriptions": "first call 102-105 ms (discovery), then 0.2-1.0 ms, ok=True",
+  "with a /world/<w>/pose/info subscriber": "102 ms then 1 ms, ok=True",
+  "with a /world/<w>/clock subscriber (Python callback per message)": "every call returns only at the timeout (1002-1032 ms with timeout 1000), although the server applies the pose",
+  "with an image subscriber (960x540 RGB at 20 Hz copied to numpy) + stats": "every call 1003-1010 ms (timeout 1000)"
+ },
+ "shutdown_crash": "holding the rendering CameraPtr (or even a weak_ptr) in the system crashes gz-sim at shutdown (backtrace in ~FlyCamProto): the control block lives in the ogre2 plugin, unloaded first. Looking the camera up by name inside the hook and keeping no member pointer: no crash (exp8)."
+}

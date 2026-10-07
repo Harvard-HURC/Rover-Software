@@ -1,0 +1,101 @@
+{
+  "source": "USGS 3DEP Original Product Resolution (OPR) DEM, project UT_StateWide_2018_A18 / UT_Southern_QL1_2018 (lidar flown 2018-04-27; QL1: >= 8 pulses/m2, RMSEz <= 10 cm; tiles 0.5 m, NAD83(2011) UTM 12N + NAVD88 GEOID12B)",
+  "license": "public domain (USGS)",
+  "fetched": "2026-10-06",
+  "found_via": "https://tnmaccess.nationalmap.gov/api/v1/products?datasets=Original Product Resolution (OPR) Digital Elevation Model (DEM)&bbox=-110.81,38.39,-110.764,38.432",
+  "source_tiles": [
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1648.tif",
+      "size_bytes": 28429086,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1650.tif",
+      "size_bytes": 26010499,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1652.tif",
+      "size_bytes": 313146,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1752.tif",
+      "size_bytes": 1347935,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1848.tif",
+      "size_bytes": 31081331,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1850.tif",
+      "size_bytes": 32255622,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1852.tif",
+      "size_bytes": 2522713,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1952.tif",
+      "size_bytes": 3649743,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2048.tif",
+      "size_bytes": 30729327,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2050.tif",
+      "size_bytes": 33575511,
+      "published": "2019-06-03"
+    },
+    {
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2052.tif",
+      "size_bytes": 4770879,
+      "published": "2019-06-03"
+    }
+  ],
+  "processing": "gdalbuildvrt of the 2018 tiles; gdalwarp bilinear to EPSG:4326 on a 0.5 m x 0.5 m grid whose columns continue the 3DEP lattice (dlon = half the 3DEP pixel); cropped north to 38.41633, where the 2018 survey stops being complete; horizontal datum shift below",
+  "datum_shift_applied": {
+    "east_m": -0.8925,
+    "north_m": 0.6175,
+    "dlon_deg": -1.0217844443536192e-05,
+    "dlat_deg": 5.562856084724055e-06,
+    "why": "PROJ's default EPSG:6341 (NAD83(2011) UTM 12N) -> EPSG:4326 is a null datum transformation; the 3DEP and NAIP ImageServers apply a real NAD83(2011)->WGS84 shift. Measured by phase correlation of hillshades against mdrs_area_3dep.tif in 4 windows (spread 0.03 m E, 0.05 m N) and applied so this file lines up with route_area_3dep.tif / mdrs_area_3dep.tif / *_naip2024.tif. Residual after the shift: <= 0.16 m in 10 test windows. For comparison PROJ's time-dependent 'ITRF2014 to NAD83(2011)' gives -1.30 m E, +0.46 m N at epoch 2018.3."
+  },
+  "bounds": {
+    "south": 38.38999382716049,
+    "west": -110.8100044091711,
+    "north": 38.416334263340396,
+    "east": -110.76999559082894
+  },
+  "pixels": [
+    6980,
+    5840
+  ],
+  "dlon_deg": 5.731922398590078e-06,
+  "dlat_deg": 4.510348660943074e-06,
+  "resolution_m": {
+    "east": 0.5007,
+    "north": 0.5007
+  },
+  "crs": "EPSG:4326, PixelIsArea (non-square in degrees, square in metres; urc.dem.read_geotiff reads it)",
+  "vertical": "NAVD88 metres (GEOID12B)",
+  "elevation_range_m": [
+    1347.2703857421875,
+    1436.0068359375
+  ],
+  "size_bytes": 58431428,
+  "covers_worlds": [
+    "urc_astrobiology",
+    "urc_delivery",
+    "urc_equipment_servicing",
+    "proving_ground"
+  ],
+  "check": "minus mdrs_area_3dep.tif at 50k random points: mean +0.001 m, std 0.051 m, p1/p99 -0.12/+0.12 m (the 1 m 3DEP surface is this survey, smoothed)"
+}

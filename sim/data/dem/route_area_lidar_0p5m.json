@@ -1,0 +1,84 @@
+{
+  "source": "USGS 3DEP lidar: south of ~38.4163 N the 2018 UT_Southern_QL1 OPR 0.5 m DEM (as mdrs_area_lidar2018_0p5m.json); north of it a 0.5 m grid of class-2 ground returns from the 2020 UT_StatewideSouth_2020_A20 point clouds (flown 2020-07-25..29, Leica TerrainMapper, 9.4-9.6 ground returns/m2 measured)",
+  "license": "public domain (USGS)",
+  "fetched": "2026-10-06",
+  "source_tiles_2018_opr": [
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1648.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1650.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1652.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1752.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1848.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1850.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1852.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1952.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2048.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2050.tif",
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2052.tif"
+  ],
+  "source_tiles_2020_lpc": [
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1852.laz",
+      "size_bytes": 46617883
+    },
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1853.laz",
+      "size_bytes": 61371872
+    },
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1952.laz",
+      "size_bytes": 37346057
+    },
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1953.laz",
+      "size_bytes": 60917504
+    },
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH2052.laz",
+      "size_bytes": 27455881
+    },
+    {
+      "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/UT_StatewideSouth_3_2020/LAZ/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH2053.laz",
+      "size_bytes": 60968957
+    }
+  ],
+  "processing": "2020: mean of ground returns per 0.5 m UTM cell (2.35 returns per cell on average, 6 % empty cells filled by normalized Gaussian interpolation, sigma 0.35-0.75 m); 2018 and 2020 feathered by distance to each survey's edge (they differ by +1.0 cm median, 2.8 cm std on flat ground); gdalwarp bilinear to EPSG:4326 0.5 m grid on the route_area_3dep.tif column lattice; horizontal datum shift below",
+  "source_map": "route_area_lidar_0p5m_source.tif (uint8, same grid): 1 = 2018 OPR, 2 = 2020 lidar, 3 = blend, 4 = 3DEP 1 m fill (none inside these bounds)",
+  "source_fractions": {
+    "2018": 0.551,
+    "2020": 0.415,
+    "blend": 0.033,
+    "3dep_fill": 0.0
+  },
+  "datum_shift_applied": {
+    "east_m": -0.8925,
+    "north_m": 0.6175,
+    "dlon_deg": -1.0217844443536192e-05,
+    "dlat_deg": 5.562856084724055e-06,
+    "why": "PROJ's default EPSG:6341 (NAD83(2011) UTM 12N) -> EPSG:4326 is a null datum transformation; the 3DEP and NAIP ImageServers apply a real NAD83(2011)->WGS84 shift. Measured by phase correlation of hillshades against mdrs_area_3dep.tif in 4 windows (spread 0.03 m E, 0.05 m N) and applied so this file lines up with route_area_3dep.tif / mdrs_area_3dep.tif / *_naip2024.tif. Residual after the shift: <= 0.16 m in 10 test windows. For comparison PROJ's time-dependent 'ITRF2014 to NAD83(2011)' gives -1.30 m E, +0.46 m N at epoch 2018.3."
+  },
+  "bounds": {
+    "south": 38.40400162035889,
+    "west": -110.79,
+    "north": 38.43199735449736,
+    "east": -110.76400000000001
+  },
+  "pixels": [
+    4536,
+    6207
+  ],
+  "dlon_deg": 5.731922398588238e-06,
+  "dlat_deg": 4.5103486609427355e-06,
+  "resolution_m": {
+    "east": 0.5007,
+    "north": 0.5007
+  },
+  "crs": "EPSG:4326, PixelIsArea",
+  "vertical": "NAVD88 metres (GEOID12B)",
+  "elevation_range_m": [
+    1341.6153564453125,
+    1430.9229736328125
+  ],
+  "size_bytes": 41457287,
+  "same_area_as": "route_area_3dep.tif",
+  "check": "minus route_area_3dep.tif at 50k random points: mean -0.001 m, std 0.057 m, p1/p99 -0.125/+0.124 m; residual horizontal offset <= 0.16 m"
+}

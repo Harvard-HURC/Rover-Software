@@ -1,0 +1,24 @@
+{
+ "source": "USDA NAIP 2021 mosaic via USGS National Map USGSNAIPPlus ImageServer exportImage at overview resolution (RGB bands 0,1,2)",
+ "license": "public domain (USDA/USGS)",
+ "fetched": "2026-10-06",
+ "url": "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer/exportImage?bbox=-111.15,37.98,-110.4,38.7&bboxSR=4326&imageSR=4326&size=2500,2400&bandIds=0,1,2&format=tiff&pixelType=U8&interpolation=RSP_BilinearInterpolation&f=image",
+ "bounds": {
+  "west": -111.15,
+  "east": -110.4,
+  "south": 37.98,
+  "north": 38.7
+ },
+ "pixels": [
+  2500,
+  2400
+ ],
+ "pixel_deg": 0.0003,
+ "pixel_m": {
+  "east": 26.2,
+  "north": 33.3
+ },
+ "crs": "EPSG:4326 PixelIsArea, row 0 north",
+ "use": "albedo of the far-field ring mesh (prototype/far.py); same bounds as ../research/render/data/far_dem_3dep_60km.tif",
+ "size_bytes": 18681182
+}

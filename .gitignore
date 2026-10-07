@@ -1,0 +1,29 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# driver build output
+driver/build/
+
+# sim plugin build output
+sim/build/
+
+# Python bytecode caches
+__pycache__/
+
+# generated URC mission worlds, test courses and their models (pixi run sim-worlds; deterministic)
+sim/models/urc_*/
+sim/worlds/urc_*
+sim/worlds/proving_ground.*
+
+# OS / IDE
+.DS_Store
+.idea/
+
+# Large source rasters (re-fetchable from their .json provenance; worktrees link them with sim/tools/link_data.sh)
+sim/data/**/*.tif
+sim/data/research/render/prototype/textures/
+sim/data/research/drive/prototype/cpp/build/
+
+# build output of the drivetrain/fly-camera prototypes and tests
+sim/plugins/tests/build/

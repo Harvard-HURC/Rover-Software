@@ -1,0 +1,40 @@
+{
+  "source": "USGS 3D Elevation Program (3DEP), 3DEPElevation ImageServer exportImage (same method as route_area_3dep.tif)",
+  "license": "public domain (USGS)",
+  "fetched": "2026-10-06",
+  "urls": [
+    "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage?bbox=-110.81000440917109,38.38999382716049,-110.79,38.419994708994714&bboxSR=4326&imageSR=4326&size=1745,2617&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_BilinearInterpolation&f=image",
+    "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage?bbox=-110.79,38.38999382716049,-110.76999559082893,38.419994708994714&bboxSR=4326&imageSR=4326&size=1745,2617&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_BilinearInterpolation&f=image"
+  ],
+  "note": "fetched as two 1745 x 2617 halves (one 3490 x 2617 request returned HTTP 500) and joined losslessly; the pixel lattice continues route_area_3dep.tif's exactly (same pixel_deg, origin offset by whole pixels), so the two agree to 3e-9 m where they overlap",
+  "bbox_requested": [
+    -110.81,
+    38.39,
+    -110.77,
+    38.42
+  ],
+  "bounds": {
+    "south": 38.389993827160495,
+    "west": -110.8100044091711,
+    "north": 38.419994708994714,
+    "east": -110.76999559082894
+  },
+  "pixels": [
+    3490,
+    2617
+  ],
+  "pixel_deg": 1.1463844797180156e-05,
+  "resolution_m": {
+    "east": 1.001,
+    "north": 1.273
+  },
+  "crs": "EPSG:4326, PixelIsArea",
+  "vertical": "NAVD88 metres",
+  "elevation_range_m": [
+    1347.296630859375,
+    1435.822265625
+  ],
+  "size_bytes": 15024991,
+  "compression": "deflate + floating-point predictor (lossless)",
+  "underlying_lidar": "in this box the 3DEP 1 m surface matches the 2018 UT Southern QL1 lidar to 5 cm RMS (see mdrs_area_lidar2018_0p5m.json)"
+}

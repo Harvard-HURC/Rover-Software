@@ -1,0 +1,9 @@
+{
+ "world": "urc_autonomy",
+ "look_tau": 0.0,
+ "ground": {
+  "max_abs_err_m": 5.9651114916903225e-05,
+  "max_abs_err_if_flipped_m": 19.431261208004436,
+  "z_range_m": 85.8873
+ }
+}

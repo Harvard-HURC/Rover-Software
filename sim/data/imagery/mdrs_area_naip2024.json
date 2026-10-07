@@ -1,0 +1,45 @@
+{
+  "source": "USDA FSA NAIP 2024, quarter-quad m_3811034_se_12_060_20240706 (acquired 2024-07-06; 0.6 m GSD; 4 bands R, G, B, NIR; native NAD83 UTM 12N), via the USDA FPAC conus_naip ImageServer exportImage, mosaicRule lockRaster 195156",
+  "service": "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer",
+  "listed_at": "https://gis.utah.gov/data/aerial-photography/naip/",
+  "license": "public domain (USDA FSA NAIP)",
+  "fetched": "2026-10-06",
+  "requests": [
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.81000440917109%2C38.40853086419753%2C-110.79854056437391%2C38.419994708994714&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.79854056437391%2C38.40853086419753%2C-110.78707671957673%2C38.419994708994714&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.78707671957673%2C38.40853086419753%2C-110.77561287477955%2C38.419994708994714&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.77561287477954%2C38.40853086419753%2C-110.76999559082893%2C38.419994708994714&bboxSR=4326&imageSR=4326&size=980%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.81000440917109%2C38.397067019400346%2C-110.79854056437391%2C38.40853086419753&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.79854056437391%2C38.397067019400346%2C-110.78707671957673%2C38.40853086419753&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.78707671957673%2C38.397067019400346%2C-110.77561287477955%2C38.40853086419753&bboxSR=4326&imageSR=4326&size=2000%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.77561287477954%2C38.397067019400346%2C-110.76999559082893%2C38.40853086419753&bboxSR=4326&imageSR=4326&size=980%2C2000&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.81000440917109%2C38.38999382716048%2C-110.79854056437391%2C38.397067019400346&bboxSR=4326&imageSR=4326&size=2000%2C1234&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.79854056437391%2C38.38999382716048%2C-110.78707671957673%2C38.397067019400346&bboxSR=4326&imageSR=4326&size=2000%2C1234&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.78707671957673%2C38.38999382716048%2C-110.77561287477955%2C38.397067019400346&bboxSR=4326&imageSR=4326&size=2000%2C1234&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image",
+    "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer/exportImage?bbox=-110.77561287477954%2C38.38999382716048%2C-110.76999559082893%2C38.397067019400346&bboxSR=4326&imageSR=4326&size=980%2C1234&format=tiff&pixelType=U8&mosaicRule=%7B%22mosaicMethod%22%3A+%22esriMosaicLockRaster%22%2C+%22lockRasterIds%22%3A+%5B195156%5D%7D&interpolation=RSP_BilinearInterpolation&noDataInterpretation=esriNoDataMatchAny&f=image"
+  ],
+  "tiles": "2000 x 2000 px requests (larger ones return HTTP 500), mosaicked losslessly with gdalbuildvrt/gdal_translate",
+  "bounds": {
+    "west": -110.81000440917109,
+    "north": 38.419994708994714,
+    "east": -110.76999559082891,
+    "south": 38.38999382716049
+  },
+  "pixels": [
+    6980,
+    5234
+  ],
+  "pixel_deg": 5.731922398591371e-06,
+  "pixel_m": {
+    "east": 0.501,
+    "north": 0.636
+  },
+  "lattice": "pixel = half of route_area_3dep.tif's pixel, origin on the same lattice: each 3DEP pixel is exactly 2 x 2 image pixels; same bounds as ../dem/mdrs_area_3dep.tif",
+  "crs": "EPSG:4326, PixelIsArea, row 0 north",
+  "bands": "1 R, 2 G, 3 B, 4 NIR (uint8). cv2.imread(path, cv2.IMREAD_UNCHANGED) gives B, G, R, NIR; PIL gives RGB only",
+  "resampling": "server bilinear from native 0.6 m UTM (one resampling)",
+  "size_bytes": 60386308,
+  "compression": "deflate + horizontal predictor (lossless)",
+  "geolocation": "NAIP spec: within 4 m of true ground at 95 % (https://en.wikipedia.org/wiki/National_Agriculture_Imagery_Program). Measured against the lidar DEMs: 0.3-0.6 m from the 3DEP/lidar files here (phase correlation of brightness vs hillshade, 4 windows)",
+  "radiometry": "NAIP digital numbers are colour-balanced per tile, not reflectance; mean (R, G, B, NIR) over this box is given in ../research/colour_stats.json"
+}

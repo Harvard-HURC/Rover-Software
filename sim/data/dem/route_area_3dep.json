@@ -1,0 +1,30 @@
+{
+  "source": "USGS 3D Elevation Program (3DEP), 3DEPElevation ImageServer exportImage",
+  "license": "public domain (USGS)",
+  "fetched": "2026-10-06",
+  "url": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage?bbox=-110.790,38.407,-110.764,38.429&bboxSR=4326&imageSR=4326&size=2268,2442&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_BilinearInterpolation&f=image",
+  "bbox": [
+    -110.79,
+    38.407,
+    -110.764,
+    38.429
+  ],
+  "resolution_m": 1.0,
+  "bounds": {
+    "south": 38.40400264550264,
+    "west": -110.79,
+    "north": 38.43199735449736,
+    "east": -110.764
+  },
+  "pixels": [
+    2268,
+    2442
+  ],
+  "pixel_deg": 1.1463844797182741e-05,
+  "crs": "EPSG:4326, PixelIsArea",
+  "vertical": "NAVD88 metres",
+  "elevation_range_m": [
+    1341.625732421875,
+    1430.771240234375
+  ]
+}

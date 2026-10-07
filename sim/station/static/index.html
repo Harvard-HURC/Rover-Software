@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rover Driver Station</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='5' width='12' height='4' fill='%23E5A03A'/%3E%3Ccircle cx='4' cy='12' r='2.4' fill='%23ECE4D2'/%3E%3Ccircle cx='12' cy='12' r='2.4' fill='%23ECE4D2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/station.css">
+</head>
+<body class="unfocused">
+<header class="bar">
+  <div class="where">
+    <span id="world" class="world">Connecting</span>
+    <span id="mission" class="mission"></span>
+  </div>
+  <div class="clock" title="Simulation time and real-time factor">
+    <span class="dim">Sim</span> <b id="simtime" class="num">0:00</b>
+    <span class="dim">at</span> <b id="rtf" class="num">–</b>
+  </div>
+  <div class="status">
+    <span id="led" class="led" title="Status LED (URC rule 1.e.ii)"></span>
+    <span id="state" class="state-text">Waiting for the station</span>
+  </div>
+  <button id="control" class="control" type="button">Release to autonomy</button>
+  <button id="help-button" class="help-button" type="button" aria-label="Keyboard and gamepad help">?</button>
+</header>
+
+<main class="deck">
+  <section id="view" class="view" aria-label="Camera view">
+    <img id="main-img" class="feed" alt="" draggable="false">
+    <div class="view-top">
+      <div id="view-name" class="view-name">Rover eye</div>
+      <div id="heading" class="heading num">–</div>
+      <div id="view-hint" class="view-hint">Drag to look around, double-click to centre</div>
+    </div>
+    <div id="no-picture" class="no-picture" hidden>
+      <p class="no-picture-title">No picture yet</p>
+      <p id="no-picture-text">Cameras render only in worlds with the Sensors system.</p>
+    </div>
+    <button id="focus-veil" class="focus-veil" type="button">
+      <span class="focus-title">Click to drive</span>
+      <span class="focus-text">The page lost keyboard focus, so the rover is holding still.</span>
+    </button>
+    <figure id="pip" class="pip">
+      <img id="pip-img" class="feed" alt="" draggable="false">
+      <figcaption id="pip-name">Chase camera</figcaption>
+    </figure>
+
+    <div class="drivebar">
+      <div class="gauge">
+        <div class="gauge-value"><b id="speed" class="big num">0.00</b><span class="unit">m/s</span></div>
+        <div class="gauge-cmd">You ask <span id="cmd-speed" class="num">0.00</span></div>
+      </div>
+      <div class="gauge">
+        <div class="gauge-value"><b id="turn" class="big num">0</b><span class="unit">°/s</span></div>
+        <div class="gauge-cmd">You ask <span id="cmd-turn" class="num">0</span></div>
+      </div>
+      <canvas id="stick" class="stick" width="72" height="72" aria-label="Commanded and measured motion"></canvas>
+      <div class="presets" role="group" aria-label="Speed preset">
+        <button class="preset" type="button" data-preset="1"><kbd>1</kbd><span class="num" data-speed="1"></span></button>
+        <button class="preset" type="button" data-preset="2"><kbd>2</kbd><span class="num" data-speed="2"></span></button>
+        <button class="preset" type="button" data-preset="3"><kbd>3</kbd><span class="num" data-speed="3"></span></button>
+        <span class="preset-unit">m/s, <kbd>Shift</kbd> doubles</span>
+      </div>
+    </div>
+  </section>
+
+  <aside class="rail">
+    <section class="panel suspension" aria-labelledby="suspension-title">
+      <h2 id="suspension-title">Rocker suspension</h2>
+      <canvas id="rocker" class="rocker-canvas" aria-label="Side view of the rover with both rockers"></canvas>
+      <dl class="readouts three">
+        <div><dt><i class="swatch left"></i>Left rocker</dt><dd id="rocker-left" class="num">–</dd></div>
+        <div><dt><i class="swatch right"></i>Right rocker</dt><dd id="rocker-right" class="num">–</dd></div>
+        <div><dt title="Left + right: the differential keeps this at zero">Differential error</dt><dd id="rocker-error" class="num">–</dd></div>
+      </dl>
+      <canvas id="rocker-history" class="history-canvas" aria-label="Rocker angles over the last 30 seconds"></canvas>
+    </section>
+
+    <section class="panel motion" aria-labelledby="motion-title">
+      <h2 id="motion-title">Attitude and wheels</h2>
+      <div class="motion-grid">
+        <dl class="readouts two">
+          <div><dt>Pitch, nose up</dt><dd id="pitch" class="num">–</dd></div>
+          <div><dt>Roll, right side down</dt><dd id="roll" class="num">–</dd></div>
+          <div><dt>Height</dt><dd id="alt-z" class="num">–</dd></div>
+          <div><dt>Camera pan, tilt</dt><dd id="head" class="num">–</dd></div>
+        </dl>
+        <canvas id="wheels" class="wheels-canvas" aria-label="Wheel ground speeds"></canvas>
+      </div>
+    </section>
+
+    <section class="panel map" aria-labelledby="map-title">
+      <h2 id="map-title">Map <button id="map-zoom" class="map-zoom" type="button">Whole terrain</button></h2>
+      <canvas id="map" class="map-canvas" aria-label="Map with the rover"></canvas>
+      <p id="map-note" class="note"></p>
+      <dl class="readouts three">
+        <div><dt>Latitude</dt><dd id="lat" class="num">–</dd></div>
+        <div><dt>Longitude</dt><dd id="lon" class="num">–</dd></div>
+        <div><dt>GNSS altitude</dt><dd id="alt" class="num">–</dd></div>
+      </dl>
+    </section>
+
+    <section id="referee" class="panel referee" aria-labelledby="referee-title" hidden>
+      <h2 id="referee-title">Referee</h2>
+      <div class="score"><b id="points" class="big num">0</b><span class="unit">of <span id="max-points" class="num">0</span> points</span>
+        <span id="radio" class="radio"></span></div>
+      <ol id="events" class="events"></ol>
+    </section>
+  </aside>
+</main>
+
+<div id="help" class="help" hidden role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="help-card">
+    <h2 id="help-title">Controls</h2>
+    <div class="help-columns">
+      <section>
+        <h3>Drive</h3>
+        <table>
+          <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Forward, back (hold)</td></tr>
+          <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Turn left, right (hold)</td></tr>
+          <tr><td><kbd>Shift</kbd></td><td>Twice the preset speed</td></tr>
+          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td><td>Speed preset</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Stop now</td></tr>
+        </table>
+        <h3>Look around (eye and onboard views)</h3>
+        <table>
+          <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Look left, right, up, down</td></tr>
+          <tr><td>Drag</td><td>Look around: the scene follows the pointer</td></tr>
+          <tr><td><kbd>C</kbd>, double-click</td><td>Centre: ahead, slightly down</td></tr>
+          <tr><td><kbd>J</kbd> <kbd>L</kbd> <kbd>I</kbd> <kbd>K</kbd></td><td>Look left, right, up, down in any view</td></tr>
+        </table>
+        <h3>Page</h3>
+        <table>
+          <tr><td><kbd>V</kbd></td><td>Next view: eye, chase, onboard, depth</td></tr>
+          <tr><td><kbd>P</kbd></td><td>Show or hide the small view</td></tr>
+          <tr><td><kbd>M</kbd></td><td>Map zoom</td></tr>
+          <tr><td><kbd>H</kbd></td><td>This help</td></tr>
+        </table>
+      </section>
+      <section>
+        <h3>Chase view</h3>
+        <table>
+          <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Orbit around the rover</td></tr>
+          <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Raise, lower</td></tr>
+          <tr><td>Drag</td><td>Orbit</td></tr>
+          <tr><td><kbd>+</kbd> <kbd>−</kbd>, wheel</td><td>Zoom in, out (also in the small view)</td></tr>
+          <tr><td><kbd>F</kbd></td><td>Follow the heading or hold the view</td></tr>
+          <tr><td><kbd>R</kbd>, double-click</td><td>Back behind the rover</td></tr>
+        </table>
+        <h3>Gamepad</h3>
+        <table>
+          <tr><td>Left stick</td><td>Drive</td></tr>
+          <tr><td>Right stick</td><td>Look around or orbit (big view)</td></tr>
+          <tr><td>D-pad</td><td>Look around in any view</td></tr>
+          <tr><td>LB, RB</td><td>Zoom out, in</td></tr>
+          <tr><td>RT, B</td><td>Fast, stop</td></tr>
+          <tr><td>X, Y</td><td>Next view, follow or hold</td></tr>
+        </table>
+      </section>
+    </div>
+    <p class="note">The rover eye sits at the rover's camera, where its pan and tilt axes meet, and only turns there.
+      The rover's camera head turns with it, so the onboard camera sees what you see (except while released to autonomy).</p>
+    <p class="note">The rover stops when this page stops sending for <span id="deadman-time">0.5</span> s: closing the tab or clicking elsewhere stops it.
+      Pressing Cmd (for a browser shortcut) lets go of the keys you hold.
+      While you drive, the status LED shows blue (teleoperation, URC rule 1.e.ii).</p>
+    <button id="help-close" class="control" type="button">Close</button>
+  </div>
+</div>
+
+<script src="/static/station.js"></script>
+</body>
+</html>

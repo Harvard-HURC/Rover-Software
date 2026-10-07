@@ -1,0 +1,28 @@
+{
+ "source": "USGS 3DEP 3DEPElevation ImageServer exportImage (bilinear), NAVD88 m",
+ "license": "public domain (USGS)",
+ "fetched": "2026-10-06",
+ "url": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage?bbox=-111.15,37.98,-110.4,38.7&bboxSR=4326&imageSR=4326&size=1500,1440&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_BilinearInterpolation&f=image",
+ "bounds": {
+  "west": -111.15,
+  "east": -110.4,
+  "south": 37.98,
+  "north": 38.7
+ },
+ "pixels": [
+  1500,
+  1440
+ ],
+ "pixel_deg": 0.0005,
+ "pixel_m": {
+  "east": 43.7,
+  "north": 55.5
+ },
+ "crs": "EPSG:4326 PixelIsArea, row 0 north",
+ "elevation_range_m": [
+  1145.1,
+  3505.3
+ ],
+ "use": "far-field visual ring (Henry Mountains, Factory Butte, Caineville mesas) for the URC worlds; see prototype/far.py",
+ "size_bytes": 9439142
+}

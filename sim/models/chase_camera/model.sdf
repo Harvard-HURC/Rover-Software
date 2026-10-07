@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<sdf version="1.11">
+  <model name="chase_camera">
+    <link name="link">
+      <gravity>false</gravity>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.1</mass>
+        <inertia>
+          <ixx>0.000166666667</ixx>
+          <iyy>0.000166666667</iyy>
+          <izz>0.000166666667</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <sensor name="camera" type="camera">
+        <always_on>true</always_on>
+        <update_rate>20</update_rate>
+        <topic>/chase_camera/image</topic>
+        <camera>
+          <horizontal_fov>1.2</horizontal_fov>
+          <image>
+            <width>960</width>
+            <height>540</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>2000</far>
+          </clip>
+        </camera>
+      </sensor>
+    </link>
+    <plugin filename="ChaseCamera" name="rover_sim::ChaseCamera">
+      <target>rover</target>
+      <look_height>0.5</look_height>
+      <yaw>0</yaw>
+      <pitch>0.3</pitch>
+      <distance>5</distance>
+      <min_pitch>0.05</min_pitch>
+      <max_pitch>1.45</max_pitch>
+      <min_distance>1.5</min_distance>
+      <max_distance>80</max_distance>
+      <time_constant>0.25</time_constant>
+      <cmd_topic>/chase_camera/cmd</cmd_topic>
+      <mode_topic>/chase_camera/mode</mode_topic>
+      <state_topic>/chase_camera/state</state_topic>
+    </plugin>
+  </model>
+</sdf>

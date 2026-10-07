@@ -1,0 +1,17 @@
+{
+ "world": "urc_autonomy",
+ "size_m": 2048.0,
+ "gsd_m": 0.5,
+ "pixels": 4096,
+ "tile_m": 256.0,
+ "tiles": 64,
+ "camera": {
+  "px": 635,
+  "hfov": 0.9732592875946228,
+  "z": 385.8872985839844,
+  "above_highest_terrain": 300.0
+ },
+ "frame": "row 0 north, column 0 west, centred on the world origin; x east, y north",
+ "render_seconds": 17.7,
+ "rover": "left out (drawn live)"
+}

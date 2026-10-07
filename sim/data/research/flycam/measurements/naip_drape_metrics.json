@@ -1,0 +1,12 @@
+{
+ "drape_vs_naip_shift_px": [
+  0.035,
+  0.12
+ ],
+ "gsd_m": 0.5,
+ "response": 1.031,
+ "mean_abs_lab_diff_to_naip": {
+  "current_textures": 29.3,
+  "naip_drape": 3.7
+ }
+}

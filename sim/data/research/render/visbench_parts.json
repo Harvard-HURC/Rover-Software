@@ -1,0 +1,83 @@
+[
+ {
+  "tag": "AFTER_far_only",
+  "frames": 1999,
+  "run_s": 27.84,
+  "fps": 71.8,
+  "ms_per_frame": 13.93,
+  "peak_MB": 1730,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_shrubs_only",
+  "frames": 1999,
+  "run_s": 25.82,
+  "fps": 77.4,
+  "ms_per_frame": 12.92,
+  "peak_MB": 1808,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_pebbles_only",
+  "frames": 1999,
+  "run_s": 19.52,
+  "fps": 102.4,
+  "ms_per_frame": 9.76,
+  "peak_MB": 1535,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_far_only",
+  "frames": 1999,
+  "run_s": 20.68,
+  "fps": 96.7,
+  "ms_per_frame": 10.35,
+  "peak_MB": 1677,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_shrubs_only",
+  "frames": 1999,
+  "run_s": 23.44,
+  "fps": 85.3,
+  "ms_per_frame": 11.73,
+  "peak_MB": 1734,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_pebbles_only",
+  "frames": 1999,
+  "run_s": 19.5,
+  "fps": 102.5,
+  "ms_per_frame": 9.75,
+  "peak_MB": 1528,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_far_only",
+  "frames": 1999,
+  "run_s": 20.94,
+  "fps": 95.5,
+  "ms_per_frame": 10.48,
+  "peak_MB": 1677,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_shrubs_only",
+  "frames": 1999,
+  "run_s": 23.93,
+  "fps": 83.5,
+  "ms_per_frame": 11.97,
+  "peak_MB": 1711,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_pebbles_only",
+  "frames": 1999,
+  "run_s": 18.91,
+  "fps": 105.7,
+  "ms_per_frame": 9.46,
+  "peak_MB": 1550,
+  "errors": []
+ }
+]

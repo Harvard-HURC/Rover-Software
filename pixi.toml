@@ -1,0 +1,24 @@
+[workspace]
+authors = ["Alexander Belotserkovtsev <amb30239@gmail.com>"]
+channels = ["https://prefix.dev/robostack-jazzy"]
+name = "Rover"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+driver-build = "cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release && cmake --build driver/build -j"
+driver-test = { cmd = "ctest --test-dir driver/build --output-on-failure", depends-on = ["driver-build"] }
+driver-viz = { cmd = "python driver/tools/viz.py", depends-on = ["driver-build"] }
+sim-build = "cmake -S sim -B sim/build -DCMAKE_BUILD_TYPE=Release && cmake --build sim/build -j"
+sim-model = "python sim/gen_model.py"
+sim-worlds = { cmd = "python sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["sim/gen_worlds.py", "sim/gen_model.py", "sim/urc/**/*.py", "sim/data/dem/*"], outputs = ["sim/worlds/urc_*.sdf", "sim/worlds/urc_*.json", "sim/worlds/proving_ground.sdf", "sim/worlds/proving_ground.json", "sim/models/urc_*/**"] }
+sim = { cmd = "bash sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+drive = { cmd = "python sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+referee = "python sim/referee.py"
+sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=sim/bridge.yaml"
+sim-test = { cmd = "python -m unittest discover -s sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+
+[dependencies]
+ros-jazzy-desktop = ">=0.11.0,<0.12"
+ros2-ros-gz-sim = ">=1.0.23,<2"
+ros2-ros-gz-bridge = ">=1.0.23,<2"

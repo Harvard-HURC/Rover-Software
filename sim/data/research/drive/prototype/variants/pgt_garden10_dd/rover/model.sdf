@@ -1,0 +1,702 @@
+<?xml version="1.0"?>
+<sdf version="1.11">
+  <model name="rover">
+    <link name="base_link">
+      <inertial>
+        <pose>0 0 0.4 0 0 0</pose>
+        <mass>30</mass>
+        <inertia>
+          <ixx>0.725</ixx>
+          <iyy>1.7</iyy>
+          <izz>2.225</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="chassis_collision">
+        <pose>0 0 0.4 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.8 0.5 0.2</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="chassis_visual">
+        <pose>0 0 0.4 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.8 0.5 0.2</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.85 0.55 0.15 1</ambient>
+          <diffuse>0.85 0.55 0.15 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="imu" type="imu">
+        <pose>0 0 0.4 0 0 0</pose>
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <topic>/model/rover/imu</topic>
+        <gz_frame_id>base_link</gz_frame_id>
+        <imu>
+          <angular_velocity>
+            <x>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.002</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.002</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.002</stddev>
+              </noise>
+            </z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.02</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.02</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.02</stddev>
+              </noise>
+            </z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+      <visual name="gnss_mast_visual">
+        <pose>-0.25 0 0.675 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.015</radius>
+            <length>0.35</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <visual name="gnss_antenna_visual">
+        <pose>-0.25 0 0.85 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.06</radius>
+            <length>0.02</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.9 0.9 0.9 1</ambient>
+          <diffuse>0.9 0.9 0.9 1</diffuse>
+        </material>
+      </visual>
+      <visual name="camera_mast_visual">
+        <pose>0.35 0 0.645 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.015</radius>
+            <length>0.29</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <visual name="led_visual">
+        <pose>-0.41 0 0.47 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.02 0.16 0.06</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.15 0.15 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+          <emissive>0 0 0 1</emissive>
+        </material>
+      </visual>
+    </link>
+    <link name="camera_pan_link">
+      <pose>0.35 0 0.8 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>4.35e-05</ixx>
+          <iyy>1.2e-05</iyy>
+          <izz>4.35e-05</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="turntable_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.03</radius>
+            <length>0.02</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <visual name="yoke_left_visual">
+        <pose>0 0.07 0.025 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.03 0.008 0.07</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <visual name="yoke_right_visual">
+        <pose>0 -0.07 0.025 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.03 0.008 0.07</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <visual name="yoke_base_visual">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.03 0.148 0.008</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name="camera_tilt_link">
+      <pose>0.35 0 0.85 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>2.66666667e-05</ixx>
+          <iyy>5.33333333e-06</iyy>
+          <izz>2.66666667e-05</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="camera_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.04 0.12 0.04</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+      <visual name="lens_visual">
+        <pose>0.024 0.03 0 0 1.57079633 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.014</radius>
+            <length>0.012</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.05 0.08 0.12 1</ambient>
+          <diffuse>0.05 0.08 0.12 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="camera_pan_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>camera_pan_link</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-2.8</lower>
+          <upper>2.8</upper>
+          <effort>5</effort>
+          <velocity>2</velocity>
+        </limit>
+        <dynamics>
+          <damping>0.01</damping>
+        </dynamics>
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>camera_pan_joint</joint_name>
+      <topic>/model/rover/joint/camera_pan_joint/0/cmd_pos</topic>
+      <use_velocity_commands>true</use_velocity_commands>
+      <p_gain>10</p_gain>
+      <cmd_max>2</cmd_max>
+      <cmd_min>-2</cmd_min>
+      <initial_position>0</initial_position>
+    </plugin>
+    <joint name="camera_tilt_joint" type="revolute">
+      <parent>camera_pan_link</parent>
+      <child>camera_tilt_link</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-0.6</lower>
+          <upper>1.2</upper>
+          <effort>5</effort>
+          <velocity>2</velocity>
+        </limit>
+        <dynamics>
+          <damping>0.01</damping>
+        </dynamics>
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>camera_tilt_joint</joint_name>
+      <topic>/model/rover/joint/camera_tilt_joint/0/cmd_pos</topic>
+      <use_velocity_commands>true</use_velocity_commands>
+      <p_gain>10</p_gain>
+      <cmd_max>2</cmd_max>
+      <cmd_min>-2</cmd_min>
+      <initial_position>0.12</initial_position>
+    </plugin>
+    <link name="rocker_left">
+      <pose>0 0.4 0.35 0 0 0</pose>
+      <inertial>
+        <pose>0 -0.08 -0.1 0 0 0</pose>
+        <mass>3</mass>
+        <inertia>
+          <ixx>0.01</ixx>
+          <iyy>0.2125</iyy>
+          <izz>0.2025</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="front_arm_collision">
+        <pose>0.225 -0.08 -0.1 0 0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="front_arm_visual">
+        <pose>0.225 -0.08 -0.1 0 0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <collision name="rear_arm_collision">
+        <pose>-0.225 -0.08 -0.1 0 -0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="rear_arm_visual">
+        <pose>-0.225 -0.08 -0.1 0 -0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="rocker_left_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rocker_left</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-0.5</lower>
+          <upper>0.5</upper>
+        </limit>
+        <dynamics>
+          <damping>0.5</damping>
+        </dynamics>
+      </axis>
+    </joint>
+    <link name="wheel_fl">
+      <pose>0.45 0.4 0.15 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>2.5</mass>
+        <inertia>
+          <ixx>0.0161458333</ixx>
+          <iyy>0.028125</iyy>
+          <izz>0.0161458333</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire_collision">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.5</mu>
+              <mu2>1</mu2>
+              <fdir1>0 0 1</fdir1>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="wheel_fl_joint" type="revolute">
+      <parent>rocker_left</parent>
+      <child>wheel_fl</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+          <effort>30</effort>
+          <velocity>10</velocity>
+        </limit>
+      </axis>
+    </joint>
+    <link name="wheel_rl">
+      <pose>-0.45 0.4 0.15 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>2.5</mass>
+        <inertia>
+          <ixx>0.0161458333</ixx>
+          <iyy>0.028125</iyy>
+          <izz>0.0161458333</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire_collision">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.5</mu>
+              <mu2>1</mu2>
+              <fdir1>0 0 1</fdir1>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="wheel_rl_joint" type="revolute">
+      <parent>rocker_left</parent>
+      <child>wheel_rl</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+          <effort>30</effort>
+          <velocity>10</velocity>
+        </limit>
+      </axis>
+    </joint>
+    <link name="rocker_right">
+      <pose>0 -0.4 0.35 0 0 0</pose>
+      <inertial>
+        <pose>0 0.08 -0.1 0 0 0</pose>
+        <mass>3</mass>
+        <inertia>
+          <ixx>0.01</ixx>
+          <iyy>0.2125</iyy>
+          <izz>0.2025</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="front_arm_collision">
+        <pose>0.225 0.08 -0.1 0 0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="front_arm_visual">
+        <pose>0.225 0.08 -0.1 0 0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+      <collision name="rear_arm_collision">
+        <pose>-0.225 0.08 -0.1 0 -0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="rear_arm_visual">
+        <pose>-0.225 0.08 -0.1 0 -0.41822433 0</pose>
+        <geometry>
+          <box>
+            <size>0.49244289 0.04 0.05</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.38 1</ambient>
+          <diffuse>0.35 0.35 0.38 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="rocker_right_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rocker_right</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-0.5</lower>
+          <upper>0.5</upper>
+        </limit>
+        <dynamics>
+          <damping>0.5</damping>
+        </dynamics>
+      </axis>
+    </joint>
+    <link name="wheel_fr">
+      <pose>0.45 -0.4 0.15 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>2.5</mass>
+        <inertia>
+          <ixx>0.0161458333</ixx>
+          <iyy>0.028125</iyy>
+          <izz>0.0161458333</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire_collision">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.5</mu>
+              <mu2>1</mu2>
+              <fdir1>0 0 1</fdir1>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="wheel_fr_joint" type="revolute">
+      <parent>rocker_right</parent>
+      <child>wheel_fr</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+          <effort>30</effort>
+          <velocity>10</velocity>
+        </limit>
+      </axis>
+    </joint>
+    <link name="wheel_rr">
+      <pose>-0.45 -0.4 0.15 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>2.5</mass>
+        <inertia>
+          <ixx>0.0161458333</ixx>
+          <iyy>0.028125</iyy>
+          <izz>0.0161458333</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire_collision">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.5</mu>
+              <mu2>1</mu2>
+              <fdir1>0 0 1</fdir1>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.57079633 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.15</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.1 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <joint name="wheel_rr_joint" type="revolute">
+      <parent>rocker_right</parent>
+      <child>wheel_rr</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+          <effort>30</effort>
+          <velocity>10</velocity>
+        </limit>
+      </axis>
+    </joint>
+    <plugin filename="RockerDifferential" name="rover_sim::RockerDifferential">
+      <left_joint>rocker_left_joint</left_joint>
+      <right_joint>rocker_right_joint</right_joint>
+      <stiffness>5000</stiffness>
+      <damping>100</damping>
+    </plugin>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>wheel_fl_joint</left_joint>
+      <left_joint>wheel_rl_joint</left_joint>
+      <right_joint>wheel_fr_joint</right_joint>
+      <right_joint>wheel_rr_joint</right_joint>
+      <wheel_separation>0.8</wheel_separation>
+      <wheel_radius>0.15</wheel_radius>
+      <topic>/model/rover/cmd_vel</topic>
+      <odom_topic>/model/rover/odometry</odom_topic>
+      <tf_topic>/model/rover/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/model/rover/joint_states</topic>
+    </plugin>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_topic>/model/rover/ground_truth</odom_topic>
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+    <plugin filename="RoverDrive" name="rover_sim::RoverDrive">
+      <drive>probe</drive>
+      <log>/private/tmp/claude-502/-Users-alarion239-Desktop-Rover/d048031d-a613-49e0-ad24-8cb3b1a40ce3/scratchpad/drive.TDh3/logs/pgt_garden10_dd.bin</log>
+    </plugin>
+  </model>
+</sdf>
