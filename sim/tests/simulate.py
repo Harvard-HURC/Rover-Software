@@ -253,6 +253,27 @@ def _xyzrpy(pose):
     return (p.x(), p.y(), p.z(), r.x(), r.y(), r.z())
 
 
+def spin_ratio(traction, dig=1.0, params=gen_model.Params()):
+    """The yaw rate of the rover turning in place on ground `traction`
+    (terrains.Traction) over the commanded rate, quasi-static and fresh or at
+    dig factor `dig` (design spec 5.6): the root r of mu_k (c sx - a sy) / |s|
+    = crr D c + bulldoze D^2 a, wheels at (+-a, +-c), sx = c (1 - r), sy = a r;
+    0 if it cannot turn."""
+    a, c = params.wheel_dx, params.pivot_y
+    resist = traction.crr * dig * c + traction.bulldoze * dig * dig * a
+
+    def surplus(r):
+        return traction.mu_k * (c * c * (1 - r) - a * a * r) / math.hypot(c * (1 - r), a * r) - resist
+
+    if surplus(0.0) <= 0:
+        return 0.0
+    lo, hi = 0.0, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if surplus(mid) > 0 else (lo, mid)
+    return lo
+
+
 # --- Worlds with a ground map ----------------------------------------------------------------
 
 def ground_row(index, key, traction, dust=0.0):

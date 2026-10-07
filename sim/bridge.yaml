@@ -35,6 +35,13 @@
   ros_type_name: rosgraph_msgs/msg/Clock
   gz_type_name: gz.msgs.Clock
   direction: GZ_TO_ROS
+# Physical drivetrain only (DriveParams.mode "physical"): per-wheel setpoint, speed, current, torque, voltage,
+# saturation, slip, load, ground and dig factor as JSON, 50 Hz.
+- ros_topic_name: /drivetrain
+  gz_topic_name: /model/rover/drivetrain
+  ros_type_name: std_msgs/msg/String
+  gz_type_name: gz.msgs.StringMsg
+  direction: GZ_TO_ROS
 # Sensors for the URC missions (sim/gen_model.py).
 - ros_topic_name: /gps/fix
   gz_topic_name: /model/rover/navsat
