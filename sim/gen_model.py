@@ -10,7 +10,14 @@ numbers: edit Params, then run `pixi run sim-model`.
 
 Frames follow the driver: x forward, y left, z up, origin on the ground
 midway between the four wheels with the rockers at zero.
+
+DriveParams.mode picks the drivetrain (design spec
+docs/superpowers/specs/2026-10-06-urc-realism-design.md, section 6, D22):
+"diffdrive", Gazebo's DiffDrive (the default in wave 1, its output unchanged),
+or "physical", plugins/rover_drivetrain.cpp with the realism camera and the
+dust emitters.
 """
+import dataclasses
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +36,8 @@ IMU_TOPIC = "/model/rover/imu"
 NAVSAT_TOPIC = "/model/rover/navsat"
 CAMERA_TOPIC = "/model/rover/camera"  # rgbd: /image, /depth_image, /points, /camera_info
 LED_TOPIC = "/model/rover/led"  # set by the rover's software, shown by sim/referee.py
+DRIVETRAIN_TOPIC = "/model/rover/drivetrain"  # physical drivetrain: gz.msgs.StringMsg, JSON (design spec 9.3)
+DUST_TOPIC = "/model/rover/link/{link}/particle_emitter/{emitter}/cmd"  # gz.msgs.ParticleEmitter
 LED_VISUAL = "led_visual"
 # The camera's pan-tilt head: gz.msgs.Double target angles [rad].
 PAN_JOINT = "camera_pan_joint"
@@ -40,6 +49,81 @@ METERS_PER_DEGREE = 111_320.0  # of latitude, for NavSat noise
 VIEWER_NAMES = ("CHASE_MODEL", "CHASE_IMAGE_TOPIC", "CHASE_CMD_TOPIC", "CHASE_MODE_TOPIC", "CHASE_STATE_TOPIC",
                 "EYE_MODEL", "EYE_IMAGE_TOPIC", "EYE_LOOK_TOPIC", "EYE_STATE_TOPIC",
                 "ChaseParams", "EyeParams", "build_chase_sdf", "build_eye_sdf")
+
+
+# Dig-in presets (design spec 6.5, D21): gains on the catalogue's dig_rate and on its dig_max - 1. "mild" is
+# the catalogue (a sustained spin in sand slows to ~0.7x and keeps turning); "strong" makes sand's dig_rate
+# 0.05 and D_max 2.0, past the D ~ 1.7 where a spin stops: the rover digs in and must drive out (Anveshak,
+# URC 2017 [14]). The user chose strong (2026-10-06, Q12).
+DIG_PRESETS = {"mild": (1.0, 1.0), "strong": (5.0, 4.0)}
+
+
+@dataclass(frozen=True)
+class DriveParams:
+    """The drivetrain (design spec section 6). mode "diffdrive": Gazebo's
+    DiffDrive, every wheel a velocity servo, kept for A/B tests and cost
+    comparisons (D22); "physical": plugins/rover_drivetrain.cpp, a DC motor
+    per wheel driving it by torque, every wheel contact gripping like the
+    ground under it. Motor numbers are typical placeholders until the
+    drivetrain is chosen (D20, Q7: the prototype's validated set)."""
+    mode: str = "diffdrive"  # or "physical"
+    # A command older than cmd_timeout counts as zero, so a commander that died cannot leave the rover
+    # driving (user decision 2026-10-06); 0 holds the last command, as Gazebo's GUI Teleop needs. The clock:
+    # "wall" (a dead process) or "sim" (deterministic tests).
+    cmd_timeout: float = 0.5  # [s]
+    cmd_timeout_clock: str = "wall"
+    track_multiplier: float = 1.0  # effective-track compensation; 1 = the raw skid-steer response (D24, Q10)
+    accel: float = 8.0  # [rad/s^2] wheel setpoint ramp, 1.2 m/s^2 (A: until the driver team reports theirs, Q7)
+    voltage: float = 24.0  # [V] (R: Husky A200 motor [18])
+    resistance: float = 0.46  # [ohm] (R [18])
+    kt: float = 0.0445  # [N m/A] (R [18])
+    ke: float = 0.0445  # [V s/rad] (R [18])
+    gear: float = 50.0  # (M: prototype; datasheet alternative 51, R [22])
+    efficiency: float = 0.8  # (M: prototype; datasheet alternative 0.7)
+    rotor_inertia: float = 1.2e-5  # [kg m^2] at the motor, 0.03 at the wheel (A)
+    free_current: float = 1.0  # [A] no-load current (A)
+    output_friction: float = 0.05  # [N m s/rad] (A)
+    current_limit: float = 20.0  # [A] 35.6 N m at the wheel (M: prototype)
+    driveline_stiffness: float = 1500.0  # [N m/rad] (A: 12 mm x 0.1 m steel shaft)
+    driveline_damping: float = 2.0  # [N m s/rad] (A)
+    backlash: float = 0.026  # [rad] 1.5 deg (A: IMS 0.8-2.5 deg [22])
+    kp: float = 4.0  # [V/(rad/s)] (M: prototype tuning)
+    ki: float = 40.0  # [V/rad] (M: prototype tuning)
+    speed_filter: float = 0.005  # [s] measured-speed time constant (A)
+    substeps: int = 4  # motor integration steps per 1 ms physics step
+    # Wheel contacts (design spec 6.4): friction circle while sliding, an aligned box while sticking.
+    v_stribeck: float = 0.03  # [m/s] (A)
+    v_align: float = 0.005  # [m/s] below it a contact sticks (A)
+    perp_ratio: float = 0.0  # mu across the slip while sliding: 0 is a friction circle
+    stick_perp_ratio: float = 0.3  # mu across the expected load while sticking: holds within 4.4 % of mu_s
+    mu_noise: float = 0.2  # spatial mu variation (A)
+    mu_noise_length: float = 0.3  # [m] (A)
+    rr_w0: float = 0.2  # [rad/s] rolling resistance and bulldozing fade in over this wheel speed (A)
+    dig: str = "strong"  # DIG_PRESETS key, or "off"
+    dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
+    default_surface: str = "regolith"  # terrains.TYPES key: ground where the world has no ground map
+    object_surface: str = "manmade"  # terrains.TYPES key: objects whose SDF sets no friction
+    # Wheel joints: DART never clamps the torque, and the velocity limit (1.5 x the 10.8 rad/s free speed)
+    # never acts as a hidden brake (design spec 6.2).
+    wheel_effort: float = 1000.0  # [N m]
+    wheel_velocity: float = 16.0  # [rad/s]
+    odom_rate: float = 50.0  # [Hz]
+    state_rate: float = 50.0  # [Hz] DRIVETRAIN_TOPIC
+    # Dust behind the rear wheels (design spec 6.5, D15): particles per second = dust factor x
+    # (speed_gain x hub speed + slip_gain x slip speed) x dig factor, at most dust_max (A gains).
+    dust_rate: float = 10.0  # [Hz] commands to the emitters
+    dust_speed_gain: float = 8.0  # [1/m]
+    dust_slip_gain: float = 25.0  # [1/m]
+    dust_max: float = 40.0  # [1/s]
+    dust_min_speed: float = 0.05  # [m/s]
+    # The emitter (M: tuned in the render research, design spec 6.5): a box at the ground behind each rear
+    # wheel blowing back and up; the colour is the catalogue's dust colour, fading out.
+    dust_box: float = 0.25  # [m]
+    dust_particle: float = 0.2  # [m]
+    dust_lifetime: float = 1.6  # [s]
+    dust_speed: tuple[float, float] = (0.15, 0.5)  # [m/s]
+    dust_alpha: float = 0.28
+    dust_pitch: float = 0.6  # [rad] above the horizontal, backwards (A)
 
 
 @dataclass(frozen=True)
@@ -90,6 +174,13 @@ class Params:
     camera_size: tuple[int, int] = (640, 480)
     camera_hfov: float = 1.5  # [rad]
     camera_clip: tuple[float, float] = (0.1, 40.0)  # [m] depth range
+    # The realism camera (design spec 7, D14): the physical variant's in wave 1, every rover's from wave 2.
+    # 640x480 reads a 20 cm ArUco face only to ~2.5 m (sim/README.md, Known limitations); the RGB sees the far
+    # field to 80 km while the depth stays clipped at camera_clip; gz attenuates SDF noise, stddev 0.06 is
+    # ~2 DN (M, design spec 4).
+    camera_hd_size: tuple[int, int] = (1280, 720)
+    camera_far: float = 80_000.0  # [m] RGB far clip
+    camera_noise: float = 0.06  # RGB noise stddev [0-1]
     # Pan-tilt head. Angles are from straight ahead and level; tilt is positive
     # down (rotation about +y), pan positive to the left (about +z).
     camera_pan_limit: float = 2.8  # [rad] each way
@@ -104,6 +195,15 @@ class Params:
     camera_pan_height: float = 0.05  # [m] pan bearing below the tilt axis
     # Status LED on the back of the rover (URC 2027 rule 1.e.ii).
     led_xyz: tuple[float, float, float] = (-0.41, 0.0, 0.47)
+    drive: DriveParams = DriveParams()
+    # Tyre compliance (design spec 6.7, D18; phase 2, off): a 0.1 kg hub between rocker and wheel on two sprung
+    # prismatic joints, axial then radial, each within +-tire_travel. It turns 400-480 Hz contact chatter into a
+    # 12-16 Hz wheel hop (M); revisit when the wheel type is known (Q8).
+    tire_compliance: bool = False
+    tire_radial: tuple[float, float] = (60_000.0, 170.0)  # [N/m], [N s/m] (M: prototype)
+    tire_axial: tuple[float, float] = (40_000.0, 40.0)  # [N/m], [N s/m] (M: prototype)
+    tire_travel: float = 0.03  # [m]
+    hub_mass: float = 0.1  # [kg]
 
 
 def wheel_inertia(mass, radius, width):
@@ -227,7 +327,11 @@ def _add_camera_head(model, p):
     sdf.sub(sensor, "update_rate", p.camera_rate)
     sdf.sub(sensor, "topic", CAMERA_TOPIC)
     sdf.sub(sensor, "gz_frame_id", "camera")
-    sdf.camera(sensor, p.camera_hfov, p.camera_size, p.camera_clip)
+    if _physical(p):  # the realism camera (Params.camera_hd_size)
+        sdf.camera(sensor, p.camera_hfov, p.camera_hd_size, (p.camera_clip[0], p.camera_far), noise=p.camera_noise,
+                   depth_clip=p.camera_clip)
+    else:
+        sdf.camera(sensor, p.camera_hfov, p.camera_size, p.camera_clip)
 
     head = ((PAN_JOINT, "base_link", "camera_pan_link", (0, 0, 1), (-p.camera_pan_limit, p.camera_pan_limit), 0.0),
             (TILT_JOINT, "camera_pan_link", "camera_tilt_link", (0, 1, 0), p.camera_tilt_limits, p.camera_pitch))
@@ -257,34 +361,137 @@ def _add_rocker(model, p, side, sign):
         _shape(link, f"{end}_arm", sdf.box(bar), pose, ROCKER_COLOR)
     sdf.joint(model, f"{name}_joint", "revolute", "base_link", name, (0, 1, 0), -p.rocker_limit, p.rocker_limit,
               damping=p.rocker_damping)
+    if _physical(p):
+        _add_dust_emitter(link, p, f"dust_r{side[0]}")
+
+
+def _add_dust_emitter(link, p, name):
+    """A particle emitter at the ground behind the rocker's rear wheel (on the rocker: a wheel link spins),
+    idle until the drivetrain sets its rate on DUST_TOPIC (design spec 6.5, D15). It starts not emitting
+    (SDF's default is to emit), and depth and point cloud do not see its particles (scatter ratio 0, Q11)."""
+    from urc import terrains  # here: the catalogue is heavy (textures), and only the physical rover needs it
+    d = p.drive
+    emitter = sdf.sub(link, "particle_emitter", name=name, type="box")
+    behind = p.wheel_dx + p.wheel_radius + d.dust_box / 4
+    sdf.pose(emitter, (-behind, 0, p.wheel_dz - p.wheel_radius + d.dust_box / 2, 0, -d.dust_pitch, math.pi))
+    sdf.sub(emitter, "emitting", False)
+    sdf.sub(emitter, "size", (d.dust_box,) * 3)
+    sdf.sub(emitter, "particle_size", (d.dust_particle,) * 3)
+    sdf.sub(emitter, "lifetime", d.dust_lifetime)
+    sdf.sub(emitter, "rate", 0.0)
+    sdf.sub(emitter, "min_velocity", d.dust_speed[0])
+    sdf.sub(emitter, "max_velocity", d.dust_speed[1])
+    sdf.sub(emitter, "scale_rate", 1.0)
+    sdf.sub(emitter, "color_start", (*terrains.DUST_RGB, d.dust_alpha))
+    sdf.sub(emitter, "color_end", (*terrains.DUST_RGB, 0.0))
+    sdf.sub(emitter, "topic", DUST_TOPIC.format(link=link.get("name"), emitter=name))
+    sdf.sub(emitter, "particle_scatter_ratio", 0.0)
 
 
 def _add_wheel(model, p, side, name, sign, ahead):
-    link = sdf.link(model, name, (ahead * p.wheel_dx, sign * p.pivot_y, p.pivot_z + p.wheel_dz, 0, 0, 0),
-                    p.wheel_mass, wheel_inertia(p.wheel_mass, p.wheel_radius, p.wheel_width))
-    # A cylinder runs along its z axis; roll it onto the axle. fdir1 is the
-    # axle in the collision frame: mu acts along it (lateral), mu2 across it
-    # (longitudinal).
+    xyz = (ahead * p.wheel_dx, sign * p.pivot_y, p.pivot_z + p.wheel_dz)
+    link = sdf.link(model, name, (*xyz, 0, 0, 0), p.wheel_mass,
+                    wheel_inertia(p.wheel_mass, p.wheel_radius, p.wheel_width))
     tire, pose = sdf.cylinder(p.wheel_radius, p.wheel_width), (0, 0, 0, math.pi / 2, 0, 0)
-    sdf.collision(link, "tire", tire, pose, mu=p.mu_lateral, mu2=p.mu_longitudinal, fdir1=(0, 0, 1))
+    if _physical(p):
+        # Isotropic: the drivetrain sets the friction of every wheel contact itself.
+        sdf.collision(link, "tire", tire, pose, mu=1.0)
+        effort, velocity = p.drive.wheel_effort, p.drive.wheel_velocity
+    else:
+        # A cylinder runs along its z axis; roll it onto the axle. fdir1 is the
+        # axle in the collision frame: mu acts along it (lateral), mu2 across it
+        # (longitudinal).
+        sdf.collision(link, "tire", tire, pose, mu=p.mu_lateral, mu2=p.mu_longitudinal, fdir1=(0, 0, 1))
+        effort, velocity = p.wheel_effort, p.wheel_speed
     _visual(link, "tire", tire, pose, TIRE_COLOR)
-    sdf.joint(model, f"{name}_joint", "revolute", f"rocker_{side}", name, (0, 1, 0), -1e16, 1e16,
-              effort=p.wheel_effort, velocity=p.wheel_speed)
+    parent = _add_tire_hubs(model, p, f"rocker_{side}", name, xyz) if p.tire_compliance else f"rocker_{side}"
+    sdf.joint(model, f"{name}_joint", "revolute", parent, name, (0, 1, 0), -1e16, 1e16, effort=effort,
+              velocity=velocity)
+
+
+def _add_tire_hubs(model, p, rocker, wheel, xyz):
+    """Tyre compliance (Params.tire_compliance): the rocker carries the wheel through two hub links on sprung
+    prismatic joints, along the axle, then radially; returns the link the wheel joint hangs from."""
+    parent = rocker
+    for tag, axis, (stiffness, damping) in (("axial", (0, 1, 0), p.tire_axial), ("radial", (0, 0, 1), p.tire_radial)):
+        hub = f"{wheel}_hub_{tag}"
+        sdf.link(model, hub, (*xyz, 0, 0, 0), p.hub_mass, (1e-4,) * 3)
+        sdf.joint(model, f"{wheel}_tire_{tag}", "prismatic", parent, hub, axis, -p.tire_travel, p.tire_travel,
+                  damping=damping, stiffness=stiffness)
+        parent = hub
+    return parent
+
+
+def _physical(p):
+    if p.drive.mode not in ("diffdrive", "physical"):
+        raise ValueError(f"DriveParams.mode {p.drive.mode!r}: 'diffdrive' or 'physical'")
+    return p.drive.mode == "physical"
 
 
 def _add_plugins(model, p):
     sdf.plugin(model, "RockerDifferential", "rover_sim::RockerDifferential", left_joint="rocker_left_joint",
                right_joint="rocker_right_joint", stiffness=p.diff_stiffness, damping=p.diff_damping)
-    sdf.plugin(model, "gz-sim-diff-drive-system", "gz::sim::systems::DiffDrive",
-               left_joint=["wheel_fl_joint", "wheel_rl_joint"], right_joint=["wheel_fr_joint", "wheel_rr_joint"],
-               wheel_separation=2 * p.pivot_y, wheel_radius=p.wheel_radius, topic=CMD_VEL_TOPIC,
-               odom_topic=ODOM_TOPIC, tf_topic=TF_TOPIC, frame_id="odom", child_frame_id="base_link",
-               odom_publish_frequency=50)
+    if _physical(p):
+        _add_drivetrain(model, p)  # never beside DiffDrive: it would override the torques (D22)
+    else:
+        sdf.plugin(model, "gz-sim-diff-drive-system", "gz::sim::systems::DiffDrive",
+                   left_joint=["wheel_fl_joint", "wheel_rl_joint"], right_joint=["wheel_fr_joint", "wheel_rr_joint"],
+                   wheel_separation=2 * p.pivot_y, wheel_radius=p.wheel_radius, topic=CMD_VEL_TOPIC,
+                   odom_topic=ODOM_TOPIC, tf_topic=TF_TOPIC, frame_id="odom", child_frame_id="base_link",
+                   odom_publish_frequency=50)
     sdf.plugin(model, "gz-sim-joint-state-publisher-system", "gz::sim::systems::JointStatePublisher",
                topic=JOINT_STATE_TOPIC)
     sdf.plugin(model, "gz-sim-odometry-publisher-system", "gz::sim::systems::OdometryPublisher",
                odom_topic=GROUND_TRUTH_TOPIC, odom_frame="world", robot_base_frame="base_link", dimensions=3,
                odom_publish_frequency=50)
+
+
+def _add_drivetrain(model, p):
+    """plugins/rover_drivetrain.cpp, set from DriveParams (design spec 6.2)."""
+    d = p.drive
+    if d.dig != "off" and d.dig not in DIG_PRESETS:
+        raise ValueError(f"DriveParams.dig {d.dig!r}: 'off' or one of {sorted(DIG_PRESETS)}")
+    rate_gain, max_gain = DIG_PRESETS.get(d.dig, (1.0, 1.0))
+    plugin = sdf.plugin(model, "RoverDrivetrain", "rover_sim::RoverDrivetrain", topic=CMD_VEL_TOPIC,
+                        cmd_timeout=d.cmd_timeout, cmd_timeout_clock=d.cmd_timeout_clock, odom_topic=ODOM_TOPIC,
+                        tf_topic=TF_TOPIC, frame_id="odom", child_frame_id="base_link",
+                        odom_publish_frequency=d.odom_rate, state_topic=DRIVETRAIN_TOPIC, state_rate=d.state_rate,
+                        dust_rate=d.dust_rate, track=2 * p.pivot_y, radius=p.wheel_radius,
+                        track_multiplier=d.track_multiplier)
+    for side, s, _ in SIDES:
+        for _, e, _ in ENDS:
+            sdf.group(plugin, "wheel", name=f"{e}{s}", joint=f"wheel_{e}{s}_joint", link=f"wheel_{e}{s}", side=side)
+    for side, s, _ in SIDES:
+        sdf.group(plugin, "dust", wheel=f"wheel_r{s}", topic=DUST_TOPIC.format(link=f"rocker_{side}",
+                                                                                emitter=f"dust_r{s}"))
+    sdf.group(plugin, "motor", voltage=d.voltage, resistance=d.resistance, kt=d.kt, ke=d.ke, gear=d.gear,
+              efficiency=d.efficiency, rotor_inertia=d.rotor_inertia, free_current=d.free_current,
+              output_friction=d.output_friction, current_limit=d.current_limit)
+    sdf.group(plugin, "driveline", stiffness=d.driveline_stiffness, damping=d.driveline_damping, backlash=d.backlash)
+    sdf.group(plugin, "controller", kp=d.kp, ki=d.ki, speed_filter=d.speed_filter, accel=d.accel,
+              max_speed=p.wheel_speed, substeps=d.substeps)
+    contact = sdf.group(plugin, "contact", v_stribeck=d.v_stribeck, v_align=d.v_align, perp_ratio=d.perp_ratio,
+                        stick_perp_ratio=d.stick_perp_ratio, mu_noise=d.mu_noise, mu_noise_length=d.mu_noise_length,
+                        rr_w0=d.rr_w0, dig=d.dig != "off", dig_rate_gain=rate_gain, dig_max_gain=max_gain,
+                        dig_heal_length=d.dig_heal_length, default_surface=d.default_surface,
+                        object_surface=d.object_surface)
+    for row in surface_rows(d.default_surface, d.object_surface):
+        sdf.group(contact, "surface", **row)
+    sdf.group(plugin, "dust_rule", speed_gain=d.dust_speed_gain, slip_gain=d.dust_slip_gain, max_rate=d.dust_max,
+              min_speed=d.dust_min_speed)
+
+
+def surface_rows(*keys):
+    """The traction of catalogue ground types (terrains.TYPES, design spec 5.6) as the drivetrain's
+    <surface> rows, what it uses where the world has no ground map. A key the catalogue lacks is left out;
+    the drivetrain reports it when it starts and grips there as plain Coulomb mu 1."""
+    from urc import terrains  # here: the catalogue is heavy (textures), and only the physical rover needs it
+    rows = []
+    for key in dict.fromkeys(keys):
+        kind = terrains.TYPES.get(key)
+        if kind is not None:
+            rows.append(dict(key=key, **dataclasses.asdict(kind.traction), dust=kind.appearance.dust))
+    return rows
 
 
 def __getattr__(name):
