@@ -137,9 +137,9 @@ def fill(paths, values):
         path.write_text(text)
 
 
-def build(source, build_dir, patch=PATCH):
-    """Make <build_dir>/gz-rendering-media from source; returns it. Raises
-    on any failure, having removed what it wrote."""
+def build(source, build_dir):
+    """Make <build_dir>/gz-rendering-media from the stock media at source;
+    returns it. Raises on any failure, having removed what it wrote."""
     target = Path(build_dir) / gzenv.MEDIA_DIR
     staging = target.with_name(target.name + ".partial")
     shutil.rmtree(staging, ignore_errors=True)
@@ -147,8 +147,8 @@ def build(source, build_dir, patch=PATCH):
         if not (Path(source) / "ogre2" / "media").is_dir():
             raise PatchError(f"{source} holds no ogre2/media")
         shutil.copytree(source, staging)
-        fill(apply(Path(patch).read_text(), staging), tokens())
-        (staging / gzenv.MEDIA_COMPLETE).write_text(f"patched with {patch.name}\n")
+        fill(apply(PATCH.read_text(), staging), tokens())
+        (staging / gzenv.MEDIA_COMPLETE).write_text(f"patched with {PATCH.name}\n")
         shutil.rmtree(target, ignore_errors=True)
         staging.rename(target)
     except BaseException:
@@ -161,10 +161,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--build-dir", default=str(gzenv.BUILD_DIR), help="default sim/build")
     parser.add_argument("--source", default=str(environment_media()), help="stock media (default: the env's)")
-    parser.add_argument("--patch", default=str(PATCH), help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
-        target = build(args.source, args.build_dir, Path(args.patch))
+        target = build(args.source, args.build_dir)
     except (PatchError, OSError) as e:
         shutil.rmtree(Path(args.build_dir) / gzenv.MEDIA_DIR, ignore_errors=True)
         print(f"gz_media: WARNING: no patched media ({e}); Gazebo uses its stock media "

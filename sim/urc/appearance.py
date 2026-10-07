@@ -145,8 +145,8 @@ class Strata:
     by elevation on a gently dipping plane, their boundaries wandering a
     little (elevation explains 33-70 % of redness on banded mounds,
     strata_colour_ramps.json, M)."""
-    bands: tuple = ((181, 157, 149), (195, 170, 161), (160, 138, 135), (215, 212, 206))  # maroon median, p90,
-    # p10; white band (M: NAIP, design spec 5.7 table)
+    # maroon median, p90 and p10, and the white band [sRGB] (M: NAIP, design spec 5.7 table)
+    bands: tuple = ((181, 157, 149), (195, 170, 161), (160, 138, 135), (215, 212, 206))
     weights: tuple = (0.4, 0.2, 0.2, 0.2)  # how often each band occurs (A)
     thickness_m: tuple = (0.5, 3.0)  # (A)
     dip_deg: float = 2.0  # (M: fitted dips up to 3.4 deg)
@@ -166,7 +166,9 @@ def colour_map(hf, raster, types, rng, n=4096, strata=None, dots=(), dot_rgb=DOT
 
     Each type's colour is its palette median, mottled by noise over its
     p10-p90 range (DEFAULT_SPREAD where none is measured); type edges wander
-    WARP_M from the raster's samples, so they are not grid lines."""
+    WARP_M from the raster's samples, so they are not grid lines, and blend
+    over EDGE_SOFTNESS_M. Palettes are final colours: the saturation boost of
+    design spec 5.7 belongs in them (palette_colour)."""
     raster = np.asarray(raster)
     assert raster.shape == hf.z.shape, "the ground raster is on the heightmap's grid"
     kinds = dict(enumerate(types)) if not isinstance(types, dict) else dict(types)
@@ -177,7 +179,8 @@ def colour_map(hf, raster, types, rng, n=4096, strata=None, dots=(), dot_rgb=DOT
         palette = kind.appearance.palette
         base[index] = textures.srgb_to_linear(palette.base)
         if palette.p10 is not None and palette.p90 is not None:
-            spread[index] = (textures.srgb_to_linear(palette.p90) - textures.srgb_to_linear(palette.p10)) / (2 * P90_SIGMA)
+            p10, p90 = textures.srgb_to_linear(palette.p10), textures.srgb_to_linear(palette.p90)
+            spread[index] = (p90 - p10) / (2 * P90_SIGMA)
         else:
             spread[index] = base[index] * DEFAULT_SPREAD / P90_SIGMA
     missing = set(np.unique(raster)) - set(kinds)
@@ -194,15 +197,14 @@ def colour_map(hf, raster, types, rng, n=4096, strata=None, dots=(), dot_rgb=DOT
     row = np.clip(np.rint((north - ys[:, None] + WARP_M * noise(WARP_FEATURE_M, 3)) / hf.res), 0, hf.n - 1)
     t = raster[row.astype(np.intp), col.astype(np.intp)]
     del row, col
-    mottle = noise(SPREAD_FEATURE_M * 16, 5)
+    mottle = noise(SPREAD_FEATURE_M * 16, 5)  # 5 octaves: 48 m down to 3 m
     lin = base[t] + mottle[..., None] * spread[t]
-    heights = at_texels(hf, n)
     for key, recipe in (strata or {}).items():
         indices = [i for i, kind in kinds.items() if kind.key == key]
         if not indices:
             continue
         mask = np.isin(t, indices)
-        band = _strata_band(recipe, heights, xs, ys, mask, rng, noise)
+        band = _strata_band(recipe, at_texels(hf, n), xs, ys, mask, rng, noise)
         colours = textures.srgb_to_linear(recipe.bands)
         lin[mask] = colours[band] + 0.5 * mottle[mask][:, None] * spread[t[mask]]
     lin = cv2.GaussianBlur(lin, (0, 0), EDGE_SOFTNESS_M / (hf.size / n))  # soft type edges
@@ -370,7 +372,8 @@ def deshade(naip, dem_hf, units=None, acquired=NAIP2024_ACQUIRED, site=lighting.
     scaled = np.zeros_like(lum)
     for u in keys:
         inside = units == u
-        scaled[inside] = lum[inside] / np.median(lum[inside & usable])
+        clean = inside & usable
+        scaled[inside] = lum[inside] / np.median(lum[clean] if clean.any() else lum[inside])
     sun = _fit_sun(scaled, normals, usable, acquired, site)
     shadow = cast_shadows(heights, texel, sun) | (illumination(normals, sun) <= SHADOW_COS)
     sun = _fit_sun(scaled, normals, usable & ~shadow, acquired, site)  # again, without the shadows
@@ -412,7 +415,7 @@ def _fit_sun(scaled, normals, select, acquired, site):
 
 def _dark_spots(lum, texel_m):
     """Texels more than 1 - DARK_FACTOR darker than their NEIGHBOURHOOD_M median."""
-    grey = np.clip(np.rint(textures.linear_to_srgb(lum)), 0, 255).astype(np.uint8)
+    grey = textures.linear_to_srgb(lum)
     k = min(255, int(round(NEIGHBOURHOOD_M / texel_m)) | 1)
     return grey < DARK_FACTOR * cv2.medianBlur(grey, k)
 

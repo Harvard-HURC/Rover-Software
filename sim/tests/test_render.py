@@ -38,14 +38,16 @@ def world(body, sky=True, particles=False):
     """A world document: DART at 1 ms as fast as it runs, the mission sun and
     sky, the Sensors system, and `body`."""
     f = lambda v: " ".join(f"{x:.6g}" for x in v)  # noqa: E731
+    emitters = '<plugin filename="gz-sim-particle-emitter-system" name="gz::sim::systems::ParticleEmitter"/>'
     return f"""<?xml version="1.0"?>
 <sdf version="1.11">
   <world name="render">
     <physics name="1ms" type="dart"><max_step_size>0.001</max_step_size><real_time_factor>0</real_time_factor></physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
-    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
-    {'<plugin filename="gz-sim-particle-emitter-system" name="gz::sim::systems::ParticleEmitter"/>' if particles else ''}
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine></plugin>
+    {emitters if particles else ''}
     <scene><ambient>{f(lighting.AMBIENT)} 1</ambient><background>{f(lighting.BACKGROUND)} 1</background>
       <grid>false</grid><shadows>true</shadows>{'<sky/>' if sky else ''}</scene>
     <light type="directional" name="sun"><cast_shadows>true</cast_shadows><pose>0 0 100 0 0 0</pose>
@@ -337,9 +339,9 @@ class Render(unittest.TestCase):
         where its vertices are: a red slab on the left, a blue one on the right."""
         def slabs(path):
             V, F = meshes.slab(0)
-            meshes.write_glb_parts(path, [(V * (1.0, 1.0, 2.0) + (5, 1.2, 0), F, None, None, meshes.Material((0.8, 0.05, 0.05))),
-                                          (V * (1.0, 1.0, 2.0) + (5, -1.2, 0), F, None, None,
-                                           meshes.Material((0.05, 0.05, 0.8)))])
+            V = V * (1.0, 1.0, 2.0)
+            meshes.write_glb_parts(path, [(V + (5, 1.2, 0), F, None, None, meshes.Material((0.8, 0.05, 0.05))),
+                                          (V + (5, -1.2, 0), F, None, None, meshes.Material((0.05, 0.05, 0.8)))])
 
         uri = self.r.media.glb("test_slabs", slabs)
         include = model(self.r.models, "urc_slabs", lambda link: sdf.sub(
@@ -361,7 +363,8 @@ class Render(unittest.TestCase):
         farfield.build(self.r.models, self.r.media, "urc_far_render", origin, 64.0)
         eye = 2.0
         cams, aims = "", {}
-        for name, box in (("ellen", ((38.09, 38.13), (-110.84, -110.79))), ("butte", ((38.46, 38.48), (-110.91, -110.88)))):
+        peaks = (("ellen", ((38.09, 38.13), (-110.84, -110.79))), ("butte", ((38.46, 38.48), (-110.91, -110.88))))
+        for name, box in peaks:
             (s, n), (w, e) = box
             r0, c0 = (int(v) for v in np.floor(far.pixel(n, w)))
             r1, c1 = (int(v) for v in np.ceil(far.pixel(s, e)))
@@ -374,7 +377,7 @@ class Render(unittest.TestCase):
             elevation = math.atan2(z - eye, dist)
             aims[name] = elevation
             cams += camera(name, (0, 0, eye), math.atan2(y, x), 0.0, (640, 360), 0.6)
-        include = f"<include><uri>model://urc_far_render</uri><pose>0 0 0 0 0 0</pose></include>"
+        include = "<include><uri>model://urc_far_render</uri><pose>0 0 0 0 0 0</pose></include>"
         topics = ["/render/ellen", "/render/butte"]
         with_far = self.r.take(world(include + cams), topics)
         sky_only = self.r.take(world(cams), topics)

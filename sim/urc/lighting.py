@@ -81,8 +81,8 @@ def sun(date, time, lat, lon):
     m = 357.52911 + jc * (35999.05029 - 0.0001537 * jc)  # mean anomaly [deg]
     e = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc)  # orbit eccentricity
     rm = math.radians(m)
-    centre = (math.sin(rm) * (1.914602 - jc * (0.004817 + 0.000014 * jc)) + math.sin(2 * rm) * (0.019993 - 0.000101 * jc)
-              + math.sin(3 * rm) * 0.000289)
+    centre = (math.sin(rm) * (1.914602 - jc * (0.004817 + 0.000014 * jc))
+              + math.sin(2 * rm) * (0.019993 - 0.000101 * jc) + math.sin(3 * rm) * 0.000289)
     omega = math.radians(125.04 - 1934.136 * jc)
     apparent = math.radians(l0 + centre - 0.00569 - 0.00478 * math.sin(omega))
     obliquity = 23 + (26 + (21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813))) / 60) / 60
