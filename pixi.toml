@@ -19,6 +19,8 @@ sim-worlds = { cmd = "python sim/gen_worlds.py", depends-on = ["sim-model"], inp
 sim-maps = { cmd = "python sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 sim = { cmd = "bash sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 drive = { cmd = "python sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# Every world as a tile on one page: a click starts it with its driver station, Exit stops it.
+launcher = { cmd = "python sim/launcher/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 referee = "python sim/referee.py"
 sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=sim/bridge.yaml"
 sim-test = { cmd = "python -m unittest discover -s sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }

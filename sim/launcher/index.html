@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rover Simulations</title>
+<style>
+/* The driver station's palette (sim/station/static/station.css). */
+:root {
+  --dusk: #151c27;
+  --basalt: #1e2633;
+  --rule: #2e3949;
+  --bone: #ece4d2;
+  --dust: #929cad;
+  --ochre: #e5a03a;
+  --sky: #7db8ea;
+  --signal: #e4583f;
+  --veil: rgba(21, 28, 39, 0.78);
+  --numerals: "DIN Condensed", "DIN Alternate", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --text: "Avenir Next", "Avenir", "Segoe UI", "Roboto", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--dusk);
+  color: var(--bone);
+  font: 14px/1.4 var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
+
+/* The tiles. */
+.home { max-width: 1280px; margin: 0 auto; padding: 28px 16px 40px; }
+.home header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 20px; }
+.home h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.01em; }
+.home header p { margin: 0; color: var(--dust); }
+.offline { color: var(--signal); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.tile {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--basalt);
+  text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.tile:hover, .tile:focus-visible { transform: translateY(-2px); border-color: var(--ochre); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+.tile:active { transform: translateY(0); }
+.thumb {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 300ms ease;
+}
+.tile:hover .thumb { transform: scale(1.04); }
+.thumb.blank {  /* a world without a rendered map */
+  background:
+    repeating-radial-gradient(circle at 30% 70%, transparent 0 22px, rgba(146, 156, 173, 0.08) 22px 23px),
+    linear-gradient(160deg, #283244, var(--basalt));
+}
+.label {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 36px 14px 12px;
+  background: linear-gradient(transparent, rgba(12, 16, 23, 0.92));
+}
+.title { font-size: 19px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.sub { font-family: var(--numerals); font-size: 15px; letter-spacing: 0.02em; color: var(--dust); }
+.play {
+  position: absolute; top: 10px; right: 10px;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--veil); color: var(--ochre); font-size: 12px; font-weight: 600;
+  opacity: 0; transition: opacity 120ms ease;
+}
+.tile:hover .play, .tile:focus-visible .play { opacity: 1; }
+
+/* Starting, stopping, failed. */
+.overlay {
+  position: fixed; inset: 0; display: none;
+  align-items: center; justify-content: center; padding: 16px;
+  background: var(--veil); backdrop-filter: blur(4px);
+}
+body[data-status="starting"] .overlay,
+body[data-status="stopping"] .overlay,
+body[data-status="failed"] .overlay { display: flex; }
+.card {
+  width: min(680px, 100%); max-height: 100%;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 20px; border: 1px solid var(--rule); border-radius: 10px; background: var(--basalt);
+}
+.card-head { display: flex; align-items: center; gap: 12px; }
+.card h2 { margin: 0; font-size: 18px; font-weight: 600; flex: 1; }
+.elapsed { font-family: var(--numerals); font-size: 16px; color: var(--dust); }
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--rule); border-top-color: var(--ochre);
+  animation: spin 0.8s linear infinite;
+}
+body[data-status="failed"] .spinner { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.log {
+  margin: 0; min-height: 120px; max-height: 50vh; overflow: auto;
+  padding: 10px 12px; border-radius: 6px; background: var(--dusk);
+  font: 12px/1.5 var(--mono); color: var(--dust); white-space: pre-wrap; word-break: break-word;
+}
+body[data-status="failed"] .log { color: var(--bone); }
+.card-actions { display: flex; justify-content: flex-end; }
+.control {
+  padding: 7px 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--dusk);
+}
+.control:hover { border-color: var(--dust); }
+
+/* The running simulation: the driver station under a slim bar. */
+.sim { display: none; position: fixed; inset: 0; flex-direction: column; }
+body[data-status="running"] .sim { display: flex; }
+body[data-status="running"] .home { display: none; }
+.bar {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  height: 40px; padding: 0 12px; border-bottom: 1px solid var(--rule); background: var(--basalt);
+}
+.exit {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--dusk);
+}
+.exit:hover { border-color: var(--signal); color: var(--signal); }
+.bar-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-hint { margin-left: auto; color: var(--dust); font-size: 12px; white-space: nowrap; }
+@media (max-width: 640px) { .bar-hint { display: none; } }
+/* The frame stays clear until the station paints its own background over the note beneath. */
+.frame { position: relative; flex: 1; }
+.frame-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dust); }
+iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
+</style>
+</head>
+<body data-status="idle">
+<div class="home">
+  <header>
+    <h1>Rover simulations</h1>
+    <p id="hint">Click a world to start it with the driver station. Exit stops it.</p>
+  </header>
+  <div id="grid" class="grid"></div>
+</div>
+
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="card-title">
+  <div class="card">
+    <div class="card-head">
+      <span class="spinner" aria-hidden="true"></span>
+      <h2 id="card-title">Starting</h2>
+      <span id="elapsed" class="elapsed"></span>
+    </div>
+    <pre id="log" class="log"></pre>
+    <div class="card-actions"><button id="card-button" class="control" type="button">Cancel</button></div>
+  </div>
+</div>
+
+<div class="sim">
+  <div class="bar">
+    <button id="exit" class="exit" type="button" title="Stop the simulation and go back to the worlds">✕ Exit</button>
+    <span id="bar-title" class="bar-title"></span>
+    <span class="bar-hint">Exit or closing this tab stops the simulation</span>
+  </div>
+  <div class="frame">
+    <div class="frame-note">Loading the driver station…</div>
+    <iframe id="station" title="Driver station" allow="gamepad; fullscreen; autoplay"></iframe>
+  </div>
+</div>
+
+<script>
+const grid = document.getElementById("grid");
+const frame = document.getElementById("station");
+const log = document.getElementById("log");
+const hint = document.getElementById("hint");
+const HINT = hint.textContent;
+let worlds = [];
+let state = { status: "idle", world: null, url: null, log: [] };
+let shown = null;  // the station URL in the frame
+let since = null;  // when the current start began
+
+const title = id => (worlds.find(w => w.id === id) || { title: id || "" }).title;
+const post = (path, body) => fetch(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+});
+
+function tiles() {
+  grid.replaceChildren(...worlds.map(world => {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "tile";
+    tile.innerHTML = `<span class="thumb"></span><span class="play">Start ▸</span>
+      <span class="label"><span class="title"></span><span class="sub"></span></span>`;
+    const thumb = tile.querySelector(".thumb");
+    if (world.thumb) thumb.style.backgroundImage = `url(/thumb/${encodeURIComponent(world.id)}?v=${world.thumb})`;
+    else thumb.classList.add("blank");
+    tile.querySelector(".title").textContent = world.title;
+    tile.querySelector(".sub").textContent = world.subtitle;
+    tile.addEventListener("click", () => post("/api/launch", { world: world.id }));
+    return tile;
+  }));
+}
+
+function render() {
+  const { status } = state;
+  if (status === "starting" && since === null) since = Date.now();
+  if (status !== "starting") since = null;
+  document.body.dataset.status = status;
+  const name = title(state.world);
+  document.getElementById("card-title").textContent =
+    status === "failed" ? `${name} did not start` : status === "stopping" ? `Stopping ${name}` : `Starting ${name}`;
+  document.getElementById("card-button").textContent = status === "failed" ? "Back" : "Cancel";
+  document.getElementById("card-button").hidden = status === "stopping";
+  document.getElementById("bar-title").textContent = name;
+  const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  log.textContent = state.log.join("\n") || "…";
+  if (atEnd) log.scrollTop = log.scrollHeight;
+  const url = status === "running" ? state.url : null;
+  if (url !== shown) {
+    shown = url;
+    frame.src = url || "about:blank";
+  }
+  document.title = status === "running" ? `${name} · Rover Simulations` : "Rover Simulations";
+}
+
+frame.addEventListener("load", () => { if (shown) frame.contentWindow.focus(); });
+document.getElementById("exit").addEventListener("click", () => post("/api/stop"));
+document.getElementById("card-button").addEventListener("click", () => post("/api/stop"));
+setInterval(() => {
+  document.getElementById("elapsed").textContent = since === null ? "" : `${Math.round((Date.now() - since) / 1000)} s`;
+}, 250);
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { hint.textContent = HINT; hint.className = ""; };
+  ws.onmessage = event => { state = JSON.parse(event.data); render(); };
+  ws.onclose = () => {
+    hint.textContent = "The launcher is not running: start it with pixi run launcher.";
+    hint.className = "offline";
+    setTimeout(connect, 1000);
+  };
+}
+
+fetch("/api/worlds").then(r => r.json()).then(list => { worlds = list; tiles(); render(); });
+connect();
+</script>
+</body>
+</html>
