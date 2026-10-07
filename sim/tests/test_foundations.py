@@ -226,7 +226,8 @@ class SimulateRuns(unittest.TestCase):
 
     def test_params_build_the_rover(self):
         """Equal tyre mu along and across: DART's box friction cannot turn the
-        rover in place (sim/README.md, skid-steer friction); Params() turns."""
+        rover in place (sim/README.md, skid-steer friction), while Params()
+        turns (test_rover_sim.test_turns_in_place)."""
         square = dataclasses.replace(gen_model.Params(), mu_lateral=1.0)
         yaw = simulate(2.0, cmd=(0.0, 1.0), params=square).poses["base_link"][5]
         self.assertLess(abs(yaw), 0.05)
@@ -252,6 +253,7 @@ class CostHelpers(unittest.TestCase):
             cost = cpu_time_per_step({"flat": world}, iterations=4000, runs=1, schedule=[(0.0, 0.5, 0.0)])["flat"]
         self.assertTrue(0 < cost.per_step < 0.01, cost)
         self.assertGreater(cost.real_time_factor, 0.1)
+        self.assertGreater(cost.wall_real_time_factor, 0.1)
         self.assertTrue(0 < cost.startup_wall < 30 and cost.peak_rss > 50e6, cost)
         self.assertEqual(len(cost.load), 1)
         self.assertGreater(max(xs, default=0.0), 0.2)  # twist_publisher drove it

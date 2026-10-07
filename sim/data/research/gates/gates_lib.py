@@ -112,9 +112,11 @@ def interleaved(cases, iterations, runs, schedule=S.DRIVE_SCHEDULE):
     out = {}
     for label, r in rows.items():
         steps = [(full[0] - startup[0]) / (iterations - 1) for _, startup, full in r]
-        med = statistics.median(steps)
+        walls = [(full[1] - startup[1]) / (iterations - 1) for _, startup, full in r]
+        med, wall = statistics.median(steps), statistics.median(walls)
         out[label] = dict(cpu_ms_per_step=round(med * 1e3, 4), cpu_ms_per_step_runs=[round(s * 1e3, 4) for s in steps],
                           real_time_factor_cpu=round(0.001 / med, 3),
+                          wall_ms_per_step=round(wall * 1e3, 4), real_time_factor_wall=round(0.001 / wall, 3),
                           startup_wall_s=round(statistics.median(x[1][1] for x in r), 2),
                           startup_cpu_s=round(statistics.median(x[1][0] for x in r), 2),
                           full_wall_s=round(statistics.median(x[2][1] for x in r), 2),

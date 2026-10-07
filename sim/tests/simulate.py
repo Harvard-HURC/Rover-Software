@@ -271,11 +271,22 @@ class Cost:
     startup_wall: float  # [s] median wall time of a one-step run
     peak_rss: int  # [bytes] largest resident size of any run
     load: list  # 1-minute load average at the start of each run
+    wall_per_step: float  # [s] median wall time per physics step, start-up subtracted
 
     @property
     def real_time_factor(self):
-        """Sim seconds per CPU second at 1 ms steps: the most a single core gives."""
+        """Sim seconds per CPU second at 1 ms steps, the design's measure (it
+        holds on a loaded machine). A lower bound: the server's helper threads
+        (gz-transport, /clock sent every step) add CPU time beside the step;
+        on this machine it is 25-40 % below wall_real_time_factor
+        (sim/data/research/gates.json, G5)."""
         return 0.001 / self.per_step
+
+    @property
+    def wall_real_time_factor(self):
+        """Sim seconds per wall second at 1 ms steps: the real-time factor the
+        server reaches, valid on an otherwise idle machine only."""
+        return 0.001 / self.wall_per_step
 
 
 def gz_run(world, iterations, env=None):
@@ -314,7 +325,8 @@ def cpu_time_per_step(worlds, iterations=20_000, runs=5, schedule=DRIVE_SCHEDULE
     costs = {}
     for label, rows in samples.items():
         steps = [(full[0] - startup[0]) / (iterations - 1) for _, startup, full in rows]
+        walls = [(full[1] - startup[1]) / (iterations - 1) for _, startup, full in rows]
         costs[label] = Cost(statistics.median(steps), steps, statistics.median(r[1][0] for r in rows),
                             statistics.median(r[1][1] for r in rows), max(r[2][2] for r in rows),
-                            [r[0] for r in rows])
+                            [r[0] for r in rows], statistics.median(walls))
     return costs
