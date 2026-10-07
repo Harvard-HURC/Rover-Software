@@ -12,6 +12,7 @@
 //   a friction circle along the slip while sliding, a box aligned with the expected load while sticking,
 //   Stribeck on firm ground, smooth spatial noise and force-dependent slip (D3, D23). DART's default rule,
 //   min(mu) per box direction, cannot turn a skid-steer rover in place, so no wheel contact is left to it.
+//   The rule reads a wheel's spin through the controller's 5 ms speed filter (OnContact says why).
 // - rolling resistance and bulldozing as hub forces, scaled by each wheel's dig-in state (D5, D21).
 // - the dust emitters behind the rear wheels get a rate from speed, slip and the ground (D15).
 // - no-slip odometry (gz::math::DiffDriveOdometry) and tf as DiffDrive publishes them, and the drivetrain's
@@ -291,7 +292,6 @@ class RoverDrivetrain : public gz::sim::System,
     if (cmd_timeout_ > 0 && age > cmd_timeout_) vx = wz = 0.0;
     applied_cmd_ = {vx, wz};
 
-    static const Traction kNoGround;
     for (auto& w : wheels_) {
       w.last = w.current;
       w.current = Contact();
@@ -314,8 +314,8 @@ class RoverDrivetrain : public gz::sim::System,
       const Vector3d normal = w.last.touched ? w.last.normal : Vector3d::UnitZ;
       const double hub_speed = (w.velocity - normal * w.velocity.Dot(normal)).Length();
       if (dig_) {
-        w.dig.Step(w.last.touched ? *w.last.ground : kNoGround, dig_rate_gain_, dig_max_gain_, w.last.slip, hub_speed,
-                   dig_heal_length_, dt);
+        w.dig.Step(w.last.touched ? *w.last.ground : kCoulomb, dig_rate_gain_, dig_max_gain_, w.last.slip, hub_speed,
+                   dig_heal_length_, dt);  // in the air: heal only
       }
       w.hub_force = Vector3d::Zero;
       if (w.last.touched && w.load > 0) {
@@ -545,14 +545,15 @@ class RoverDrivetrain : public gz::sim::System,
     tf_pub_.Publish(tf);
   }
 
-  /// /model/rover/drivetrain (spec 9.3): rad/s, A, N m, V, m/s, N, D.
+  /// /model/rover/drivetrain (spec 9.3): rad/s, A, N m, V, m/s, N, D; slip and surface of the last step's
+  /// deepest contact ("" in the air).
   void PublishState(double t) {
     std::ostringstream json;
     json << std::setprecision(6) << "{\"t\": " << t << ", \"cmd\": [" << applied_cmd_[0] << ", " << applied_cmd_[1]
          << "], \"wheels\": {";
     for (size_t k = 0; k < wheels_.size(); ++k) {
       const Wheel& w = wheels_[k];
-      const Contact& c = w.current.touched ? w.current : w.last;
+      const Contact& c = w.last;
       json << (k ? ", " : "") << '"' << w.name << "\": {\"sp\": " << w.setpoint << ", \"w\": " << w.speed
            << ", \"i\": " << w.motor.current << ", \"tau\": " << w.motor.torque << ", \"u\": " << w.motor.voltage
            << ", \"sat\": " << (w.motor.saturated ? "true" : "false") << ", \"slip\": " << c.slip
@@ -571,8 +572,8 @@ class RoverDrivetrain : public gz::sim::System,
       if (w.dust_topic.empty()) continue;
       const Vector3d normal = w.last.touched ? w.last.normal : Vector3d::UnitZ;
       const double hub = (w.velocity - normal * w.velocity.Dot(normal)).Length();
-      const double rate = w.last.touched ? drive::DustRate(dust_, *w.last.ground, hub, w.last.slip, w.dig.factor, w.load)
-                                         : 0.0;
+      const double rate =
+          w.last.touched ? drive::DustRate(dust_, *w.last.ground, hub, w.last.slip, w.dig.factor, w.load) : 0.0;
       const bool emitting = rate > 0;
       if (!emitting && !w.emitting) continue;
       w.emitting = emitting;
@@ -583,7 +584,7 @@ class RoverDrivetrain : public gz::sim::System,
     }
   }
 
-  static inline const Traction kCoulomb{};
+  static inline const Traction kCoulomb{};  // plain Coulomb mu 1, no resistance, no dig-in: DART's default
 
   gz::sim::Model model_;
   bool enabled_ = false, world_ready_ = false, classified_ = false;

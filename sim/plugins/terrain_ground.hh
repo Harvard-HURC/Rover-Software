@@ -7,8 +7,8 @@
 // - ground.json ("rover-ground/2"): the traction table (one row per index: terrains.Traction's fields plus the
 //   dust factor), the default index, the collision map of the terrain model's other shapes (exact names, then
 //   prefixes, then terrain_default) and object_default, the surface of objects whose SDF sets no friction.
-// sim/urc/world.py writes both; FindGroundMap() reads them for the world's collision heightmap, whose file it
-// finds through terrain_heightmap.hh's ResolveUri.
+// sim/urc/world.py writes both. FindTerrainShape() finds the world's collision heightmap (its image through
+// terrain_heightmap.hh's ResolveUri) and FindGroundMap() reads the two files beside it.
 //
 // JSON is parsed as a google.protobuf.Struct: protobuf ships with gz-msgs, so this adds no dependency.
 // Header-only: a plugin includes it and links gz-sim (sim/CMakeLists.txt does).

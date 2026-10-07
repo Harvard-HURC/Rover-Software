@@ -170,21 +170,22 @@ class PhysicalVariant(unittest.TestCase):
         self.assertEqual(self.plugin.findtext("contact/object_surface"), "manmade")
         wheels = [(w.findtext("name"), w.findtext("joint"), w.findtext("link"), w.findtext("side"))
                   for w in self.plugin.findall("wheel")]
-        self.assertEqual(wheels, [("fl", "wheel_fl_joint", "wheel_fl", "left"), ("rl", "wheel_rl_joint", "wheel_rl", "left"),
-                                  ("fr", "wheel_fr_joint", "wheel_fr", "right"),
-                                  ("rr", "wheel_rr_joint", "wheel_rr", "right")])
+        self.assertEqual(wheels, [(f"{e}{s}", f"wheel_{e}{s}_joint", f"wheel_{e}{s}", side)
+                                  for side, s in (("left", "l"), ("right", "r")) for e in "fr"])
 
     def test_dig_presets(self):
         """The strong preset is the default (the user's choice); mild keeps the
         catalogue's dig-in, off has none."""
+        def contact(dig):
+            drive = gen_model.DriveParams(mode="physical", dig=dig)
+            model = ET.fromstring(gen_model.build_sdf(dataclasses.replace(P, drive=drive))).find("model")
+            return model.find("plugin[@filename='RoverDrivetrain']/contact")
+
         for preset, gains in (("mild", (1.0, 1.0)), ("strong", (5.0, 4.0))):
-            plugin = ET.fromstring(gen_model.build_sdf(dataclasses.replace(
-                P, drive=gen_model.DriveParams(mode="physical", dig=preset)))).find("model/plugin[@filename='RoverDrivetrain']")
-            self.assertEqual((float(plugin.findtext("contact/dig_rate_gain")),
-                              float(plugin.findtext("contact/dig_max_gain"))), gains)
-        off = ET.fromstring(gen_model.build_sdf(dataclasses.replace(
-            P, drive=gen_model.DriveParams(mode="physical", dig="off")))).find("model/plugin[@filename='RoverDrivetrain']")
-        self.assertEqual(off.findtext("contact/dig"), "false")
+            self.assertEqual(contact(preset).findtext("dig"), "true")
+            self.assertEqual((float(contact(preset).findtext("dig_rate_gain")),
+                              float(contact(preset).findtext("dig_max_gain"))), gains)
+        self.assertEqual(contact("off").findtext("dig"), "false")
 
     def test_surface_rows_come_from_the_catalogue(self):
         """The default and object surfaces' traction, for worlds without a ground map."""
@@ -193,7 +194,8 @@ class PhysicalVariant(unittest.TestCase):
         for key, row in rows.items():
             kind = terrains.TYPES[key]
             for field in dataclasses.fields(terrains.Traction):
-                self.assertAlmostEqual(float(row.findtext(field.name)), getattr(kind.traction, field.name), msg=field.name)
+                self.assertAlmostEqual(float(row.findtext(field.name)), getattr(kind.traction, field.name),
+                                       msg=field.name)
             self.assertAlmostEqual(float(row.findtext("dust")), kind.appearance.dust)
 
     def test_wheel_joints_and_tyres(self):
@@ -228,8 +230,8 @@ class PhysicalVariant(unittest.TestCase):
         camera = self.model.find("link[@name='camera_tilt_link']/sensor[@name='camera']/camera")
         self.assertEqual((int(camera.findtext("image/width")), int(camera.findtext("image/height"))), (1280, 720))
         self.assertEqual(float(camera.findtext("clip/far")), 80_000.0)
-        self.assertEqual((float(camera.findtext("depth_camera/clip/near")), float(camera.findtext("depth_camera/clip/far"))),
-                         P.camera_clip)
+        depth = camera.find("depth_camera/clip")
+        self.assertEqual((float(depth.findtext("near")), float(depth.findtext("far"))), P.camera_clip)
         self.assertEqual(camera.findtext("noise/type"), "gaussian")
         self.assertEqual(float(camera.findtext("noise/stddev")), 0.06)
 
@@ -256,7 +258,8 @@ class TyreCompliance(unittest.TestCase):
             for e in "fr":
                 wheel = f"wheel_{e}{s}"
                 axial, radial = joints[f"{wheel}_tire_axial"], joints[f"{wheel}_tire_radial"]
-                self.assertEqual((axial.findtext("parent"), axial.findtext("child")), (f"rocker_{side}", f"{wheel}_hub_axial"))
+                self.assertEqual((axial.findtext("parent"), axial.findtext("child")),
+                                 (f"rocker_{side}", f"{wheel}_hub_axial"))
                 self.assertEqual((radial.findtext("parent"), radial.findtext("child")),
                                  (f"{wheel}_hub_axial", f"{wheel}_hub_radial"))
                 self.assertEqual(joints[f"{wheel}_joint"].findtext("parent"), f"{wheel}_hub_radial")

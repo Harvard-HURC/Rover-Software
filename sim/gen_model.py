@@ -89,7 +89,7 @@ class DriveParams:
     backlash: float = 0.026  # [rad] 1.5 deg (A: IMS 0.8-2.5 deg [22])
     kp: float = 4.0  # [V/(rad/s)] (M: prototype tuning)
     ki: float = 40.0  # [V/rad] (M: prototype tuning)
-    speed_filter: float = 0.005  # [s] measured-speed time constant (A)
+    speed_filter: float = 0.005  # [s] measured-speed time constant, also the contact rule's (A)
     substeps: int = 4  # motor integration steps per 1 ms physics step
     # Wheel contacts (design spec 6.4): friction circle while sliding, an aligned box while sticking.
     v_stribeck: float = 0.03  # [m/s] (A)
@@ -98,9 +98,9 @@ class DriveParams:
     stick_perp_ratio: float = 0.3  # mu across the expected load while sticking: holds within 4.4 % of mu_s
     mu_noise: float = 0.2  # spatial mu variation (A)
     mu_noise_length: float = 0.3  # [m] (A)
-    # [rad/s] x radius: rolling resistance and bulldozing fade in over this hub speed (A; design spec 6.2 has
-    # 0.2, but at 3 cm/s the fade lets a dug-in rover creep round at 0.25 x the fresh rate instead of sticking;
-    # at 0.05 it turns 0.07 x, measured).
+    # [rad/s] rolling resistance and bulldozing fade in over rr_w0 x radius of hub speed, 7.5 mm/s (A; design
+    # spec 6.2 has 0.2, but over 3 cm/s a rover dug in by the strong preset creeps round at 0.25 x the fresh
+    # rate instead of sticking; at 0.05 it turns 0.07 x, measured).
     rr_w0: float = 0.05
     dig: str = "strong"  # DIG_PRESETS key, or "off"
     dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
