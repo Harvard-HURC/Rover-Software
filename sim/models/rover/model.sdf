@@ -813,6 +813,24 @@
           <dust>0</dust>
         </surface>
       </contact>
+      <tracks>
+        <spacing>0.05</spacing>
+        <chunk>128</chunk>
+        <max_segments>8000</max_segments>
+        <berm_base>0.3</berm_base>
+        <berm_gain>1</berm_gain>
+        <berm_max>0.06</berm_max>
+        <berm_min>0.004</berm_min>
+        <opacity_base>0.14</opacity_base>
+        <opacity_dig>0.3</opacity_dig>
+        <floor_offset>0.004</floor_offset>
+        <pit_dig>0.05</pit_dig>
+        <smear_slip>0.3</smear_slip>
+        <frame_budget>256</frame_budget>
+        <stress>0</stress>
+        <report>0</report>
+        <width>0.1</width>
+      </tracks>
     </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/model/rover/joint_states</topic>

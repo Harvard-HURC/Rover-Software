@@ -15,11 +15,13 @@ worlds use PGS (Delivery, Astrobiology, Autonomy, the proving ground) and
 Dantzig (Equipment Servicing, rover_test). A wheel touches the ground at both
 tread edges, and the two solvers share its load between them differently
 (rover_drivetrain.cpp), which once made PGS slip 1.85x the design in sand."""
+import contextlib
 import dataclasses
 import json
 import math
 import os
 import re
+import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
@@ -721,6 +723,64 @@ class Interfaces(unittest.TestCase):
         self.assertEqual(first.state.poses, second.state.poses)
 
 
+@contextlib.contextmanager
+def captured_stderr(lines):
+    """Collect what this process (the server in it included) writes to stderr meanwhile into `lines`."""
+    sys.stderr.flush()
+    saved = os.dup(2)
+    with tempfile.TemporaryFile() as f:
+        os.dup2(f.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+            f.seek(0)
+            lines.extend(f.read().decode(errors="replace").splitlines())
+
+
+class Ruts(unittest.TestCase):
+    """The ruts and pits behind the wheels (DriveParams.ruts, on by default
+    since the user's decisions of 2026-10-07; plugins/rover_tracks.hh) are
+    visual only: the drivetrain feeds them from its state at the end of each
+    step and writes nothing for them."""
+
+    SCHEDULE = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (10.5, 0.0, 0.0), (11.0, 0.3, 0.0)]  # dig in, drive out
+
+    def sandpit(self, ruts, solver):
+        """LooseSand's sand disc at the strong preset: a spin that digs every wheel in to D = 2, then out onto the
+        rock; base_link every step. With ruts, their cost lines on stderr (TrackParams.report)."""
+        X, Y = FLAT.grid()
+        raster = np.where(np.hypot(X, Y) < 3.0, GROUND["sand"][0], GROUND["rock"][0]).astype(np.uint8)
+        index, _, dust = GROUND["sand"]
+        sand = ground_row(index, "sand", terrains.traction(terrains.SAND, "strong"), dust)
+        tracks = dataclasses.replace(gen_model.TrackParams(), report=1.0)
+        lines = []
+        with captured_stderr(lines):
+            run = drive(16.0, self.SCHEDULE, raster=raster, params=physical(ruts=ruts, tracks=tracks), solver=solver,
+                        rows=[sand if r["key"] == "sand" else r for r in ROWS], trace_every=1)
+        return run, [line for line in lines if "RoverDrivetrain tracks" in line]
+
+    def test_physics_unchanged(self):
+        """With the ruts on and off: the same base_link pose every step and the
+        same drivetrain states, on both solvers, through a dig-in to D = 2 and
+        the drive out. With them on the layer laid track segments and pits
+        (its report: the sand disc's tracks, a few hundred records); headless
+        (no Sensors system), nothing is drawn and no map is read."""
+        for solver in SOLVERS:
+            with self.subTest(solver=solver):
+                off, quiet = self.sandpit(False, solver)
+                on, report = self.sandpit(True, solver)
+                np.testing.assert_array_equal(on.state.trace, off.state.trace)
+                self.assertEqual(on.states, off.states)
+                self.assertEqual(quiet, [])
+                self.assertGreater(on.wheel("dig", 9.0, 10.5).min(), 1.95)
+                records = [int(re.search(r": (\d+) records", line).group(1)) for line in report]
+                self.assertGreater(len(records), 10, report)
+                self.assertGreater(records[-1], 100, report[-1])
+                self.assertIn("render 0 frames", report[-1])
+
+
 @unittest.skipUnless(os.environ.get("ROVER_PERF"), "slow (minutes): set ROVER_PERF=1")
 class Cost(unittest.TestCase):
     def test_at_most_a_quarter_dearer_than_diffdrive(self):
@@ -741,6 +801,26 @@ class Cost(unittest.TestCase):
                 ratio = costs["physical"].per_step / costs["diffdrive"].per_step
                 print(f"{world}: physical / DiffDrive CPU time per step {ratio:.3f} ({costs})")
                 self.assertLessEqual(ratio, 1.25)
+
+    def test_ruts_cost_almost_nothing(self):
+        """CPU time per step with the ruts on against off (DriveParams.ruts),
+        the same world and drive, Sensors stripped (the drawing runs on the
+        rendering thread, measured in sim/README.md): at most +5 %
+        (interleaved runs). rover_test's plane is regolith, so its ruts are
+        laid all the way; Delivery's start is regolith too."""
+        for world in ("rover_test", "urc_delivery"):
+            if not (WORLDS / f"{world}.sdf").exists():
+                continue
+            with self.subTest(world=world), world_copy(world) as copy:
+                text = re.sub(r"<real_time_factor>[^<]*</real_time_factor>", "<real_time_factor>0</real_time_factor>",
+                              Path(copy).read_text())
+                with temp_sdf(text, WORLDS) as plain, world_file(plain, params=physical(cmd_timeout=0.0)) as on, \
+                        world_file(plain, params=physical(cmd_timeout=0.0, ruts=False)) as off:
+                    costs = cpu_time_per_step({"on": on, "off": off}, iterations=20_000, runs=5)
+                ratio = costs["on"].per_step / costs["off"].per_step
+                print(f"{world}: ruts on / off CPU time per step {ratio:.3f} "
+                      f"({costs['on'].per_step * 1e3:.4f} / {costs['off'].per_step * 1e3:.4f} ms)", flush=True)
+                self.assertLessEqual(ratio, 1.05)
 
 
 if __name__ == "__main__":

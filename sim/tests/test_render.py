@@ -2,12 +2,15 @@
 "Rendering"): the patched media's sky, Terra roughness and haze, the far
 field, merged GLB clutter, what the haze leaves alone (depth), and the
 record of the rover's opt-in dust (gen_model.DriveParams.dust, off by
-default since the user's decision of 2026-10-07): drawn, and seen by depth.
+default since the user's decision of 2026-10-07): drawn, and seen by depth;
+the ruts and pits behind the wheels (DriveParams.ruts, on by default since
+then) as the cameras see them while the rover drives (Ruts).
 
 Gazebo's ogre2 starts once per process, so every picture is taken in a
-subprocess of its own (this file run with --render) from a small world built
-here, with the patched media (sim/tools/gz_media.py, made into a temporary
-build directory) or Gazebo's stock media.
+subprocess of its own (this file run with --render, or --drive for a drive:
+Renderer.drive) from a small world built here or a copy of a generated one,
+with the patched media (sim/tools/gz_media.py, made into a temporary build
+directory) or Gazebo's stock media.
 """
 import json
 import math
@@ -123,6 +126,151 @@ class Renderer:
                 raise AssertionError(f"no picture on {topic}:\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}")
             shots[topic] = np.load(file)
         return shots
+
+    def drive(self, world_text, rover_sdf, cfg):
+        """Drive the rover in world `world_text` (drive_world) in a subprocess (_drive_main); cfg: name (the
+        world's), topics, schedule [(t, vx, wz)], seconds, grabs [(phase, t)], reset_steps (0: no reset).
+        Returns (frames {(topic, grab index): image}, base_link trace rows (phase, t, x, y, z, yaw), the
+        drivetrain's states [(phase, state)] (design spec 9.3), the subprocess's stderr, the frames' sim times
+        {(topic, grab index): s})."""
+        self.count += 1
+        out = self.tmp / f"drive{self.count}"
+        models = out / "models"
+        (models / "rover_drive").mkdir(parents=True)
+        (models / "rover_drive" / "model.sdf").write_text(rover_sdf)
+        (models / "rover_drive" / "model.config").write_text(sdf.model_config(
+            "rover_drive", "A test variant of the rover.", "sim/tests/test_render.py"))
+        path = out / "world.sdf"
+        path.write_text(world_text)
+        base = {k: v for k, v in os.environ.items() if k != "GZ_RENDERING_RESOURCE_PATH"}
+        env = gzenv.environment(self.patched, partition=f"render_{os.getpid()}_{self.count}", ip="127.0.0.1",
+                                base=base)
+        env["GZ_SIM_RESOURCE_PATH"] = os.pathsep.join([str(models), str(self.models), env["GZ_SIM_RESOURCE_PATH"]])
+        config = out / "cfg.json"
+        config.write_text(json.dumps({**cfg, "world": str(path), "out": str(out)}))
+        result = subprocess.run([sys.executable, __file__, "--drive", str(config)], env=env, capture_output=True,
+                                text=True, timeout=900)
+        frames = {}
+        for k in range(len(cfg["grabs"])):
+            for topic in cfg["topics"]:
+                file = out / f"{topic.strip('/').replace('/', '_')}_{k}.npy"
+                if not file.exists():
+                    raise AssertionError(f"no frame {k} on {topic}:\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}")
+                frames[(topic, k)] = np.load(file)
+        states = [(phase, json.loads(text)) for phase, text in json.loads((out / "states.json").read_text())]
+        stamps = {(key.rsplit(" ", 1)[0], int(key.rsplit(" ", 1)[1])): t
+                  for key, t in json.loads((out / "stamps.json").read_text()).items()}
+        return frames, np.load(out / "trace.npy"), states, result.stderr, stamps
+
+
+def aim(eye, target):
+    """(yaw, pitch down) of a camera at `eye` looking at `target`."""
+    d = np.subtract(target, eye, dtype=float)
+    return math.atan2(d[1], d[0]), math.atan2(-d[2], math.hypot(d[0], d[1]))
+
+
+def drive_world(world_name, rover, params, cameras, extra=""):
+    """A copy of sim/worlds/<world_name>.sdf to drive in: as fast as it runs, the rover built from gen_model
+    Params `params` (its model written beside, see Renderer.drive) at rover = (x, y, yaw) 0.25 m above the
+    terrain, the station's chase camera and rover eye (the models it spawns), and static cameras
+    [(name, eye, target, kind, size)] (kind "camera" or "rgbd_camera"), eye and target `z` above the terrain."""
+    from simulate import variant_sdf  # here: simulate sets the tests' Gazebo environment when imported
+    from worldfiles import ROVER_POSE, WORLDS, terrain as world_terrain
+    hf = world_terrain(world_name)
+    text = (WORLDS / f"{world_name}.sdf").read_text()
+    text = text.replace("<real_time_factor>1</real_time_factor>", "<real_time_factor>0</real_time_factor>")
+    x, y, yaw = rover
+    text, n = ROVER_POSE.subn(rf"\g<1>{x} {y} {hf.height(x, y) + 0.25} 0 0 {yaw}\g<2>", text)
+    assert n == 1, world_name
+    text = variant_sdf(text, rover_uri="model://rover_drive")
+    body = ("<include><uri>model://chase_camera</uri><name>chase_camera</name>"
+            f"<pose>{x + 3} {y} 3 0 0 0</pose></include>"
+            f"<include><uri>model://eye_camera</uri><name>eye_camera</name><pose>{x} {y} 3 0 0 0</pose></include>")
+    for name, eye, target, kind, size in cameras:
+        eye = (eye[0], eye[1], eye[2] + hf.height(eye[0], eye[1]))
+        target = (target[0], target[1], target[2] + hf.height(target[0], target[1]))
+        body += camera(name, eye, *aim(eye, target), size=size, hfov=1.0, kind=kind)
+    return text.replace("</world>", body + extra + "\n  </world>"), gen_model.build_sdf(params)
+
+
+def _drive_main(cfg_path):
+    """The subprocess of a drive (Renderer.drive): run the world with the rover driving cfg's schedule (sim time,
+    a command every 20 ms) for cfg's seconds, keep for each topic the first frame stamped at or after each grab
+    time; with reset_steps, then request a world reset (the server is stopped, so it comes at that step) and run
+    that many steps more; save the frames, the drivetrain's states and the base_link trace."""
+    cfg = json.loads(Path(cfg_path).read_text())
+    import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
+    from gz.msgs10.boolean_pb2 import Boolean
+    from gz.msgs10.image_pb2 import Image
+    from gz.msgs10.stringmsg_pb2 import StringMsg
+    from gz.msgs10.twist_pb2 import Twist
+    from gz.msgs10.world_control_pb2 import WorldControl
+    from gz.sim8 import Link, Model, TestFixture, World, world_entity
+    from gz.transport13 import Node
+    out = Path(cfg["out"])
+    node = Node()
+    phase = [0]  # 1 after the reset
+    frames = {}  # (topic, grab index) -> (stamp, message): the earliest stamped at or after the grab time
+    grabs = cfg["grabs"]  # [phase, t]
+
+    def on_image(msg, topic):
+        stamp = msg.header.stamp.sec + 1e-9 * msg.header.stamp.nsec
+        for k, (p, t) in enumerate(grabs):
+            key = (topic, k)
+            if p == phase[0] and t - 1e-6 <= stamp < t + 0.1 - 1e-6 and (key not in frames or stamp < frames[key][0]):
+                frames[key] = (stamp, msg)
+
+    for topic in cfg["topics"]:
+        node.subscribe(Image, topic, lambda msg, t=topic: on_image(msg, t))
+    states = []
+    node.subscribe(StringMsg, gen_model.DRIVETRAIN_TOPIC, lambda m: states.append((phase[0], m.data)))
+    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    twist, handles, trace = Twist(), {}, []
+
+    def pre_update(info, ecm):
+        if not handles:
+            handles["base"] = Link(Model(World(world_entity(ecm)).model_by_name(ecm, "rover")).link_by_name(
+                ecm, "base_link"))
+        if info.iterations % 20 == 0:
+            vx = wz = 0.0
+            for start, v, w in cfg["schedule"]:
+                if info.iterations / 1000 >= start:
+                    vx, wz = v, w
+            twist.linear.x, twist.angular.z = vx, wz
+            publisher.publish(twist)
+
+    def post_update(info, ecm):
+        if info.iterations % 10 == 0:
+            p = handles["base"].world_pose(ecm)
+            trace.append((phase[0], info.iterations / 1000, p.pos().x(), p.pos().y(), p.pos().z(),
+                          p.rot().euler().z()))
+
+    fixture = TestFixture(cfg["world"])
+    fixture.on_pre_update(pre_update)
+    fixture.on_post_update(post_update)
+    fixture.finalize()
+    fixture.server().run(True, round(cfg["seconds"] * 1000), False)
+    time.sleep(0.5)
+    if cfg.get("reset_steps"):
+        request = WorldControl()
+        request.reset.all = True
+        ok, _ = node.request(f"/world/{cfg['name']}/control", request, WorldControl, Boolean, 3000)
+        if not ok:
+            print("RESET FAILED", flush=True)
+        phase[0] = 1
+        fixture.server().run(True, cfg["reset_steps"], False)
+        time.sleep(0.5)
+    stamps = {}
+    for (topic, k), (stamp, msg) in list(frames.items()):
+        stamps[f"{topic} {k}"] = round(stamp, 6)
+        if len(msg.data) == msg.width * msg.height * 4:
+            image = np.frombuffer(msg.data, np.float32).reshape(msg.height, msg.width)
+        else:
+            image = np.frombuffer(msg.data, np.uint8).reshape(msg.height, msg.width, 3)
+        np.save(out / f"{topic.strip('/').replace('/', '_')}_{k}.npy", image)
+    np.save(out / "trace.npy", np.array(trace))
+    (out / "states.json").write_text(json.dumps(states))
+    (out / "stamps.json").write_text(json.dumps(stamps))
 
 
 def _render_main(cfg_path):
@@ -411,8 +559,259 @@ class Render(unittest.TestCase):
             self.assertGreater(np.abs(a - b).max(), 20, (name, a, b, math.degrees(aims[name])))
 
 
+def back_project(depth, eye, target, hfov=1.0):
+    """World points (h, w, 3) of a depth image from camera() at `eye` looking at `target` (aim): gz-rendering's
+    depth is along the optical axis; the camera looks along its x, y left, z up."""
+    h, w = depth.shape
+    yaw, pitch = aim(eye, target)
+    f = (w / 2) / math.tan(hfov / 2)
+    v, u = np.mgrid[:h, :w].astype(float)
+    cam = np.stack([depth, -(u - (w - 1) / 2) * depth / f, -(v - (h - 1) / 2) * depth / f], axis=-1)
+    cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
+    rotation = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]]) @ np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    return cam @ rotation.T + np.asarray(eye)
+
+
+class Ruts(unittest.TestCase):
+    """The ruts and pits behind the wheels (gen_model.DriveParams.ruts, on by
+    default since the user's decisions of 2026-10-07; plugins/rover_tracks.hh,
+    rover_tracks_render.hh) as camera sensors see them: the station's chase
+    camera and rover eye, static close-ups and an RGB-D. The proving ground's
+    sand pit, the synthesis' drive: 2 m west at 0.5 m/s, a 6 s spin at 1 rad/s
+    (the strong dig-in takes every wheel to D = 2), back out 5 s, then a world
+    reset. Each drive is a subprocess (Renderer.drive); the same drive on the
+    slickrock slab (sinkage 0) beside it."""
+
+    WORLD = "proving_ground"
+    SAND = (19.5, 0.0, math.pi)  # the sand pit's flat, heading west
+    ROCK = (20.5, 20.0, math.pi)  # the slickrock slab's flat
+    SCHEDULE = [(0.0, 0.0, 0.0), (1.0, 0.5, 0.0), (5.0, 0.0, 1.0), (11.0, 0.0, 0.0), (11.5, -0.5, 0.0),
+                (16.5, 0.0, 0.0)]
+    GRABS = [(0, 5.0), (0, 11.0), (0, 16.9), (1, 0.9)]  # driven 1.5 m, dug in, backed out; 0.9 s after the reset
+    DEPTH = ((22.8, -1.6, 1.5), (17.5, 0.0, 0.0))  # the RGB-D's eye and target, above the terrain
+    CAMERAS = [("top", (18.5, -2.6, 3.2), (18.5, 0.0, 0.0), "camera", (640, 360)),
+               ("side", (18.0, -2.0, 0.45), (18.0, 0.0, 0.12), "camera", (640, 360)),
+               ("d", *DEPTH, "rgbd_camera", (640, 360))]
+    TOPICS = [gen_model.CHASE_IMAGE_TOPIC, gen_model.EYE_IMAGE_TOPIC, "/render/top", "/render/side",
+              "/render/d/image", "/render/d/depth_image"]
+
+    @classmethod
+    def setUpClass(cls):
+        from simulate import physical  # noqa: E402  (the Gazebo environment of the tests)
+        from worldfiles import terrain as world_terrain
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.r = Renderer(cls._tmp.name)
+        cls.hf = world_terrain(cls.WORLD)
+        cls.runs = {}
+        for label, pose, ruts in (("on", cls.SAND, True), ("again", cls.SAND, True), ("off", cls.SAND, False),
+                                  ("rock_on", cls.ROCK, True), ("rock_off", cls.ROCK, False)):
+            dy = pose[1] - cls.SAND[1]
+            cameras = [(n, (e[0], e[1] + dy, e[2]), (t[0], t[1] + dy, t[2]), k, s) for n, e, t, k, s in cls.CAMERAS]
+            text, rover = drive_world(cls.WORLD, pose, physical(ruts=ruts), cameras)
+            rock = label.startswith("rock")
+            cls.runs[label] = cls.r.drive(text, rover, dict(
+                name=cls.WORLD, topics=cls.TOPICS, schedule=cls.SCHEDULE, seconds=17.0,
+                grabs=cls.GRABS[:3] if rock else cls.GRABS, reset_steps=0 if rock else 1000))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def frames(self, label):
+        return self.runs[label][0]
+
+    def changed(self, topic, grab, threshold=8, a="off", b="on"):
+        """Pixels of `topic` at `grab` that differ by more than `threshold` DN between runs a and b."""
+        x, y = self.frames(a)[(topic, grab)].astype(int), self.frames(b)[(topic, grab)].astype(int)
+        return np.abs(y - x).max(axis=-1) > threshold
+
+    def depth_change(self, grab):
+        """(on - off depth, the on run's world points) of the RGB-D at `grab`."""
+        off, on = (self.frames(k)[("/render/d/depth_image", grab)] for k in ("off", "on"))
+        eye, target = ((p[0], p[1], p[2] + self.hf.height(p[0], p[1])) for p in self.DEPTH)
+        with np.errstate(invalid="ignore"):  # no return in either: inf - inf
+            return on - off, back_project(on, eye, target)
+
+    def wheel_paths(self, phase=0):
+        """World (x, y) of the four wheel centres along the run, every 10 ms."""
+        trace = self.runs["on"][1]
+        trace = trace[trace[:, 0] == phase]
+        p = gen_model.Params()
+        out = []
+        for dx, dy in ((p.wheel_dx, p.pivot_y), (p.wheel_dx, -p.pivot_y), (-p.wheel_dx, p.pivot_y),
+                       (-p.wheel_dx, -p.pivot_y)):
+            c, s = np.cos(trace[:, 5]), np.sin(trace[:, 5])
+            out.append(np.stack([trace[:, 2] + c * dx - s * dy, trace[:, 3] + s * dx + c * dy], axis=-1))
+        return np.concatenate(out)
+
+    def test_physics_unchanged(self):
+        """The ruts read the drivetrain's state and write nothing: the same
+        base_link trace and drivetrain states with them on and off, on sand
+        (PGS, the proving ground's solver) and on rock; the strong dig-in
+        took the wheels to D = 2 on sand, so the pits were dug."""
+        for on, off in (("on", "off"), ("rock_on", "rock_off")):
+            np.testing.assert_array_equal(self.runs[on][1], self.runs[off][1])
+            self.assertEqual(self.runs[on][2], self.runs[off][2])
+        dug = max(w["dig"] for phase, s in self.runs["on"][2] if phase == 0 and s["t"] <= 11.0
+                  for w in s["wheels"].values())
+        self.assertGreater(dug, 1.95)
+
+    def test_ruts_behind_the_rover_on_sand(self):
+        """After 1.5 m of driving on sand the static views and the station's
+        chase view show the track (at the strong preset's D 1.25: the faint
+        floor and 7 mm berms): mostly darker pixels, between the wheels' start
+        and where they are."""
+        for topic, share in (("/render/top", 0.02), ("/render/side", 0.02), (gen_model.CHASE_IMAGE_TOPIC, 0.005)):
+            self.assertGreater(self.changed(topic, 0).mean(), share, topic)
+        off, on = (self.frames(k)[("/render/top", 0)].astype(int).sum(axis=-1) for k in ("off", "on"))
+        changed = self.changed("/render/top", 0)
+        self.assertGreater(np.mean(on[changed] < off[changed]), 0.8)  # the floor overlay darkens
+        # Where the RGB-D sees changes, they lie on the wheels' paths, behind the rover.
+        _, points = self.depth_change(0)
+        moved = self.changed("/render/d/image", 0)
+        self.assertGreater(moved.sum(), 500)
+        x = points[moved][:, 0]
+        trace = self.runs["on"][1]
+        here = trace[(trace[:, 0] == 0) & (trace[:, 1] <= 5.0)][-1, 2]  # base_link's x; the front wheels 0.45 m on
+        self.assertGreater(np.percentile(x, 5), here - 0.8)  # not ahead of the rover
+        self.assertLess(np.percentile(x, 95), self.SAND[0] + 0.8)
+
+    def test_darker_and_higher_after_digging_in(self):
+        """Dug in to D = 2 by the spin, the wheels stand in pits: the RGB-D
+        sees rims up to 2.6 cm x 1.35 above the surface (measured 2.9 cm; the
+        berms of driving at D 1.25 reach 1.2 cm, at most 1.6 cm below D 1.3),
+        and round the wheels 1.5 times as many pixels are darker, and by more,
+        than there at the end of the track before the spin."""
+        heights = []
+        for grab in (0, 1):
+            change, points = self.depth_change(grab)
+            closer = np.nan_to_num(change) < -0.002
+            heights.append(float(np.max(points[closer][:, 2] - self.hf.height(points[closer][:, 0],
+                                                                                points[closer][:, 1]))))
+        self.assertLess(heights[0], 0.017, heights)
+        self.assertGreater(heights[1], 0.022, heights)
+        trace = self.runs["on"][1]
+        row = trace[(trace[:, 0] == 0) & (trace[:, 1] <= 11.0)][-1]  # where the wheels dug in
+        p = gen_model.Params()
+        c, s = math.cos(row[5]), math.sin(row[5])
+        wheels = np.array([(row[2] + c * dx - s * dy, row[3] + s * dx + c * dy)
+                           for dx in (p.wheel_dx, -p.wheel_dx) for dy in (p.pivot_y, -p.pivot_y)])
+        eye, target = ((q[0], q[1], q[2] + self.hf.height(q[0], q[1])) for q in self.DEPTH)
+        dark = []
+        for grab in (0, 1):
+            depth = self.frames("off")[("/render/d/depth_image", grab)]
+            ground = back_project(depth, eye, target)
+            near = np.isfinite(depth) & (np.min(np.hypot(ground[..., None, 0] - wheels[:, 0],
+                                                         ground[..., None, 1] - wheels[:, 1]), axis=-1) < 0.35)
+            off, on = (self.frames(k)[("/render/d/image", grab)].astype(int).sum(axis=-1) for k in ("off", "on"))
+            diff = (on - off)[near]
+            dark.append((int(np.sum(diff < -8)), float(diff[diff < -8].mean())))
+        self.assertGreater(dark[1][0], 1.5 * dark[0][0], dark)
+        self.assertLess(dark[1][1], dark[0][1] - 10, dark)  # sum of R, G, B [DN]
+
+    def test_depth_only_closer_and_on_the_ground(self):
+        """Depth images only get closer (berms, rims), never farther, by at
+        most 15 cm along the rays; every changed pixel is on the ground (within
+        -2 / +9 cm of the terrain the sheet describes) and within 0.45 m of a
+        wheel's path: nothing floats. The overlay floor writes no depth."""
+        paths = self.wheel_paths()
+        for grab in (0, 1, 2):
+            with self.subTest(grab=grab):
+                change, points = self.depth_change(grab)
+                off = self.frames("off")[("/render/d/depth_image", grab)]
+                on = self.frames("on")[("/render/d/depth_image", grab)]
+                self.assertTrue(np.array_equal(np.isfinite(off), np.isfinite(on)))
+                change = np.nan_to_num(change)
+                self.assertLessEqual(change.max(), 1e-4)  # never farther
+                self.assertGreaterEqual(change.min(), -0.15)
+                moved = change < -0.002
+                self.assertGreater(moved.sum(), 500)
+                p = points[moved]
+                above = p[:, 2] - self.hf.height(p[:, 0], p[:, 1])
+                self.assertGreaterEqual(above.min(), -0.02)
+                self.assertLessEqual(above.max(), 0.09)
+                gap = np.min(np.hypot(p[:, None, 0] - paths[None, ::5, 0], p[:, None, 1] - paths[None, ::5, 1]), axis=1)
+                self.assertLessEqual(gap.max(), 0.45)
+        # The back-projection is right: the ground pixels of the run without ruts lie on the sheet's terrain.
+        eye, target = ((p[0], p[1], p[2] + self.hf.height(p[0], p[1])) for p in self.DEPTH)
+        ground = back_project(self.frames("off")[("/render/d/depth_image", 0)], eye, target)[300:]
+        ground = ground[np.isfinite(ground[..., 2])]
+        self.assertLess(np.median(np.abs(ground[:, 2] - self.hf.height(ground[:, 0], ground[:, 1]))), 0.01)
+
+    def test_eye_sees_the_dig_site_after_backing_out(self):
+        """The rover eye (the station's main view) never sees the wheels while
+        they dig in place (the head looks ahead, 0.12 rad down: the
+        synthesis' documented limit); once the rover has backed out the pits
+        and ruts lie ahead of it and the eye shows them."""
+        self.assertFalse(self.changed(gen_model.EYE_IMAGE_TOPIC, 1, 0).any())
+        self.assertGreater(self.changed(gen_model.EYE_IMAGE_TOPIC, 2).mean(), 0.01)
+
+    def test_reset_clears_them(self):
+        """A world reset clears every rut and pit: 0.9 s after it every view
+        is the one without ruts, pixel for pixel (before it they differed)."""
+        for topic in self.TOPICS:
+            with self.subTest(topic=topic):
+                before = [self.frames(k)[(topic, 2)] for k in ("off", "on")]
+                after = [self.frames(k)[(topic, 3)] for k in ("off", "on")]
+                self.assertFalse(np.array_equal(*before, equal_nan=True))
+                self.assertTrue(np.array_equal(*after, equal_nan=True))
+
+    def test_two_runs_are_identical(self):
+        """The rendering thread draws, for each frame, exactly the ruts laid by
+        the frame's sim time (rover_tracks.hh, the snapshot rule): two runs
+        give the same colour and depth images, bit for bit, frame for frame
+        (the same sim times)."""
+        self.assertEqual(self.runs["on"][4], self.runs["again"][4])
+        for (topic, grab), image in self.frames("on").items():
+            with self.subTest(topic=topic, grab=grab):
+                self.assertTrue(np.array_equal(image, self.frames("again")[(topic, grab)], equal_nan=True))
+
+    def test_on_a_plane(self):
+        """A world without a heightmap or an albedo map (rover_test's kind: a
+        plane, its ground the drivetrain's default surface, here sand): the
+        ruts lie on the plane at the contacts' height, in the default colour;
+        depth only closer, every changed pixel within 9 cm above the plane."""
+        from simulate import physical  # noqa: E402
+        eye, target = (3.5, -2.5, 1.6), (1.0, 0.0, 0.0)
+        body = ('<model name="ground"><static>true</static><link name="link"><collision name="c"><geometry><plane>'
+                '<normal>0 0 1</normal><size>100 100</size></plane></geometry></collision><visual name="v"><geometry>'
+                '<plane><normal>0 0 1</normal><size>100 100</size></plane></geometry></visual></link></model>'
+                '<include><uri>model://rover_drive</uri><name>rover</name><pose>2 0 0.02 0 0 3.14159265</pose>'
+                '</include>'
+                + camera("d", eye, *aim(eye, target), kind="rgbd_camera"))
+        topics = ["/render/d/image", "/render/d/depth_image"]
+        shots = {}
+        for ruts in (False, True):
+            rover = gen_model.build_sdf(physical(ruts=ruts, default_surface="sand"))
+            shots[ruts], trace, _, _, _ = self.r.drive(world(body), rover, dict(
+                name="render", topics=topics, schedule=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.0), (4.5, 0.0, 1.0)],
+                seconds=7.0, grabs=[(0, 6.5)], reset_steps=0))
+        colour = np.abs(shots[True][(topics[0], 0)].astype(int) - shots[False][(topics[0], 0)].astype(int)).max(-1)
+        self.assertGreater((colour > 8).mean(), 0.005)
+        off, on = shots[False][(topics[1], 0)], shots[True][(topics[1], 0)]
+        with np.errstate(invalid="ignore"):  # no return in either: inf - inf
+            change = np.nan_to_num(on - off)
+        self.assertLessEqual(change.max(), 1e-4)
+        moved = change < -0.002
+        self.assertGreater(moved.sum(), 100)
+        above = back_project(on, eye, target)[moved][:, 2]
+        self.assertGreaterEqual(above.min(), -0.005)
+        self.assertLessEqual(above.max(), 0.09)
+
+    def test_none_on_rock(self):
+        """On the slickrock slab (sinkage 0) the same drive and spin leave
+        nothing: every view is the one without ruts, pixel for pixel."""
+        yaw = np.unwrap(self.runs["rock_on"][1][:, 5])
+        self.assertGreater(np.ptp(yaw), 1.0)  # it turned
+        for key, image in self.frames("rock_on").items():
+            with self.subTest(topic=key[0], grab=key[1]):
+                self.assertTrue(np.array_equal(image, self.frames("rock_off")[key], equal_nan=True))
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--render":
         _render_main(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "--drive":
+        _drive_main(sys.argv[2])
     else:
         unittest.main()

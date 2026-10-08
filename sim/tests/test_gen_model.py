@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for sim/gen_model.py (no physics; pixi run sim-test)."""
 import dataclasses
+import re
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -19,6 +20,8 @@ P = gen_model.Params()
 DIFFDRIVE = dataclasses.replace(P, drive=gen_model.DriveParams(mode="diffdrive"))
 DUST = dataclasses.replace(P, drive=dataclasses.replace(P.drive, dust=True))  # the opt-in dust (DriveParams.dust)
 DUST_PLUGIN_TAGS = ("dust_rate", "dust", "dust_rule")  # the drivetrain's dust elements
+NO_RUTS = dataclasses.replace(P, drive=dataclasses.replace(P.drive, ruts=False))  # DriveParams.ruts off
+SIM = Path(gen_model.__file__).resolve().parent
 
 
 class Inertia(unittest.TestCase):
@@ -372,6 +375,61 @@ class Dust(unittest.TestCase):
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Valid", result.stdout)
+
+
+class Ruts(unittest.TestCase):
+    """DriveParams.ruts, the one switch for the ruts and pits behind the wheels
+    (gen_model.TrackParams, plugins/rover_tracks.hh): on by default (the
+    user's decision of 2026-10-07), written as the drivetrain's <tracks>
+    group; off, the model is the default one without it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.default = ET.fromstring(gen_model.build_sdf(P)).find("model")
+        cls.tracked = ET.parse(MODELS / "rover" / "model.sdf").getroot().find("model")
+        cls.off = ET.fromstring(gen_model.build_sdf(NO_RUTS)).find("model")
+
+    def test_on_by_default(self):
+        """The default rover, generated and tracked (model://rover), has one
+        <tracks> in its drivetrain with every TrackParams field and the
+        wheel's width; DiffDrive has no drivetrain and no ruts."""
+        self.assertTrue(P.drive.ruts)
+        expected = {**dataclasses.asdict(P.drive.tracks), "width": P.wheel_width}
+        for name, model in (("generated", self.default), ("tracked", self.tracked)):
+            groups = model.findall("plugin[@name='rover_sim::RoverDrivetrain']/tracks")
+            self.assertEqual(len(groups), 1, name)
+            written = {e.tag: float(e.text) for e in groups[0]}
+            self.assertEqual(written, {k: float(v) for k, v in expected.items()}, name)
+        diffdrive = ET.fromstring(gen_model.build_sdf(DIFFDRIVE)).find("model")
+        self.assertEqual(list(diffdrive.iter("tracks")), [])
+
+    def test_switch_removes_only_the_tracks(self):
+        """With the switch off the model is the default one without <tracks>,
+        nothing else: the plugin then lays, reads and draws nothing."""
+        self.assertEqual(list(self.off.iter("tracks")), [])
+        model = ET.fromstring(gen_model.build_sdf(P)).find("model")  # a copy to strip
+        plugin = model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+        plugin.remove(plugin.find("tracks"))
+        canonical = lambda e: ET.canonicalize(ET.tostring(e), strip_text=True)  # noqa: E731  (no indentation)
+        self.assertEqual(canonical(model), canonical(self.off))
+
+    def test_plugin_reads_every_element(self):
+        """Every element of <tracks> is one the plugin reads
+        (rover_tracks_render.hh ReadParams), and the defaults agree: a
+        misspelt parameter would silently keep the C++ default."""
+        source = (SIM / "plugins" / "rover_tracks_render.hh").read_text()
+        header = (SIM / "plugins" / "rover_tracks.hh").read_text()
+        for name, value in {**dataclasses.asdict(P.drive.tracks), "width": P.wheel_width}.items():
+            self.assertIn(f'get("{name}", p.{name})', source, name)
+            default = re.search(rf"\b(?:double|int) {name} = ([-\d.e]+);", header)
+            self.assertIsNotNone(default, name)
+            self.assertAlmostEqual(float(default.group(1)), float(value), msg=name)
+
+    def test_gz_accepts_it(self):
+        with temp_sdf(gen_model.build_sdf(P)) as path:
             result = gz_check(path)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Valid", result.stdout)

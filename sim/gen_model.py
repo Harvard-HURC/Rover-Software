@@ -19,7 +19,9 @@ it), or "diffdrive", Gazebo's DiffDrive (every wheel a velocity servo on
 anisotropic tyres), kept for A/B tests and cost comparisons. The camera is
 the same in both, and so are the dust emitters when DriveParams.dust adds
 them (off by default: the rover raises no visible dust, user decision
-2026-10-07).
+2026-10-07). The physical drivetrain also draws the ruts and pits behind the
+wheels (DriveParams.ruts and TrackParams, on by default, visual only: user
+decisions 2026-10-07).
 """
 import dataclasses
 import math
@@ -54,6 +56,41 @@ METERS_PER_DEGREE = 111_320.0  # of latitude, for NavSat noise
 VIEWER_NAMES = ("CHASE_MODEL", "CHASE_IMAGE_TOPIC", "CHASE_CMD_TOPIC", "CHASE_MODE_TOPIC", "CHASE_STATE_TOPIC",
                 "EYE_MODEL", "EYE_IMAGE_TOPIC", "EYE_LOOK_TOPIC", "EYE_STATE_TOPIC",
                 "ChaseParams", "EyeParams", "build_chase_sdf", "build_eye_sdf")
+
+
+@dataclass(frozen=True)
+class TrackParams:
+    """Ruts and pits behind the wheels (plugins/rover_tracks.hh, the physical drivetrain's <tracks> group): what
+    makes the dig-in visible, on every soft ground (sinkage_m > 0; user decisions 2026-10-07). Visual only: a
+    wheel lays a cross-section every `spacing` of its travel from its own state (ground point, heading, dig factor
+    D, slip); camera sensors draw them (the station's views and the rover's RGB-D, not the Gazebo GUI). s: the
+    ground's static sinkage (terrains.TYPES)."""
+    spacing: float = 0.05  # [m] of a wheel's travel per cross-section (A: the research prototype's)
+    chunk: int = 128  # records per chunk: one marker per darkness level and ground (M: 128/512/2048 alike)
+    # The ring: 8000 records are about 100 m of the rover's travel (4 wheels x 20 per metre), the oldest go first.
+    # The station's frame rate and real-time factor with 8000 were those without ruts within noise (M 2026-10-07,
+    # Delivery and the proving ground, eye + chase + RGB-D; the research saw -2-3 % at 4000, -3.5-6 % at 16000).
+    max_segments: int = 8000
+    # Berm crest above the visual surface: berm_gain x s x (max(D - 1, 0) + berm_base), at most berm_max, drawn
+    # from berm_min: the wheel already sits s into the surface (the carve), so the rut looks about s (D + 0.3)
+    # deep, true scale (sand 6 mm at D 1, 2.6 cm at D 2; regolith 1.5 mm: no berm, only the faint floor) (A).
+    berm_base: float = 0.3
+    berm_gain: float = 1.0
+    berm_max: float = 0.06  # [m]
+    berm_min: float = 0.004  # [m]
+    # Floor overlay opacity (opacity_base + opacity_dig (D - 1)) x clamp(s / 2 cm, 0.6, 1.5), in levels of 15,
+    # 28, 39 and 48 % (A: the prototype's look; it writes no depth).
+    opacity_base: float = 0.14
+    opacity_dig: float = 0.30
+    floor_offset: float = 0.004  # [m] the overlay above the visual surface, with a depth bias (M: no dropouts)
+    pit_dig: float = 0.05  # D grown while moving under `spacing` that digs a pit (A)
+    smear_slip: float = 0.3  # slip over the tyre's surface speed above which tread marks smear (A)
+    # Records one frame builds at most: a station that connects late (no frame is drawn while no camera is watched)
+    # catches up over frames instead of stalling the simulation, which waits for the frame's scene update (M:
+    # 512 records took 7-12 ms on Delivery under load; 256, half that, catches up a full ring in about 1.6 s).
+    frame_budget: int = 256
+    stress: int = 0  # synthetic records laid round the rover at the first step (cost measurements)
+    report: float = 0.0  # [s] of sim time between cost lines on stderr (measurements); 0: none
 
 
 @dataclass(frozen=True)
@@ -146,6 +183,10 @@ class DriveParams:
     # takes. With no ratio it would apply 0.65, SDF's default too, and it ignores a ratio not above 0 (R:
     # gz-rendering 8's BaseParticleEmitter). In 8.2.2 no ratio reaches the depth shader (M, tests/test_render.py).
     dust_scatter_ratio: float = 1e-6
+    # Ruts and pits behind the wheels (TrackParams), the one switch: on by default (user decision 2026-10-07: dig
+    # made visible on all soft ground). Off, the drivetrain gets no <tracks> and draws, reads and costs nothing.
+    ruts: bool = True
+    tracks: TrackParams = TrackParams()
 
 
 @dataclass(frozen=True)
@@ -473,7 +514,8 @@ def _add_plugins(model, p):
 
 def _add_drivetrain(model, p):
     """plugins/rover_drivetrain.cpp, set from DriveParams (design spec 6.2). The dust elements (dust_rate,
-    <dust>, <dust_rule>) only with DriveParams.dust: without them the drivetrain drives no emitter."""
+    <dust>, <dust_rule>) only with DriveParams.dust: without them the drivetrain drives no emitter. <tracks>
+    (TrackParams and the wheel's width) only with DriveParams.ruts: without it no ruts are laid or drawn."""
     d = p.drive
     dust = dict(dust_rate=d.dust_rate) if d.dust else {}
     plugin = sdf.plugin(model, "RoverDrivetrain", "rover_sim::RoverDrivetrain", topic=CMD_VEL_TOPIC,
@@ -503,6 +545,8 @@ def _add_drivetrain(model, p):
     if d.dust:
         sdf.group(plugin, "dust_rule", speed_gain=d.dust_speed_gain, slip_gain=d.dust_slip_gain,
                   max_rate=d.dust_max, min_speed=d.dust_min_speed)
+    if d.ruts:
+        sdf.group(plugin, "tracks", **dataclasses.asdict(d.tracks), width=p.wheel_width)
 
 
 def surface_rows(*keys):
