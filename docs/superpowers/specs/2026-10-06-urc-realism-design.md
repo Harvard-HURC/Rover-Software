@@ -78,6 +78,8 @@ After this work:
 - The robotic arm.
 - Deformable ground geometry: ruts, wheel tracks, mud sticking to wheels (§4 says why). The dig-in state of
   §6.5 changes resistance, not geometry: a digging wheel does not visibly sink further than the static carve.
+  *As built: the ground still never deforms, but the dig-in is drawn, visual only: the tyre sink, ruts and pits
+  (the user's decisions of 2026-10-07, §17.7, §17.8).*
 - A wet-weather ("after rain") variant. It is designed as a catalogue switch (§5.6) but built only if asked (Q4).
 - Photoscanned CC0 textures (ambientCG, Poly Haven): not among the approved download sources (Q6).
 - Linux/GLSL validation of the shader patch (only Metal was tested).
@@ -117,10 +119,10 @@ After this work:
 
 | Wanted | Why not (evidence) | Instead |
 |---|---|---|
-| Wheels that sink dynamically, ruts, bulldozed berms | DART contacts are rigid. Per-contact CFM is not a stiffness: CFM 1 gave 20 mm at rest and 42 mm while driving; CFM ≥ 10 fell through the ground (M) | Static collision carve under sand (the wheel sits 2–3 cm into the visual surface), rolling resistance, bulldozing, slip compliance and a dig-in state that raises resistance, not sinkage (§6.5) |
+| Wheels that sink dynamically, ruts, bulldozed berms | DART contacts are rigid. Per-contact CFM is not a stiffness: CFM 1 gave 20 mm at rest and 42 mm while driving; CFM ≥ 10 fell through the ground (M). DART ignores the normal component of `contactSurfaceMotionVelocity` (M 2026-10-07: a wheel's height unchanged at ±5 cm/s) | Static collision carve under sand (the wheel sits 2–3 cm into the visual surface), rolling resistance, bulldozing, slip compliance and a dig-in state that raises resistance, not sinkage (§6.5). *As built: the dig-in drawn, never physical: the tyre sink, ruts, berms and pits (§17.8)* |
 | Friction on heightmaps or meshes from SDF `<friction>` | Ignored on both (M, today's `terrains.py`) | Per-contact callback (D1) |
 | Mud sticking to wheels, adhesion | No adhesion in DART | Low-μ wet variant only (optional, Q4) |
-| Tyre tracks as projected decals | Any `<projector>` in a world with a Terra heightmap aborts gz on Metal: the Terra pixel shader fails to compile (`decalsDiffuseTex` undeclared), also with stock media (M) | Deferred: a plugin-grown ribbon mesh (not prototyped) |
+| Tyre tracks as projected decals | Any `<projector>` in a world with a Terra heightmap aborts gz on Metal: the Terra pixel shader fails to compile (`decalsDiffuseTex` undeclared), also with stock media (M) | Deferred: a plugin-grown ribbon mesh (not prototyped). *As built: the ruts, marker chunks the drivetrain grows (§17.8)* |
 | Terra blending by slope or position; more than 4 textures | Terra weights come only from height (`smoothstep(min_height, …)`); the weight map is never used. The 5th-texture path needs an empty `<normal>`, which SDF rejects (M, R [26]) | All spatial variation baked into the layer-0 colour map; 3 global detail layers; optional local detail decals |
 | SDF `<scene><fog>`, `<sky><cubemap_uri>` | Never applied by gz-sim 8; no fog API in gz-rendering 8 ogre2 (M, R [26]) | Shader patch: haze piece and procedural sky (D12) |
 | Lens distortion; SDF camera noise at face value | `<distortion>` ignored (byte-identical output). Noise strongly attenuated: stddev 0.05 → 1.5 DN, 0.1 → 6 DN (M) | stddev 0.06 on the rover camera (~2 DN), or noise added in the station |
@@ -660,7 +662,8 @@ under the wheel's deepest contact.
     dig_rate 0.05) reproduces Anveshak's stuck zero-radius turn [14]; choosing it is Q12. *As built: the
     strong preset is the default (§17.1), kept with its straight-climb stalls (§17.7).*
   - The state is not geometric: the wheel does not visibly sink further (§4). *As built: physics still never
-    sinks it, but its tyre is drawn z_d lower, a visual only (`DriveParams.dig_sink`, §17.8).*
+    sinks it, but its tyre is drawn z_d lower and ruts and pits are drawn behind it, visual only
+    (`DriveParams.dig_sink`, `DriveParams.ruts`, §17.8).*
 - **Slip**: from slip compliance (§6.4). On flat sand at 0.5 m/s it gives slip × Crr = 20 % (M), which restates
   the parameters (§6.9).
 - **Sinkage**: static, from the collision carve under the type (§5.8). It is what makes wheels look sunk in sand.
@@ -770,6 +773,8 @@ input parameters and checks they are wired. **(A)** means it tests an assumed su
    - Optional lens flare on the chase camera (scale 0.6, colour (1.0, 0.95, 0.9) (M)); G6 checks that LensFlare
      disconnects from PostRender.
    - Not used: `<distortion>`, `<fog>`, `<projector>` (§4).
+8. **The dig-in made visible** (added 2026-10-07, §17.7, §17.8): the tyre sink (a wheel's visuals drawn lower),
+   ruts and pits (markers drawn on the Sensors rendering thread, camera sensors only) and tread tyres.
 
 Expected cost (M, 1280 × 720, visual-only world, all views at far 80 km, median of 3, spread ±1.5 ms):
 - frame time 10.4 ms → 11.1 ms for the terrain changes;
@@ -1608,6 +1613,23 @@ dust in depth (17.7). Still open:
 - Equipment Servicing reaches 1.40× by wall clock (1.00× by CPU time): above the 1.1× floor, the 1.3× target
   only by wall clock.
 - The GLSL half of the media patch is untested (Metal only); the NAIP 2024 boost is untuned (Q13).
+- Visible dig-in (§17.8), by the user's choice of no station badge: the rover eye, the default main view, never
+  sees a wheel digging in place (the pits only once the rover backs out or turns); at the 320 px
+  picture-in-picture the tracks are faint; the true-scale tyre sink is about 3 px at the 5 m chase camera.
+- Apparent rut depth with both cues: at D 2 in sand the tyre is drawn s·D = 4 cm into the surface (carve and
+  sink) and the rim round it stands up to 2.6 cm above it (wash sand 6 and 3.9 cm). The berm rule was set
+  before the sink existed; `TrackParams.berm_gain` stays 1.0 (the rims are soil pushed up beside the rut) until
+  the user has looked at it.
+- The tyre sink makes depth farther where a tyre's old top edge was (a 13 px band at 1.5 m): "depth only closer"
+  cannot hold literally for a tyre drawn lower. What holds is tested: every changed depth pixel lies on a tyre,
+  farther only where it was, nearer only where it is, nothing floats.
+- Not checked for the ruts: far and fly views over Autonomy's 2 km relief (whether Terra's level of detail hides
+  the 4 mm floor or leaves berms floating), Equipment Servicing's clay-crust start; berms are untextured and cast
+  no shadows (Ogre2Marker). One late-viewer run stalled 334 s of wall time 3.8 s after the cameras connected,
+  with the ruts' own timings normal (≤ 1.6 ms a frame); not reproduced.
+- The bit-for-bit picture tests are load-sensitive: run beside world generation, `test_render.Ruts`'s rock
+  comparison failed once (the chase frame at 5 s, same physics), and a repeat under the same load found one
+  terrain pixel of the eye camera 1 DN off with no cue drawn (1 of 36 frames); on a quiet machine they pass.
 
 ### 17.6 Review fixes (2026-10-07)
 
@@ -1696,45 +1718,93 @@ and keeps its dust tests as the record for the switch (dust in depth still an ex
 sim-test`: 468 tests OK in 750 s (8 opt-in skipped; 2 expected failures: the slow-turn judder and dust in depth);
 `ctest` 2 of 2.
 
-### 17.8 The dig-in made visible: the tyre sink and the tread tyres (2026-10-07)
+**Visible dig-in.** Later the same day the user found that "dig is not really visible": nothing on screen changed
+when a wheel dug in. Physics cannot show it (§4): DART's contacts are rigid, its per-contact data has no normal
+offset and its ERP and CFM are global, and it ignores the normal component of `contactSurfaceMotionVelocity`
+(measured: a wheel's height unchanged at ±5 cm/s); tyre compliance lowers the body, not the wheel, and a deeper
+static carve changes the contacts, so every physical route alters the physics. A research workflow prototyped
+visual-only cues and put five questions; the user decided:
 
-The user found that "dig is not really visible": nothing on screen changed when a wheel dug in, and physics
-cannot sink a wheel (DART's per-contact data has no normal offset; a research workflow measured it and
-prototyped visual-only cues). On 2026-10-07 the user chose ruts and pits, the tyre sink at true scale and tread
-tyres; no station badge and no ruts in the Gazebo GUI. Every cue is visual only, behind its own switch (on by
-default), leaves trajectories and drivetrain states bit for bit the same on both solvers, draws the same pictures
-every run and is cleared by a world reset. This section records the tyre sink and the tread tyres; the ruts are
-their own build.
+| Question | Decision | Built as (§17.8) |
+|---|---|---|
+| The tyre sink exaggerated ×3 (6 cm at D 2 in sand, readable at the 5 m chase) or at true scale | True scale: the extra visual sink is (D − 1) × sinkage_m, 2 cm on sand and clay at D 2, 3 cm on wash sand | `DriveParams.dig_sink`, gain 1.0 |
+| Ruts on all loose ground or only where wheels dig in (D > 1.1) | On all soft ground (sinkage_m > 0): faint tracks from normal driving, darker, with higher berms and pits, where wheels dig in; none where sinkage_m = 0 | `DriveParams.ruts`, `TrackParams` |
+| Tread tyres with one ochre spoke (the rover's look changes) | Build them | `Params.tread_tyre` |
+| A "wheels digging in" badge on the station | Not built | Nothing; the eye view still never sees a wheel digging in place (§17.5) |
+| Ruts in the Gazebo GUI (an untested mirror to its marker service) | Not built: station and sensor views only; the tyre sink reaches the GUI through the state stream anyway | Nothing |
+
+With them the user set the constraints: every cue visual only (trajectories and drivetrain states bit for bit the
+same with the cues on and off, on both solvers), deterministic images, a world reset clears every cue, under 5 %
+per step and no visible drop of the station's frame rate, depth images only closer (berms, rims, sunk tyre edges),
+never farther or floating, and each cue behind its own switch, on by default.
+
+### 17.8 The dig-in made visible (2026-10-07)
+
+The three cues of the user's decisions (§17.7), built in two branches (the tyre sink and the tread tyres; the ruts
+and pits) and merged on `main`. Each is visual only, behind its own switch, on by default; with all three off the
+generated `model.sdf` is the one before them (b124f7d's), byte for byte. What drives them is each wheel's dig
+factor D (§6.5) and its ground's static sinkage s (`sinkage_m`: sand and clay 2 cm, wash sand 3 cm, the sand sheet
+1.5 cm, mudstone, bentonite and badland slopes 1 cm, regolith, gravel and biocrust 0.5 cm, the rest 0).
 
 | Cue | Decision | Built as |
 |---|---|---|
 | Tyre sink | True scale: the extra sink is (D − 1) × sinkage_m (2 cm on sand and clay at D_max 2.0, 3 cm on wash sand), not the research's ×3 | `DriveParams.dig_sink` (gain 1, at most 6 cm, lag 0.1 s), written as `<dig_sink>`. The drivetrain's `ShowSink` moves each wheel link's visuals, never its collision, straight down in the world: the offset is written in the spinning link's frame, its rotation predicted to the end of the step, only when it changes, compared exactly and marked `PeriodicChange` (Pose3d's `==` has a 1 mm tolerance, under which the GUI got nothing). 0 while the wheel is off the ground; 0 on ground without sinkage, so a dug wheel rolling onto rock rises within about 0.5 s. `Reset()` puts the SDF poses back. The rule is `drive::VisualSink` and `drive::SinkLag` in `rover_drivetrain.hh`, unit-tested. Off: no `<dig_sink>`, nothing written |
+| Ruts and pits | On all soft ground: faint from normal driving, darker with higher berms and pits where wheels dig in; nothing where s = 0; camera sensors only | `DriveParams.ruts` with `TrackParams`, written as `<tracks>`. The drivetrain feeds `rover_tracks.hh`'s layer at the end of each step from each wheel's state on the terrain heightmap or a plane (ground point, heading, D, slip): a cross-section every 5 cm of travel, a pit where D grows 0.05 within 5 cm, each deeper pit replacing the last, the newest 8,000 kept in chunks of 128. `rover_tracks_render.hh` draws them on the Sensors rendering thread (`events::SceneUpdate`): a transparent dark floor 4 mm above the surface that writes no depth (15–48 % in levels with D and s, tread marks unless the wheel slips), berms s × (max(D − 1, 0) + 0.3) high in ±35 % lumps from 4 mm (sand 6 mm at D 1, 2.6 cm at D 2; wash sand up to 3.9 cm; the sand sheet 4.5 mm), a rim round each pit, coloured from the terrain's `albedo.png` (written by `gen_worlds`). Each record carries the sim time that laid it and a frame draws only what was due at its own time, at most 256 a frame. Off: no `<tracks>`, nothing laid, read or drawn |
 | Tread tyres | Build them (one ochre spoke, so a wheel spinning in place shows) | `Params.tread_tyre`: each wheel's visual is `model://rover/meshes/wheel.glb` (written by `gen_model.main` with `urc.meshes.write_glb_parts`, tracked), a unit cylinder scaled to the wheel, 384 triangles: the plain tyre's dark, 16 light tread bars, a light hub and four spokes, one in the chassis' ochre; no SDF `<material>`, which would replace the mesh's. The collision stays the cylinder. The bars alias above about 3.9 rad/s in a 20 Hz view; the one ochre spoke only above 63 rad/s, past the 20 rad/s top speed. Off: the plain black cylinder |
 
-With both switches off the model is the one before them, byte for byte (`model.sdf` of b124f7d). Measured:
-- *Pictures* (`test_render.DigCues`; a camera on the rover's base_link, 1.5 m beside its left tyres; the rover
-  spinning in place on strong-preset sand, every wheel at D 2.0 within 3 s): the tyres' top edges drop 13 px
-  (2 cm at a 998 px focal length); every depth pixel that changes lies on a tyre, farther in the band its top
-  left and nearer at its lower outline, and colour changes off the tyres are their shadows on the ground. A
-  tyre drawn lower cannot only bring depth closer: what it uncovers at its old top edge is farther. On rock
-  the pictures with the sink are those without it, bit for bit, and so are both 1.5 s after a world reset.
-  The tread tyre's ochre spoke turns between two frames 0.1 s apart by the wheel's own angle (−0.265 rad for
-  −0.267), while the plain tyre's frames are identical and uniform.
-- *GUI* (`test_drivetrain.DigSink`): `/world/<w>/state` carries each tyre visual's pose while it sinks, as
-  deep as 2.0000 cm, and its SDF pose exactly once it is back on rock; with the sink off it carries none.
-  Physics: the same spin, drive-out and every-step base_link trace on both solvers with the cues on and off.
-- *Cost*: CPU time per step with both cues on against both off, 5 interleaved runs of 20,000 steps, Sensors
-  stripped, the rover driving `simulate.DRIVE_SCHEDULE`: 1.014 on sand everywhere (the sink drawn through
-  every spin; 0.106 → 0.108 ms), 0.993 on Delivery (0.688 → 0.683 ms), both within the runs' noise (0.92–1.08)
-  and under the 5 % budget. Rendering: the same sand spin with the station's chase and eye cameras and the
-  rover's RGB-D subscribed, 4 interleaved runs, wall time 0.990 of the plain rover's and the same frame count:
-  RenderUtil re-poses every visual each frame anyway, and a tread tyre is 384 triangles.
-- At the station's 5 m chase camera 2 cm is about 3 px: the sink reads in close and fly views, the tread
-  tyres in every view of the wheels; the default eye view does not see the wheels.
+Measured:
+- *Tyre sink in pictures* (`test_render.DigCues`; a camera on the rover's base_link, 1.5 m beside its left tyres;
+  the rover spinning in place on strong-preset sand, every wheel at D 2.0 within 3 s): the tyres' top edges drop
+  13 px (2 cm at a 998 px focal length); every depth pixel that changes lies on a tyre, farther in the band its top
+  left and nearer at its lower outline, and colour changes off the tyres are their shadows on the ground. A tyre
+  drawn lower cannot only bring depth closer: what it uncovers at its old top edge is farther (§17.5). On rock the
+  pictures with the sink are those without it, bit for bit, and so are both 1.5 s after a world reset. The tread
+  tyre's ochre spoke turns between two frames 0.1 s apart by the wheel's own angle (−0.265 rad for −0.267), while
+  the plain tyre's frames are identical and uniform.
+- *GUI* (`test_drivetrain.DigSink`): `/world/<w>/state` carries each tyre visual's pose while it sinks, as deep as
+  2.0000 cm, and its SDF pose exactly once it is back on rock; with the sink off it carries none.
+- *Ruts in pictures* (`test_render.Ruts`: the proving ground's sand pit, 2 m west at 0.5 m/s, a 6 s spin at
+  1 rad/s, 5 s back out, a world reset; the slickrock slab beside it): changed pixels after 1.5 m chase 1.3 %,
+  static views 3.7 %; dug in, chase 1.7 %, rims to 2.9 cm, near the wheels twice as many darker pixels and darker
+  (RGB sum −62 against −43); after backing out the eye 3.2 %, while it never sees the wheels dig in place. Depth
+  only closer, at most 4.3 cm along a ray at 5 s and 11.2 cm dug in, every changed pixel within −2/+9 cm of the
+  terrain and 0.45 m of a wheel's path. 0.9 s after the reset, and on the slab, every view is the one without
+  ruts, bit for bit; two runs give the same frames at the same sim times. On the proving ground's 15° sand dune,
+  where the rover stalls at D 2.0, no depth pixel is farther (at most 7.4 cm closer along a ray). The race the
+  sim-time stamps close is real: 7–10 % of frames would have drawn records laid after their own time.
+- *Physics*: the same base_link trace every step and the same drivetrain states on both solvers, with all three
+  cues against none (`DigSink`, a spin to D 2.0 and a drive onto rock) and the ruts against none (`Ruts`, a spin to
+  D 2 and out).
+- *Cost*: CPU time per step, 5 interleaved runs of 20,000 steps, Sensors stripped: the sink and tread on against
+  off 1.014 on sand everywhere (0.106 → 0.108 ms) and 0.993 on Delivery; the ruts on against off 0.963 on
+  `rover_test` (regolith all the way) and 0.990 on Delivery (load 3.5–6). Rendering: the sand spin with the
+  station's chase and eye cameras and the rover's RGB-D, 0.990 of the plain rover's wall time with the same frame
+  count; the ruts' hook 0.06–0.10 ms a frame with the ring full, a late viewer's catch-up at most 5 ms a frame,
+  the station's frame rate and real-time factor with 8,000 records those without within noise (Delivery 18.4 /
+  18.4 / 14.0 fps against 18.1 / 18.1 / 13.7, the proving ground 18.8 / 18.8 / 14.2 against 18.8 / 18.8 /
+  14.3); long drives of 1,097 and 1,174 m held server memory at 230–310 MB with no trend.
+- *Visibility*: at the station's 5 m chase camera 2 cm of sink is about 3 px (it reads in close and fly views);
+  the tread tyres read in every view of the wheels; the default eye view sees the ruts only ahead of it.
 
-Tests: `test_rover_drivetrain` `TyreSink` (ctest: the rule and the lag), `test_gen_model.DigCues` (both on by
-default, generated and tracked; each switch takes away only its cue; the mesh, byte for byte),
-`test_drivetrain.DigSink` (physics unchanged on both solvers; the GUI's state stream) and `test_render.DigCues`
-(the sink in the picture, only the tyres change, nothing on rock, the reset, the tread tyre showing the spin).
-Mutation checks: with either default off, `test_gen_model` fails; with the pose written through
-`SetComponentData` (its own change flag), the GUI test fails.
+Changes from the research's synthesis, in the ruts build: Terra over PBS re-measured to 0.99 / 1.00 / 1.00 (the
+research's (1.05, 0.956, 1.147) gave pink berms on the true albedo); pits are visuals of their own, so a deeper
+pit removes the old one's instead of rebuilding a chunk; a turn sharper than 45° between cross-sections starts a
+corner (no bow-tie slivers in a spin's smear); planes are supported, the ruts at the contacts' height; the maps
+are read at the first frame on a thread of their own, not at Configure (a process that renders nothing reads
+none); the frame budget is 256, not 512 (7–12 ms frames under load); `stress` and `report` parameters for
+measurements. When the two builds were merged, the tyre sink moves every visual of a wheel link (the tread mesh
+included) and the ruts read only the wheel links' physical poses, so neither sees the other; `berm_gain` stayed
+1.0 (§17.5).
+
+Tests: `test_rover_drivetrain` `TyreSink` and `test_rover_tracks` (ctest: the sink's rule and lag; the ruts'
+spacing, soft ground only, width of a spin, the sharp-turn rule, the pit rule, the ring, resets, the per-frame
+sim-time cut, budget and drops, berm and floor numbers, geometry), `test_gen_model.DigCues` and `Ruts` (on by
+default, generated and tracked; each switch takes away only its cue; the mesh byte for byte; every `<tracks>`
+element read by the plugin with the header's defaults), `test_drivetrain.DigSink` and `Ruts` (physics unchanged
+on both solvers; the GUI's state stream; the ruts laid headless and nothing drawn), `test_render.DigCues` and
+`Ruts` (the sink in the picture, only the tyres change, nothing on rock, the resets, the tread tyre showing the
+spin; ruts behind the rover, darker and higher dug in, depth only closer and on the ground, the eye after backing
+out, two runs identical, none on rock, on a plane), `test_urc_terrain` (the albedo map). Mutation checks: with a
+default off, `test_gen_model` fails; with the pose written through `SetComponentData` (its own change flag), the
+GUI test fails; without the stamp filter, `test_rover_tracks` fails. After the merge, `pixi run sim-test`: 495 tests
+OK in 850 s (9 opt-in skipped; the same 2 expected failures); `ctest` 3 of 3.
