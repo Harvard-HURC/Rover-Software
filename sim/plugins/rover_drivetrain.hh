@@ -1,5 +1,5 @@
 // The parts of the rover's drivetrain (rover_drivetrain.cpp) that need no Gazebo: the wheel motor, the dig-in
-// state, the friction rule of a wheel contact, the hub forces and the dust rate. Design spec
+// state, the friction rule of a wheel contact, the hub forces, the dust rate and the tyre sink. Design spec
 // docs/superpowers/specs/2026-10-06-urc-realism-design.md, sections 6.3-6.5; ported from the validated prototype
 // sim/data/research/drive/prototype/cpp/rover_drive.cpp. sim/plugins/tests/ tests them without a simulation.
 #pragma once
@@ -226,6 +226,33 @@ inline double DustRate(const DustParams& p, const Traction& ground, double hub_s
                        double load) {
   if (load <= 0 || std::max(hub_speed, slip) < p.min_speed) return 0.0;
   return std::min(p.max_rate, ground.dust * (p.speed_gain * hub_speed + p.slip_gain * slip) * dig);
+}
+
+// --- The dig-in made visible: the tyre sink (gen_model.DriveParams.dig_sink) -------------------------------------
+
+/// How a dug wheel's tyre is drawn (<dig_sink>). Visual only: physics never sinks a wheel (DART has no per-contact
+/// normal offset), so the drivetrain moves the wheel's visuals, never its collision.
+struct SinkParams {
+  double gain = 1.0;  ///< true scale, the spec's extra sinkage z_d (user decision 2026-10-07)
+  double max = 0.06;  ///< [m] at most 0.4 x the wheel radius (A); wash sand's 3 cm is the deepest at gain 1
+  double tau = 0.1;   ///< [s] lag, so a wheel off the ground for a few steps does not flicker (A)
+};
+
+/// Below this a tyre is drawn at its SDF pose [m].
+constexpr double kSinkShown = 1e-4;
+
+/// How far below its SDF pose a wheel at dig factor `dig` on ground of static sinkage `sinkage_m` is drawn [m]:
+/// gain x (D - 1) x sinkage_m, the spec's extra sinkage z_d at gain 1 (2 cm on sand and clay at D_max 2, 3 cm on
+/// wash sand), at most max; 0 where the ground has no sinkage (rock, pavement, crusts).
+inline double VisualSink(const SinkParams& p, double dig, double sinkage_m) {
+  return std::min(p.gain * std::max(dig - 1.0, 0.0) * std::max(sinkage_m, 0.0), p.max);
+}
+
+/// The sink shown after this step: a first-order lag of time constant tau towards `target`. Under kSinkShown
+/// with nothing to show it is exactly 0, so a healed wheel returns to its SDF pose.
+inline double SinkLag(double shown, double target, double tau, double dt) {
+  shown += dt / (tau + dt) * (target - shown);
+  return shown < kSinkShown && target <= 0 ? 0.0 : shown;
 }
 
 }  // namespace rover_sim::drive

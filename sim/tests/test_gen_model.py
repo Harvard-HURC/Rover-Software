@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Unit tests for sim/gen_model.py (no physics; pixi run sim-test)."""
+import copy
 import dataclasses
+import json
+import math
+import struct
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -19,6 +23,14 @@ P = gen_model.Params()
 DIFFDRIVE = dataclasses.replace(P, drive=gen_model.DriveParams(mode="diffdrive"))
 DUST = dataclasses.replace(P, drive=dataclasses.replace(P.drive, dust=True))  # the opt-in dust (DriveParams.dust)
 DUST_PLUGIN_TAGS = ("dust_rate", "dust", "dust_rule")  # the drivetrain's dust elements
+# The dig-in cues off (Params.tread_tyre, DriveParams.dig_sink): the rover before them.
+CUES_OFF = dataclasses.replace(P, tread_tyre=False, drive=dataclasses.replace(P.drive, dig_sink=False))
+WHEELS = [f"wheel_{e}{s}" for _, s, _ in gen_model.SIDES for _, e, _ in gen_model.ENDS]
+
+
+def canonical(element):
+    """An element's XML without its indentation, to compare models built differently."""
+    return ET.canonicalize(ET.tostring(element), strip_text=True)
 
 
 class Inertia(unittest.TestCase):
@@ -319,7 +331,6 @@ class Dust(unittest.TestCase):
         self.assertEqual(len(dust), 2 + 1 + 2 + 1)  # emitters, dust_rate, <dust> per rear wheel, <dust_rule>
         for parent, element in dust:
             parent.remove(element)
-        canonical = lambda e: ET.canonicalize(ET.tostring(e), strip_text=True)  # noqa: E731  (no indentation)
         self.assertEqual(canonical(model), canonical(self.default))
 
     def test_dust_emitters(self):
@@ -375,6 +386,122 @@ class Dust(unittest.TestCase):
             result = gz_check(path)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Valid", result.stdout)
+
+
+class DigCues(unittest.TestCase):
+    """The dig-in made visible (the user's decisions of 2026-10-07), each
+    cue visual only and behind its own switch, both on by default:
+    DriveParams.dig_sink, the drivetrain drawing a dug wheel's tyre sunk at
+    true scale (<dig_sink>), and Params.tread_tyre, the tyres drawn with the
+    tread mesh (WHEEL_MESH) instead of the plain cylinder."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.default = ET.fromstring(gen_model.build_sdf(P)).find("model")
+        cls.tracked = ET.parse(MODELS / "rover" / "model.sdf").getroot().find("model")
+
+    @staticmethod
+    def without(model, tyres=False, sink=False):
+        """A copy of a model without its wheels' visuals and/or the drivetrain's <dig_sink>."""
+        model = copy.deepcopy(model)
+        for name in WHEELS if tyres else ():
+            link = model.find(f"link[@name='{name}']")
+            for visual in link.findall("visual"):
+                link.remove(visual)
+        plugin = model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+        for element in plugin.findall("dig_sink") if sink else ():
+            plugin.remove(element)
+        return model
+
+    def test_on_by_default(self):
+        """The default rover, generated and tracked (model://rover): each
+        wheel's one visual is the tread mesh scaled to the wheel, with no SDF
+        <material> (it would replace the mesh's own), while its collision is
+        still the cylinder; the drivetrain gets <dig_sink> at true scale."""
+        self.assertTrue(P.tread_tyre)
+        self.assertTrue(P.drive.dig_sink)
+        self.assertEqual(P.drive.dig_sink_gain, 1.0)  # true scale, not the research's x3 (user decision)
+        for label, model in (("generated", self.default), ("tracked", self.tracked)):
+            for name in WHEELS:
+                link = model.find(f"link[@name='{name}']")
+                visuals = link.findall("visual")
+                self.assertEqual([v.get("name") for v in visuals], ["tire_visual"], (label, name))
+                mesh = visuals[0].find("geometry/mesh")
+                self.assertEqual(mesh.findtext("uri"), f"model://rover/{gen_model.WHEEL_MESH}")
+                self.assertEqual(vec(mesh.findtext("scale")), [P.wheel_radius, P.wheel_width, P.wheel_radius])
+                self.assertEqual(vec(visuals[0].findtext("pose")), [0.0] * 6)
+                self.assertIsNone(visuals[0].find("material"), (label, name))
+                cylinder = link.find("collision/geometry/cylinder")
+                self.assertEqual((float(cylinder.findtext("radius")), float(cylinder.findtext("length"))),
+                                 (P.wheel_radius, P.wheel_width))
+            sink = model.find("plugin[@name='rover_sim::RoverDrivetrain']/dig_sink")
+            self.assertIsNotNone(sink, label)
+            self.assertEqual({e.tag: float(e.text) for e in sink},
+                             {"gain": P.drive.dig_sink_gain, "max": P.drive.dig_sink_max, "tau": P.drive.dig_sink_tau})
+        self.assertTrue((MODELS / "rover" / gen_model.WHEEL_MESH).is_file())
+
+    def test_each_switch_takes_away_only_its_cue(self):
+        """tread_tyre off gives back the plain tyre, a black visual of the
+        collision's own cylinder; dig_sink off takes away <dig_sink>; nothing
+        else changes, in either drive mode. With both off the rover is the
+        one before the cues (byte for byte the model.sdf of b124f7d, checked
+        when they were built, 2026-10-07)."""
+        plain = ET.fromstring(gen_model.build_sdf(dataclasses.replace(P, tread_tyre=False))).find("model")
+        no_sink = ET.fromstring(gen_model.build_sdf(dataclasses.replace(
+            P, drive=dataclasses.replace(P.drive, dig_sink=False)))).find("model")
+        before = ET.fromstring(gen_model.build_sdf(CUES_OFF)).find("model")
+        for name in WHEELS:
+            link = plain.find(f"link[@name='{name}']")
+            visual, collision = link.find("visual"), link.find("collision")
+            self.assertEqual(ET.tostring(visual.find("geometry")), ET.tostring(collision.find("geometry")))
+            self.assertEqual(visual.findtext("pose"), collision.findtext("pose"))
+            self.assertEqual(vec(visual.findtext("material/diffuse")), list(gen_model.TIRE_COLOR))
+        self.assertIsNone(no_sink.find("plugin[@name='rover_sim::RoverDrivetrain']/dig_sink"))
+        self.assertIsNone(before.find("plugin[@name='rover_sim::RoverDrivetrain']/dig_sink"))
+        self.assertEqual(canonical(self.without(plain, tyres=True)), canonical(self.without(self.default, tyres=True)))
+        self.assertEqual(canonical(no_sink), canonical(self.without(self.default, sink=True)))
+        self.assertEqual(canonical(self.without(before, tyres=True)),
+                         canonical(self.without(self.default, tyres=True, sink=True)))
+        for name in WHEELS:
+            self.assertEqual(canonical(before.find(f"link[@name='{name}']")), canonical(plain.find(f"link[@name='{name}']")))
+        for params in (DIFFDRIVE, CUES_OFF):
+            diffdrive = dataclasses.replace(params, drive=dataclasses.replace(params.drive, mode="diffdrive"))
+            model = ET.fromstring(gen_model.build_sdf(diffdrive)).find("model")
+            mesh = model.find("link[@name='wheel_fl']/visual/geometry/mesh")
+            self.assertEqual(mesh is not None, params.tread_tyre)  # the look is the rover's, not the drive's
+
+    def test_tread_mesh(self):
+        """WHEEL_MESH, tracked with the model, is what write_wheel_mesh
+        writes, byte for byte: a cylinder of radius 1 and width 1 round the
+        axle (y), the same outline as the plain tyre's, in three materials,
+        the plain tyre's dark, light (16 tread bars, hub, spokes) and the
+        chassis' ochre, which is one spoke on each face at angle 0 and
+        nowhere else. The GLB's materials are those colours."""
+        tracked = MODELS / "rover" / gen_model.WHEEL_MESH
+        with tempfile.TemporaryDirectory() as tmp:
+            gen_model.write_wheel_mesh(Path(tmp) / "wheel.glb")
+            self.assertEqual((Path(tmp) / "wheel.glb").read_bytes(), tracked.read_bytes())
+        blob = tracked.read_bytes()
+        length, kind = struct.unpack("<II", blob[12:20])
+        self.assertEqual(kind, 0x4E4F534A)  # "JSON"
+        gltf = json.loads(blob[20:20 + length])
+        colours = [tuple(m["pbrMetallicRoughness"]["baseColorFactor"]) for m in gltf["materials"]]
+        expected = [tuple(gen_model.TREAD_DARK) + (1.0,), tuple(gen_model.TREAD_LIGHT) + (1.0,),
+                    tuple(gen_model.TREAD_MARK) + (1.0,)]
+        np.testing.assert_allclose(colours, expected)
+        self.assertEqual(gen_model.TREAD_DARK, gen_model.TIRE_COLOR[:3])
+        parts = gen_model.wheel_parts()
+        V = np.concatenate([part[0] for part in parts])
+        np.testing.assert_allclose(np.hypot(V[:, 0], V[:, 2]).max(), 1.0)
+        self.assertEqual((V[:, 1].min(), V[:, 1].max()), (-0.5, 0.5))
+        (_, dark_n), (light, light_n), (mark, mark_n) = ((part[0], part[2]) for part in parts)
+        self.assertEqual(int(np.sum(np.abs(light_n[::3, 1]) < 1e-9)), 2 * 16)  # the bars: 16, two triangles each
+        self.assertEqual(len(mark), 3 * 2 * 2 * 2)  # one spoke: two segments, two triangles each, on both faces
+        self.assertEqual(set(np.sign(mark[:, 1])), {-1.0, 1.0})
+        np.testing.assert_allclose(np.abs(mark_n[:, 1]), 1.0)  # on the faces, not the tread
+        rim = mark[np.hypot(mark[:, 0], mark[:, 2]) > 0.99]
+        self.assertTrue(np.all(np.abs(np.degrees(np.arctan2(rim[:, 2], rim[:, 0]))) <= 7.5 + 1e-9))
+        self.assertTrue(len(dark_n))
 
 
 class TyreCompliance(unittest.TestCase):

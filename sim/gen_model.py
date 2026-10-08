@@ -20,13 +20,22 @@ anisotropic tyres), kept for A/B tests and cost comparisons. The camera is
 the same in both, and so are the dust emitters when DriveParams.dust adds
 them (off by default: the rover raises no visible dust, user decision
 2026-10-07).
+
+The dig-in made visible (user decisions 2026-10-07), each cue visual only and
+behind its own switch: DriveParams.dig_sink draws a dug wheel's tyre sunk by
+the spec's extra sinkage at true scale (the physical drivetrain moves the
+wheel's visuals), and Params.tread_tyre draws the tyres with tread bars and
+spokes, one of them ochre (WHEEL_MESH, written by main()), so a wheel spinning
+in place shows.
 """
 import dataclasses
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from urc import sdf  # the SDF writer every generated model shares
+import numpy as np
+
+from urc import meshes, sdf  # the GLB and SDF writers every generated model shares
 
 MODELS_DIR = Path(__file__).resolve().parent / "models"
 MODEL_DIR = MODELS_DIR / "rover"
@@ -43,6 +52,7 @@ LED_TOPIC = "/model/rover/led"  # set by the rover's software, shown by sim/refe
 DRIVETRAIN_TOPIC = "/model/rover/drivetrain"  # physical drivetrain: gz.msgs.StringMsg, JSON (design spec 9.3)
 DUST_TOPIC = "/model/rover/link/{link}/particle_emitter/{emitter}/cmd"  # gz.msgs.ParticleEmitter
 DUST_SPRITE = "materials/textures/dust_puff.png"  # in the rover model: a soft dust puff (textures.dust_puff)
+WHEEL_MESH = "meshes/wheel.glb"  # in the rover model: the tread tyre (Params.tread_tyre), unit size, scaled in the SDF
 LED_VISUAL = "led_visual"
 # The camera's pan-tilt head: gz.msgs.Double target angles [rad].
 PAN_JOINT = "camera_pan_joint"
@@ -108,6 +118,16 @@ class DriveParams:
     # strong by default, the user's choice, Q12).
     dig: bool = True
     dig_heal_length: float = 0.3  # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
+    # The dig-in made visible, the one switch (user decision 2026-10-07): each tyre's visual, never its collision,
+    # is drawn dig_sink_gain x (D - 1) x the ground's static sinkage lower, straight down, at most dig_sink_max,
+    # through a dig_sink_tau lag (rover_drivetrain.cpp ShowSink; physics never reads a visual's pose). At gain 1, the
+    # true scale the user chose over the research's x3, it is the spec's extra sinkage z_d: 2 cm on sand and clay
+    # at D_max 2, 3 cm on wash sand, under 4 mm on the sand sheet, nothing on rock, pavement and crusts. Off: no
+    # <dig_sink>, and the drivetrain writes no visual.
+    dig_sink: bool = True
+    dig_sink_gain: float = 1.0  # true scale (user decision 2026-10-07)
+    dig_sink_max: float = 0.06  # [m] 0.4 x the wheel radius (A); not reached at gain 1 (wash sand: 3 cm)
+    dig_sink_tau: float = 0.1  # [s] a wheel off the ground for a few steps does not flicker (A)
     default_surface: str = "regolith"  # terrains.TYPES key: ground where the world has no ground map
     object_surface: str = "manmade"  # terrains.TYPES key: objects whose SDF sets no friction
     # Wheel joints: DART never clamps the torque, and the velocity limit (1.5 x the 21.6 rad/s free speed)
@@ -181,6 +201,11 @@ class Params:
     arm_inset: float = 0.08  # from the wheel center plane toward the chassis
     arm_thickness: float = 0.04
     arm_height: float = 0.05
+    # The tyres' look (user decision 2026-10-07): a dark tyre with light tread bars and spokes, one spoke ochre, so
+    # a wheel spinning while the rover stands still shows (WHEEL_MESH; the 16 bars alias above about 3.9 rad/s at a
+    # 20 Hz view, the one ochre spoke only above 63 rad/s, past the 20 rad/s top speed). Visual only: the collision
+    # stays the cylinder. Off: the plain black cylinder.
+    tread_tyre: bool = True
     # GNSS antenna (navsat sensor) on a short mast. Gazebo applies horizontal
     # noise to latitude and longitude in degrees; the generator converts at
     # 111.32 km per degree, so east-west noise is this times cos(latitude).
@@ -242,6 +267,10 @@ def rocker_inertia(mass, dx, dz):
 CHASSIS_COLOR = (0.85, 0.55, 0.15, 1)
 ROCKER_COLOR = (0.35, 0.35, 0.38, 1)
 TIRE_COLOR = (0.1, 0.1, 0.1, 1)
+# The tread tyre's materials (WHEEL_MESH): the plain tyre's dark, light bars, hub and spokes, the chassis' ochre.
+TREAD_DARK = TIRE_COLOR[:3]
+TREAD_LIGHT = (0.30, 0.29, 0.26)
+TREAD_MARK = CHASSIS_COLOR[:3]
 SIDES = (("left", "l", 1.0), ("right", "r", -1.0))  # name, suffix, sign of y
 ENDS = (("front", "f", 1.0), ("rear", "r", -1.0))  # name, prefix, sign of x
 
@@ -428,7 +457,12 @@ def _add_wheel(model, p, side, name, sign, ahead):
         # (longitudinal).
         sdf.collision(link, "tire", tire, pose, mu=p.mu_lateral, mu2=p.mu_longitudinal, fdir1=(0, 0, 1))
         effort, velocity = p.wheel_effort, p.wheel_speed
-    _visual(link, "tire", tire, pose, TIRE_COLOR)
+    if p.tread_tyre:
+        # The tread tyre: no SDF <material>, which would replace the GLB's own.
+        mesh = sdf.mesh(sdf.model_uri(MODEL_DIR.name, WHEEL_MESH), (p.wheel_radius, p.wheel_width, p.wheel_radius))
+        sdf.visual(link, "tire", mesh, (0, 0, 0, 0, 0, 0), color=None)
+    else:
+        _visual(link, "tire", tire, pose, TIRE_COLOR)
     parent = _add_tire_hubs(model, p, f"rocker_{side}", name, xyz) if p.tire_compliance else f"rocker_{side}"
     sdf.joint(model, f"{name}_joint", "revolute", parent, name, (0, 1, 0), -1e16, 1e16, effort=effort,
               velocity=velocity)
@@ -503,6 +537,8 @@ def _add_drivetrain(model, p):
     if d.dust:
         sdf.group(plugin, "dust_rule", speed_gain=d.dust_speed_gain, slip_gain=d.dust_slip_gain,
                   max_rate=d.dust_max, min_speed=d.dust_min_speed)
+    if d.dig_sink:
+        sdf.group(plugin, "dig_sink", gain=d.dig_sink_gain, max=d.dig_sink_max, tau=d.dig_sink_tau)
 
 
 def surface_rows(*keys):
@@ -536,6 +572,54 @@ def write_dust_sprite(path, p=None):
     textures.dust_puff(path, terrains.DUST_RGB, (p or Params()).drive.dust_alpha)
 
 
+def wheel_parts(segments=48, bars=16, spokes=4, spoke_deg=15.0, hub=0.35):
+    """The tread tyre (Params.tread_tyre) as write_glb_parts parts: a cylinder of radius 1 and width 1 round the
+    y axis (the wheel link's axle; the SDF scales it to the wheel), flat-shaded. The tread is TREAD_DARK with
+    `bars` TREAD_LIGHT bars across it; each face a TREAD_LIGHT hub disc of radius `hub` and `spokes` spokes
+    `spoke_deg` wide out to the rim, TREAD_LIGHT but for the one at angle 0 (along the link's x), TREAD_MARK on both
+    faces. Same silhouette as the plain cylinder: what changes is paint, not shape."""
+    buckets = {colour: ([], []) for colour in (TREAD_DARK, TREAD_LIGHT, TREAD_MARK)}  # triangles, their normals
+
+    def tri(colour, a, b, c, n):
+        a, b, c, n = (np.asarray(v, float) for v in (a, b, c, n))
+        if np.dot(np.cross(b - a, c - a), n) < 0:  # counter-clockwise seen from outside
+            b, c = c, b
+        buckets[colour][0].append((a, b, c))
+        buckets[colour][1].append((n, n, n))
+
+    step = 360.0 / segments
+    for k in range(segments):
+        a0, a1 = math.radians(k * step), math.radians((k + 1) * step)
+        mid = (k + 0.5) * step
+        tread = TREAD_LIGHT if k % (segments // bars) == 0 else TREAD_DARK
+        n = (math.cos(math.radians(mid)), 0.0, math.sin(math.radians(mid)))
+        rim = [(math.cos(a), y, math.sin(a)) for a, y in ((a0, -0.5), (a1, -0.5), (a1, 0.5), (a0, 0.5))]
+        tri(tread, rim[0], rim[1], rim[2], n)
+        tri(tread, rim[0], rim[2], rim[3], n)
+        off = min(mid % (360.0 / spokes), 360.0 / spokes - mid % (360.0 / spokes))  # from the nearest spoke [deg]
+        spoke = TREAD_DARK
+        if off < spoke_deg / 2:
+            spoke = TREAD_MARK if min(mid, 360.0 - mid) < spoke_deg / 2 else TREAD_LIGHT
+        for y in (-0.5, 0.5):
+            face = (0.0, math.copysign(1.0, y), 0.0)
+            ring = lambda r, a: (r * math.cos(a), y, r * math.sin(a))  # noqa: E731
+            tri(TREAD_LIGHT, (0.0, y, 0.0), ring(hub, a0), ring(hub, a1), face)
+            tri(spoke, ring(hub, a0), ring(1.0, a0), ring(1.0, a1), face)
+            tri(spoke, ring(hub, a0), ring(1.0, a1), ring(hub, a1), face)
+    parts = []
+    for colour, (triangles, normals) in buckets.items():
+        V = np.array(triangles).reshape(-1, 3)
+        parts.append((V, np.arange(len(V)).reshape(-1, 3), np.array(normals).reshape(-1, 3), None,
+                      meshes.Material(colour, 0.9)))
+    return parts
+
+
+def write_wheel_mesh(path):
+    """The tread tyre's mesh (WHEEL_MESH): wheel_parts as binary glTF. main() writes it whether or not
+    Params.tread_tyre is on, as it does the dust sprite."""
+    meshes.write_glb_parts(path, wheel_parts())
+
+
 def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     out = MODEL_DIR / "model.sdf"
@@ -543,7 +627,10 @@ def main():
     sprite = MODEL_DIR / DUST_SPRITE
     sprite.parent.mkdir(parents=True, exist_ok=True)
     write_dust_sprite(sprite)
-    print(f"wrote {out} and {sprite.relative_to(MODEL_DIR)}")
+    wheel = MODEL_DIR / WHEEL_MESH
+    wheel.parent.mkdir(parents=True, exist_ok=True)
+    write_wheel_mesh(wheel)
+    print(f"wrote {out}, {sprite.relative_to(MODEL_DIR)} and {wheel.relative_to(MODEL_DIR)}")
     import viewers  # here, not at the top: viewers imports this module
     viewers.write_all(MODELS_DIR)
 

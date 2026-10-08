@@ -19,6 +19,8 @@
 //   2026-10-07: depth and point clouds see any visible particle); without <dust> nothing is advertised or sent.
 // - no-slip odometry (gz::math::DiffDriveOdometry) and tf as DiffDrive publishes them, and the drivetrain's
 //   state as JSON (spec 9.3).
+// - the dig-in made visible (<dig_sink>, DriveParams.dig_sink): each wheel's visuals, never its collision, drawn
+//   (D - 1) x the ground's static sinkage lower (ShowSink). Physics never reads a visual's pose.
 //
 // The ground: the world's ground map (terrain_ground.hh: ground.png under the heightmap, ground.json's
 // collision map for the terrain model's other shapes); a plane is ground of the default surface; any other
@@ -82,6 +84,7 @@
 #include <gz/sim/components/Inertial.hh>
 #include <gz/sim/components/JointTransmittedWrench.hh>
 #include <gz/sim/components/Name.hh>
+#include <gz/sim/components/Pose.hh>
 #include <gz/sim/physics/Events.hh>
 #include <gz/transport/Node.hh>
 #include <sdf/Collision.hh>
@@ -127,6 +130,14 @@ struct Contact {
   double slip = 0.0;  // [m/s] the wheel's material point over the ground
 };
 
+/// A wheel's tyre as drawn (<dig_sink>, ShowSink): its visuals with their SDF poses in the wheel link, and how
+/// far below those they are drawn.
+struct TyreSink {
+  std::vector<std::pair<gz::sim::Entity, gz::math::Pose3d>> visuals;
+  double shown = 0.0;  // [m] after the lag
+  bool sunk = false;   // a visual is off its SDF pose
+};
+
 struct Wheel {
   std::string name;  // fl, rl, fr, rr
   double side = 1.0;  // +1 left, -1 right
@@ -154,6 +165,7 @@ struct Wheel {
   std::string dust_topic;
   gz::transport::Node::Publisher dust;
   bool emitting = false;
+  TyreSink tyre;
 };
 
 }  // namespace
@@ -283,6 +295,7 @@ class RoverDrivetrain : public gz::sim::System,
       gzerr << "RoverDrivetrain: no <wheel>; the drivetrain is disabled.\n";
       return;
     }
+    ConfigureSink(sdf, ecm);
 
     odometry_.SetWheelParams(track_, radius_, radius_);
     node_.Subscribe(text("topic", "/model/rover/cmd_vel"), &RoverDrivetrain::OnCmd, this);
@@ -347,6 +360,7 @@ class RoverDrivetrain : public gz::sim::System,
         w.hub_force = drive::HubForce(*w.last.ground, w.dig.factor, w.load, w.velocity, w.axle, normal, rr_speed_);
         w.link.AddWorldForce(ecm, w.hub_force);
       }
+      if (sink_on_) ShowSink(w, ecm, dt);
     }
     UpdateOdometry(info);
     if (t - last_state_ >= state_period_ - 1e-9) {
@@ -382,7 +396,7 @@ class RoverDrivetrain : public gz::sim::System,
     }
   }
 
-  void Reset(const gz::sim::UpdateInfo&, gz::sim::EntityComponentManager&) override {
+  void Reset(const gz::sim::UpdateInfo&, gz::sim::EntityComponentManager& ecm) override {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       cmd_ = {0.0, 0.0};
@@ -396,6 +410,7 @@ class RoverDrivetrain : public gz::sim::System,
       w.last = w.current = Contact();
       w.points.clear();
       w.past.clear();
+      ResetSink(w, ecm);
     }
     odometry_ = gz::math::DiffDriveOdometry();
     odometry_.SetWheelParams(track_, radius_, radius_);
@@ -667,6 +682,75 @@ class RoverDrivetrain : public gz::sim::System,
     }
   }
 
+  /// The tyre sink (<dig_sink>; without it nothing is drawn or written): each wheel link's visuals and their SDF
+  /// poses, once (the model's entities are in the ECM before its systems are configured).
+  void ConfigureSink(const sdf::ElementConstPtr& sdf, const gz::sim::EntityComponentManager& ecm) {
+    sink_on_ = sdf->HasElement("dig_sink");
+    if (!sink_on_) return;
+    sink_.gain = Child(sdf, "dig_sink", "gain", sink_.gain);
+    sink_.max = Child(sdf, "dig_sink", "max", sink_.max);
+    sink_.tau = Child(sdf, "dig_sink", "tau", sink_.tau);
+    for (auto& w : wheels_) {
+      for (const auto visual : w.link.Visuals(ecm)) {
+        const auto* pose = ecm.Component<gz::sim::components::Pose>(visual);
+        w.tyre.visuals.emplace_back(visual, pose ? pose->Data() : gz::math::Pose3d::Zero);
+      }
+    }
+  }
+
+  /// The dig-in made visible (design spec 6.5's extra sinkage z_d): the wheel's visuals are drawn
+  /// drive::VisualSink() lower, straight down in the world, after a lag of tau; 0 while the wheel is off the
+  /// ground. The offset is written in the wheel link's frame, which spins: its rotation is predicted to the end of
+  /// this step, when the Sensors and SceneBroadcaster systems read the ECM. A pose is written only when it changes
+  /// (SetVisualPose); a wheel drawn at its SDF pose writes nothing.
+  void ShowSink(Wheel& w, gz::sim::EntityComponentManager& ecm, double dt) {
+    TyreSink& tyre = w.tyre;
+    const double target = w.last.touched ? drive::VisualSink(sink_, w.dig.factor, w.last.ground->sinkage_m) : 0.0;
+    tyre.shown = drive::SinkLag(tyre.shown, target, sink_.tau, dt);
+    if (tyre.shown < drive::kSinkShown) {  // the SDF pose, written once
+      if (tyre.sunk) {
+        for (const auto& [visual, base] : tyre.visuals) SetVisualPose(ecm, visual, base);
+        tyre.sunk = false;
+      }
+      return;
+    }
+    const double rate = w.angular.Length();
+    const gz::math::Quaterniond turn =
+        rate * dt > 1e-12 ? gz::math::Quaterniond(w.angular / rate, rate * dt) : gz::math::Quaterniond::Identity;
+    const Vector3d down = (turn * w.pose.Rot()).RotateVectorReverse(Vector3d(0, 0, -tyre.shown));
+    for (const auto& [visual, base] : tyre.visuals) {
+      SetVisualPose(ecm, visual, gz::math::Pose3d(base.Pos() + down, base.Rot()));
+    }
+    tyre.sunk = true;
+  }
+
+  /// A world reset restores the visuals' SDF poses with the ECM; this covers a reset that keeps the ECM.
+  void ResetSink(Wheel& w, gz::sim::EntityComponentManager& ecm) {
+    if (w.tyre.sunk) {
+      for (const auto& [visual, base] : w.tyre.visuals) SetVisualPose(ecm, visual, base);
+    }
+    w.tyre.shown = 0.0;
+    w.tyre.sunk = false;
+  }
+
+  /// Writes a visual's pose if it differs in any bit, and marks it changed so that the SceneBroadcaster's state
+  /// carries it to the GUI. Not by SetComponentData's return value: Pose3d's == has a 1 mm tolerance, and a
+  /// spinning wheel's offset moves less than that per step, so the GUI would never get it (measured: no update
+  /// in /world/<w>/state at all, while the camera sensors, which read the ECM, drew it).
+  static void SetVisualPose(gz::sim::EntityComponentManager& ecm, gz::sim::Entity visual,
+                            const gz::math::Pose3d& pose) {
+    auto* component = ecm.Component<gz::sim::components::Pose>(visual);
+    if (!component) return;
+    const gz::math::Pose3d& old = component->Data();
+    if (old.Pos().X() == pose.Pos().X() && old.Pos().Y() == pose.Pos().Y() && old.Pos().Z() == pose.Pos().Z() &&
+        old.Rot().W() == pose.Rot().W() && old.Rot().X() == pose.Rot().X() && old.Rot().Y() == pose.Rot().Y() &&
+        old.Rot().Z() == pose.Rot().Z()) {
+      return;
+    }
+    component->Data() = pose;
+    ecm.SetChanged(visual, gz::sim::components::Pose::typeId, gz::sim::ComponentState::PeriodicChange);
+  }
+
   static inline const Traction kCoulomb{};  // plain Coulomb mu 1, no resistance, no dig-in: DART's default
 
   gz::sim::Model model_;
@@ -684,6 +768,8 @@ class RoverDrivetrain : public gz::sim::System,
   drive::DustParams dust_;
   bool dig_ = true;
   double dig_heal_length_ = 0.3;
+  bool sink_on_ = false;  // <dig_sink>
+  drive::SinkParams sink_;
   std::string default_key_ = "regolith", object_key_ = "manmade";
   std::vector<Traction> sdf_surfaces_;
   std::deque<Traction> owned_;  // explicit-mu objects: stable addresses for surfaces_
