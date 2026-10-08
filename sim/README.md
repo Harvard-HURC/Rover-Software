@@ -23,7 +23,7 @@ pixi run sim                    # build the plugins, regenerate rover and worlds
 pixi run drive urc_autonomy     # or drive from the browser: starts the world headless, opens the station page
 pixi run sim-bridge             # second terminal: ROS 2 <-> Gazebo topics
 pixi run ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}, angular: {z: 0.2}}'
-pixi run sim-test               # headless tests (~14 min with the build)
+pixi run sim-test               # headless tests (~15 min with the build)
 pixi run sim-maps               # orthophoto maps for the station's Map view (GPU, ~1 min)
 pixi run sim-perf               # performance budgets (~25 min, wants an otherwise idle machine)
 pixi run sim-slow               # the mission routes driven by the physical rover (~40 min)
@@ -577,7 +577,7 @@ each behind its own switch in `gen_model.py`, all on:
 | Cue | Switch | Drawn | Seen by |
 |---|---|---|---|
 | Tyre sink | `DriveParams.dig_sink` (`dig_sink_gain` 1.0, `dig_sink_max` 0.06 m, `dig_sink_tau` 0.1 s): the drivetrain's `<dig_sink>` | each tyre (D − 1) × s below its SDF pose, at true scale | every camera: the station's, the rover's RGB-D and the Gazebo GUI (through `/world/<w>/state`) |
-| Ruts and pits | `DriveParams.ruts` (numbers in `TrackParams`): the drivetrain's `<tracks>` | on every ground with s > 0, a faint floor and low berms behind each wheel; darker, with higher berms and pits, where the wheels dig in | camera sensors only: the station's views and the rover's RGB-D, not `gz sim -g` |
+| Ruts and pits | `DriveParams.ruts` (numbers in `TrackParams`): the drivetrain's `<tracks>` | on every ground with s > 0, a faint floor behind each wheel (low berms too where s ≥ 1.5 cm or the wheel digs in); darker, with higher berms and pits, where the wheels dig in | camera sensors only: the station's views and the rover's RGB-D, not `gz sim -g` |
 | Tread tyres | `Params.tread_tyre` (`models/rover/meshes/wheel.glb`) | tread bars, a hub and spokes, one of them ochre, so a wheel spinning in place shows | every view of the wheels |
 
 What drives them is each wheel's dig factor D (sinkage over static sinkage,
@@ -596,41 +596,52 @@ its marker service).
   down in the world, through a 0.1 s lag (`ShowSink`, `drive::VisualSink`):
   the spec's extra sinkage z_d at true scale, 2 cm on sand and dusty clay at
   D 2.0, 3 cm on wash sand, under 4 mm on the sand sheet, 5 mm crossing sand
-  at its equilibrium D 1.26, nothing where D stays 1 or s is 0
-  (`dig_sink_max` is never reached at gain 1). It heals as D does: a dug
-  wheel rolling onto rock rises within about 0.5 s; a wheel off the ground
-  is drawn at its SDF pose. The offset is re-expressed in the spinning wheel
-  link's frame every step, predicted to the end of the step, and written only
-  when it changes. Measured (`test_render.DigCues`): dug in to D 2.0 in sand,
-  a camera 1.5 m beside the tyres sees their top edges 13 px lower (2 cm);
-  every depth pixel that changes lies on a tyre (farther in the band its top
-  left, nearer at its lower outline), and colour changes off the tyres are
-  their shadows. At the station's 5 m chase camera 2 cm is about 3 px: the
-  sink reads in close and fly views.
+  at its equilibrium D 1.26, nothing where D stays 1 or s is 0 (`dig_sink_max`
+  is never reached at gain 1). On soft ground it follows D (healed 1/e per
+  0.3 m of travel); on rock (s = 0), and off the ground, its target is 0 and
+  the tyre rises through the 0.1 s lag, at its SDF pose within about 0.5 s (a
+  wheel off the ground for a few steps does not flicker). The offset is
+  re-expressed in the spinning wheel link's frame every step, predicted to the
+  end of the step, and written only when it changes. Measured
+  (`test_render.DigCues`): dug in to D 2.0 in sand, a camera 1.5 m beside the
+  tyres sees their top edges 13 px lower (2 cm); every depth pixel that
+  changes lies on a tyre (farther in the band its top left, nearer at its
+  lower outline), and colour changes off the tyres are their shadows. At the
+  station's 5 m chase camera 2 cm is about 3 px: the sink reads in close and
+  fly views.
 - **Ruts and pits** (`plugins/rover_tracks.hh`, `rover_tracks_render.hh`):
   each wheel on soft ground (s > 0, on the terrain heightmap or a plane) lays
   a cross-section every 5 cm of its travel (`spacing`), from its ground point,
   heading, D and slip at the end of the step; a wheel digging in place (D up
-  0.05 within 5 cm, `pit_dig`) digs a pit, each deeper one replacing the
-  last. A transparent dark floor lies 4 mm above the drawn surface, its
-  opacity (0.14 + 0.30 (D − 1)) × clamp(s / 2 cm, 0.6, 1.5) drawn in levels
-  of 15, 28, 39 and 48 %, with tread marks every other 5 cm unless the wheel
-  slips; it writes no depth. Berms stand s × (max(D − 1, 0) + 0.3) high (`berm_gain`
-  1.0, `berm_base` 0.3), in ±35 % lumps, drawn from 4 mm: sand 6 mm at D 1
-  and 2.6 cm at D 2, wash sand up to 3.9 cm, the sand sheet 4.5 mm;
-  regolith, gravel, biocrust, mudstone and bentonite get only the faint
-  floor, rock, pavement and the crusts nothing. A rim goes round each pit; a
-  wheel scrubbing sideways in a spin leaves a wide smear, and a turn sharper
-  than 45° between cross-sections starts a corner instead of a twisted strip.
-  Their colour comes from the terrain's `albedo.png` (the colour map as Terra
-  draws it, 1024², written by `gen_worlds` beside `ground.png`; without one
-  the terrain texture's mean colour, on a plane a default colour). The
-  newest 8,000 cross-sections (about 100 m of travel, `max_segments`) are
-  kept, in chunks of 128, the oldest dropped. The rendering thread draws, in
-  each frame, exactly what was laid by the frame's sim time (each record
-  carries it), at most 256 records a frame (`frame_budget`), so a station
-  that connects late catches up over a few frames; a process that renders
-  nothing reads no map and draws nothing.
+  0.05 within 5 cm, `pit_dig`) digs a pit, each deeper one replacing the last.
+  A transparent dark floor lies 4 mm above the drawn surface, its opacity
+  (0.14 + 0.30 (D − 1)) × clamp(s / 2 cm, 0.6, 1.5) drawn in levels of 15, 28,
+  39 and 48 %, with tread marks every other 5 cm unless the wheel slips; it
+  writes no depth. Berms stand s × (max(D − 1, 0) + 0.3) high (`berm_gain`
+  1.0, `berm_base` 0.3), in ±35 % lumps, drawn from 4 mm: sand 6 mm at D 1 and
+  2.6 cm at D 2, wash sand up to 3.9 cm, the sand sheet 4.5–8 mm (D up to
+  1.25); regolith, gravel, biocrust, mudstone, bentonite and badland slopes (D
+  stays 1) get only the faint floor, rock, pavement and the crusts nothing. A
+  rim goes round each pit; a wheel scrubbing sideways in a spin leaves a wide
+  smear, and a turn sharper than 45° between cross-sections starts a corner
+  instead of a twisted strip. Pits stay open (review of 2026-10-07): a pit dug
+  inside a standing one (within its rim's crest: the wheel scrubbed or crept
+  while digging) replaces it, swept from where the old one began, so one hole
+  has one rim; and a track laid while a pit stands draws no berm on a side
+  where it would lie over the pit (a wheel backing out, or another wheel
+  crossing or passing it). On the tests' dig-and-back-out drive the berms over
+  the pits' floors went from 23–66 % of each floor to 0–8 %, seen from above;
+  what is left is tracks laid before the pit was dug. Their colour comes from
+  the terrain's `albedo.png` (the colour map as Terra draws it, 1024², written
+  by `gen_worlds` beside `ground.png`; without one the terrain texture's mean
+  colour, on a plane a default colour). The newest 8,000 cross-sections (about
+  100 m of travel, `max_segments`) are kept, in chunks of 128, the oldest
+  dropped. The rendering thread draws, in each frame, exactly what was laid by
+  the frame's sim time (each record carries it, and a dropped chunk the time
+  it was dropped: the last four stay readable for a frame drawn while the next
+  step runs), at most 256 records a frame (`frame_budget`), so a station that
+  connects late catches up over a few frames; a process that renders nothing
+  reads no map and draws nothing.
 - **Tread tyres**: the tyres' visual is `meshes/wheel.glb`
   (`gen_model.wheel_parts`, the cylinder's outline, 384 triangles, no SDF
   `<material>`): the plain tyre's dark with 16 light tread bars, a light hub
@@ -649,17 +660,23 @@ its marker service).
 - **Visual only**, each switch on its own, and tested so: the base_link pose
   every step and the drivetrain states are bit for bit the same with the cues
   on and off, on both solvers (`test_drivetrain`: `DigSink` with all three
-  against none, `Ruts` with the ruts against none); the pictures are the same
-  every run (`test_render.Ruts.test_two_runs_are_identical`) and on rock, or
-  0.9–1.5 s after a world reset, they are those without the cues, bit for bit
-  (`DigCues`, `Ruts`). Depth: the ruts only bring it closer (berms and rims
-  0.7 mm–3.5 cm above the terrain, at most 11 cm along a ray), every changed
-  pixel on the ground within 0.45 m of a wheel's path; a tyre drawn lower
-  makes the band its top uncovered farther, all on the tyre, nothing
-  floating. `test_gen_model` checks that each switch takes away only its own
-  cue; `ctest` the sink's rule and lag and the ruts' layer (spacing, soft
-  ground only, the pit rule, the ring, resets, the per-frame sim-time cut,
-  geometry); `test_urc_terrain` the albedo map.
+  against none, `Ruts` with the ruts against none); on a quiet machine (Gazebo
+  lessons) the pictures are the same every run
+  (`test_render.Ruts.test_two_runs_are_identical`) and on rock, or 0.9–1.5 s
+  after a world reset, they are those without the cues, bit for bit
+  (`DigCues`, `Ruts`). Depth: the ruts only bring it closer, every changed
+  pixel on the ground within 0.45 m of a wheel's path, no higher above the
+  terrain than a berm's lumpy crest (measured on sand 0–3.3 cm over nine runs,
+  on the sand sheet ≤ 1.1 cm; the rule allows wash sand 5.3 cm). Along a ray
+  the change is that height over the sine of the ray's angle to the ground, so
+  it grows as the view grazes: 11 cm for `test_render.Ruts`'s RGB-D (rays
+  about 15° down), 25–43 cm for cameras 0.25–0.6 m up, 66 cm for one 15 cm up
+  (2.5°). A tyre drawn lower makes the band its top uncovered farther, all on
+  the tyre, nothing floating. `test_gen_model` checks that each switch takes
+  away only its own cue; `ctest` the sink's rule and lag and the ruts' layer
+  (spacing, soft ground only, the pit rule, pits kept open, the ring, resets,
+  the per-frame sim-time cut, with a ring that drops chunks too, geometry);
+  `test_urc_terrain` the albedo map.
 - **What the station sees**: the chase view shows the track behind the rover
   (1.3 % of its pixels after 1.5 m on sand, 1.7 % dug in) and the tread tyres;
   the rover eye looks ahead and never sees a wheel digging in place, only the
@@ -692,9 +709,19 @@ drivetrain on every wheel contact, terrain or object.
 - The ground does not deform: sinkage is a static carve of the collision
   heightmap under each ground type (2 cm in sand, 3 cm in wash sand, 0.5 cm on
   regolith); dig-in raises resistance, not sinkage. The tyres are only drawn
-  sunk, and the ruts and pits only drawn (Visible dig-in), in camera sensors
-  but not the Gazebo GUI; a rut's floor is a dark overlay, never lower than
-  the terrain, and berms cast no shadows.
+  sunk (in every view, the Gazebo GUI too), and the ruts and pits only drawn
+  (Visible dig-in), in camera sensors only, not the GUI; a rut's floor is a
+  dark overlay, never lower than the terrain. Berms and rims are flat-shaded
+  triangles of one colour per chunk and ground, untextured and casting no
+  shadows: close up they read as faceted strips. Their colour is the colour
+  map's, as Terra draws it from above; at eye level the cameras clip the
+  sunlit sand's red (72–86 % of the sand pixels beside the berms at 255), so
+  the darker berms show the colour map's redder hue and read pinker than the
+  sand round them (Gazebo lessons). Tracks laid before a pit was dug keep
+  their berms where they cross its sides. On relief, ruts far from the
+  camera break into fragments: beyond Terra's finest level of detail the
+  drawn surface leaves the heightmap by ±3 cm and buries the 4 mm floor
+  (Gazebo lessons); on flat ground they stay whole at 400 m.
 - The rover eye, the station's default main view, never sees a wheel digging
   in place (its head looks ahead): only the pits, once the rover backs out or
   turns; the tyre sink is about 3 px at the 5 m chase camera.
@@ -1397,10 +1424,27 @@ cost a wrong first attempt.
   material, or Terra draws over it. A transparent material with depth
   writing off appears in no depth image and no point cloud (the ruts'
   floor).
-- **Terra draws the colour map's own colour**: Terra over PBS measured 0.99 /
-  1.00 / 1.00 (a flat PBS square of `albedo.png`'s colour against the
-  terrain round it, 8 spots in two worlds), so geometry coloured from the
-  uncompensated colour map matches the ground.
+- **Terra draws the colour map's own colour**: Terra over PBS measured
+  0.93–1.03 per channel at 8 spots in two worlds, 0.99 / 1.00 / 1.00 over the
+  5 whose red the colour map does not clip (a flat PBS square of
+  `albedo.png`'s colour against the terrain round it, from above), so
+  geometry coloured from the uncompensated colour map matches the ground
+  from above. At eye level the sunlit sand's red clips in the cameras (72–86 %
+  of its pixels at 255 beside the ruts' berms): the sand there looks yellower
+  than its colour, and darker geometry of the same colour, below the clip,
+  shows the true, redder hue (berm and unclipped sand within 1° of hue). No
+  single colour matches both views.
+- **Terra's level of detail follows the camera's place, not its range**: Terra
+  draws its finest level over a square of its cells (64 heightmap samples,
+  32 m on Autonomy) round the camera's cell, reaching 32–96 m from the camera
+  by direction and by where in its cell the camera stands (measured on
+  Autonomy: tracks whole from 40.8 m, broken from 41.8 m across a cell line).
+  Beyond it, on relief, the drawn surface leaves the heightmap by ±2.5–3 cm
+  (inside, within about 1 cm), enough to bury geometry a few mm above the
+  ground (the ruts' 4 mm floor, the sand sheet's berms) and leave other bits
+  standing: tracks break into fragments with straight cut-offs. On flat ground
+  nothing changes (Autonomy's sand: tracks whole at 60, 150 and 400 m), and
+  cameras straight above them saw them whole from 60 and 150 m up.
 - **`rgbd_camera` ignores `<visibility_mask>`** in its image and its depth:
   whatever is drawn for people the robot sees too, so a cue must sit on the
   ground or on the tyre, never float.
@@ -1443,13 +1487,16 @@ cost a wrong first attempt.
 - LensFlare logs "Render pass added", then disconnects its PostRender hook.
 - **A visual's pose written at runtime** (its `components::Pose`, in its link)
   is drawn at once by every camera sensor (RenderUtil re-reads every visual's
-  pose each update) and moves no physics. But `Pose3d`'s `==` has a 1 mm
-  tolerance, so `SetComponentData` reports a smaller move as no change and
-  marks nothing, and the SceneBroadcaster never sends it to the GUI (measured:
-  a sinking tyre moving 0.16 mm a step reached the cameras and no state
-  message). Compare exactly, write the component, and `SetChanged(...,
-  PeriodicChange)`: periodic changes are cached until the next state message,
-  so the last pose, the SDF pose put back too, always reaches the GUI.
+  pose each update) and moves no physics. The GUI gets only what is marked
+  changed, and `SetComponentData` marks nothing itself (gz-sim 8: it stores
+  the value and returns whether it differs); `Pose3d`'s `==` has a 1 mm
+  tolerance, so it returns false for a smaller move, and a caller that marks
+  the change from its return value marks nothing: the SceneBroadcaster never
+  sends it (measured: a sinking tyre moving 0.16 mm a step reached the
+  cameras and no state message). Compare exactly, write the component, and
+  `SetChanged(..., PeriodicChange)`: periodic changes are cached until the
+  next state message, so the last pose, the SDF pose put back too, always
+  reaches the GUI.
 - **Picking frames in tests**: a camera at 20 Hz has two frames in every
   0.1 s window, so a harness that keeps the first frame to arrive is not
   repeatable; pick frames by their stamp (`test_render.Renderer.drive_variant`
@@ -1522,17 +1569,22 @@ way, budget < 5 %; the ruts at load 3.5–6, interleaved):
   noise (0.92–1.08 per run). Rendering the same sand spin with the station's
   chase and eye cameras and the rover's RGB-D subscribed took 0.990 of the
   wall time, with the same frame count.
-- The ruts on against off (opt-in `test_drivetrain.Cost.test_ruts_cost_almost_nothing`,
-  ≤ 1.05): `rover_test` 0.963 (its plane is regolith, so ruts are laid all
-  the way) and `urc_delivery` 0.990; feeding them costs 0.04–0.08 µs a step.
-  The rendering thread spends 0.06–0.10 ms a frame on them with the ring full
-  (8,000 records); a viewer connecting to a full ring catches up 256 records
-  a frame, at most 5 ms a frame. The station with eye, chase and RGB-D
-  subscribed (3 interleaved passes): Delivery 0.906 real time and 18.1 /
-  18.1 / 13.7 fps without ruts, 0.923 and 18.4 / 18.4 / 14.0 with 8,000
-  records; the proving ground 0.939 and 18.8 / 18.8 / 14.3 against 0.938 and
-  18.8 / 18.8 / 14.2: no measurable cost. Over long drives (1,097 m mostly on
-  Delivery's sand, 1,174 m on its soft ground) the ring wrapped about ten
+- The ruts on against off (opt-in
+  `test_drivetrain.Cost.test_ruts_cost_almost_nothing`, ≤ 1.05): `rover_test`
+  0.963 (its plane is regolith, so ruts are laid all the way) and
+  `urc_delivery` 0.990; feeding them costs 0.04–0.08 µs a step. The rendering
+  thread spends 0.06–0.10 ms a frame on them with the ring full (8,000
+  records). A late viewer catches up 256 records a frame: with 1,829 records
+  waiting, 8 frames of at most 5 ms; with a full ring (7,300–7,900 waiting)
+  about 30 frames, 2–5 ms each on average, the longest 5–70 ms with the
+  machine's load. A viewer that returns after the ring turned over unwatched,
+  or a world reset with a full ring drawn, destroys the dropped chunks (or all
+  of them) in its first frame: one frame of 11–15 ms. The station with eye,
+  chase and RGB-D subscribed (3 interleaved passes): Delivery 0.906 real time
+  and 18.1 / 18.1 / 13.7 fps without ruts, 0.923 and 18.4 / 18.4 / 14.0 with
+  8,000 records; the proving ground 0.939 and 18.8 / 18.8 / 14.3 against 0.938
+  and 18.8 / 18.8 / 14.2: no measurable cost. Over long drives (1,097 m mostly
+  on Delivery's sand, 1,174 m on its soft ground) the ring wrapped about ten
   times, server memory stayed at 230–310 MB with no trend and the scene at
   617–634 visuals.
 
@@ -1555,9 +1607,11 @@ after a world starts.
 `sim-maps` 64 s for all five (Autonomy 64 tiles in 23 s, the others 16 tiles
 in 9–10 s); `sim-realism` about 80 s (the spin runs on both solvers included).
 
-**Tests**: `pixi run sim-test` 495 tests in about 850 s (with the dig-in cues,
-2026-10-07, on a machine shared with another workload; 468 in 750 s, about
-14 min with the build and the generation, before them): 9 skipped (the opt-in
+**Tests**: `pixi run sim-test` 495 tests in 782 s, 13 min with the
+generation and the build up to date (after the dig-in cues' review,
+2026-10-08, a quiet machine; 850 s with the cues the day before, beside
+another workload; 468 in 750 s, about 14 min with the build and the
+generation, before them): 9 skipped (the opt-in
 performance and slow tests), 2 expected failures (the slow-turn judder; dust
 in depth, on the emitter `DriveParams.dust` adds, kept as the record for that
 switch); `ctest --test-dir sim/build` 3 C++ programs; `sim-slow` (the mission routes)
