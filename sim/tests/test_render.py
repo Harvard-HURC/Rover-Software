@@ -1069,12 +1069,13 @@ class Ruts(unittest.TestCase):
     def test_reset_clears_them(self):
         """A world reset clears every rut and pit: 0.9 s after it every view
         is the one without ruts, pixel for pixel (before it they differed)."""
+        self.assertEqual(self.runs["on"][4], self.runs["off"][4])  # frames of the same sim times
         for topic in self.TOPICS:
             with self.subTest(topic=topic):
                 before = [self.frames(k)[(topic, 2)] for k in ("off", "on")]
                 after = [self.frames(k)[(topic, 3)] for k in ("off", "on")]
                 self.assertFalse(np.array_equal(*before, equal_nan=True))
-                self.assertTrue(np.array_equal(*after, equal_nan=True))
+                np.testing.assert_array_equal(*after)  # NaN where NaN; says how many pixels differ, by how much
 
     def test_two_runs_are_identical(self):
         """The rendering thread draws, for each frame, exactly the ruts laid by
@@ -1084,7 +1085,7 @@ class Ruts(unittest.TestCase):
         self.assertEqual(self.runs["on"][4], self.runs["again"][4])
         for (topic, grab), image in self.frames("on").items():
             with self.subTest(topic=topic, grab=grab):
-                self.assertTrue(np.array_equal(image, self.frames("again")[(topic, grab)], equal_nan=True))
+                np.testing.assert_array_equal(image, self.frames("again")[(topic, grab)])
 
     def test_on_a_plane(self):
         """A world without a heightmap or an albedo map (rover_test's kind: a
@@ -1123,9 +1124,10 @@ class Ruts(unittest.TestCase):
         nothing: every view is the one without ruts, pixel for pixel."""
         yaw = np.unwrap(self.runs["rock_on"][1][:, 5])
         self.assertGreater(np.ptp(yaw), 1.0)  # it turned
+        self.assertEqual(self.runs["rock_on"][4], self.runs["rock_off"][4])  # frames of the same sim times
         for key, image in self.frames("rock_on").items():
             with self.subTest(topic=key[0], grab=key[1]):
-                self.assertTrue(np.array_equal(image, self.frames("rock_off")[key], equal_nan=True))
+                np.testing.assert_array_equal(image, self.frames("rock_off")[key])
 
 
 if __name__ == "__main__":

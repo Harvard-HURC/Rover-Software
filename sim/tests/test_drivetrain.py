@@ -461,7 +461,8 @@ class DigSink(unittest.TestCase):
     drives out onto rock. The world has the SceneBroadcaster, whose
     /world/<w>/state the Gazebo GUI draws from (test_render.DigCues has the
     pictures). Runs: both solvers, the dig-in cues off (no sink, the plain
-    tyre: the rover before them) and on (the defaults)."""
+    tyre, no ruts: the rover before them) and on (the defaults: all three,
+    the ruts laid, not drawn, as no camera renders here)."""
 
     CMD = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (3.5, 0.0, 0.0), (4.0, 0.5, 0.0)]
 
@@ -469,7 +470,7 @@ class DigSink(unittest.TestCase):
     def setUpClass(cls):
         X, Y = FLAT.grid()
         raster = np.where(np.hypot(X, Y) < 1.2, GROUND["sand"][0], GROUND["rock"][0]).astype(np.uint8)
-        before = dataclasses.replace(physical(dig_sink=False), tread_tyre=False)
+        before = dataclasses.replace(physical(dig_sink=False, ruts=False), tread_tyre=False)
         cls.runs = {}
         for solver in SOLVERS:
             for cues, params in ((False, before), (True, physical())):
@@ -482,7 +483,7 @@ class DigSink(unittest.TestCase):
 
     def test_physics_unchanged(self):
         """The cues move visuals only: the base_link trace every step and the
-        drivetrain states are the same with them as without, on both
+        drivetrain states are the same with all three as without any, on both
         solvers."""
         for solver in SOLVERS:
             with self.subTest(solver=solver):
