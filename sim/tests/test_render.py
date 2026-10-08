@@ -854,8 +854,7 @@ class DigCues(unittest.TestCase):
 
         def look(frame):
             image = frame.images[SIDE_IMAGE].astype(float)
-            r, g, b = image[..., 0], image[..., 1], image[..., 2]
-            ochre = disc & (r > b + 30)
+            ochre = disc & (image[..., 0] > image[..., 2] + 30)  # red over blue
             return image.mean(axis=2), ochre
 
         lum_a, ochre_a = look(tread["spin_a"])

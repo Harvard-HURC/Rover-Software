@@ -21,7 +21,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from simulate import simulate
+from simulate import physical, simulate, world_file
 from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_vertices, sheet, temp_sdf, vec
 from worldfiles import world_copy
 from worldfiles import terrain as world_terrain
@@ -1073,13 +1073,20 @@ def wheel_penetration(rows, height):
 
 
 class ProvingGroundPhysics(unittest.TestCase):
+    """The rover on the proving ground's courses. It is physical() (the
+    shipped rover with its command timeout on sim time): with model://rover's
+    wall-clock timeout a loaded machine could stall the drive (commands every
+    20 ms of sim time, more than 0.5 s of wall time apart, count as none), and
+    the washboard crossing, 0.78 m past its threshold, failed once in a full
+    run under load (2026-10-07)."""
+
     @classmethod
     def setUpClass(cls):
         cls.sheet = sheet("proving_ground")
 
     def run_on(self, x, y, yaw, pitch, seconds, cmd=(0.0, 0.0), lift=0.1):
         with world_copy("proving_ground", rover=(x, y, yaw), pitch=pitch, lift=lift) as world:
-            return simulate(seconds, world=world, cmd=cmd).poses["base_link"]
+            return simulate(seconds, world=world, cmd=cmd, params=physical()).poses["base_link"]
 
     def parked_on_20_deg_ramp(self, lane):
         """Displacement [m] along the lane's uphill heading of a rover parked
@@ -1127,7 +1134,8 @@ class ProvingGroundPhysics(unittest.TestCase):
         heading = math.radians(p["heading_deg"])
         x, y = p["x"] + 3.0 * math.cos(heading), p["y"] + 3.0 * math.sin(heading)
         surface = sheets.terrain(self.sheet, sheets.path("proving_ground"), collision=True)
-        with world_copy("proving_ground", rover=(x, y, heading), lift=0.35) as world:
+        with world_copy("proving_ground", rover=(x, y, heading), lift=0.35) as base, \
+                world_file(base, params=physical()) as world:
             wheels = wheel_poses(world, 18.0, 0.5)
         reach = wheel_penetration(wheels[wheels[:, 0] > 2.0], surface.height)  # [m] after the spawn settles
         moved = math.dist(wheels[0, 1:3], wheels[-1, 1:3])
@@ -1137,7 +1145,7 @@ class ProvingGroundPhysics(unittest.TestCase):
     def test_twist_ditch_turns_the_rockers_to_their_limit(self):
         ditch = self.sheet["points"]["articulation"]["twist_ditch"]
         with world_copy("proving_ground", rover=(ditch["x"] - 3.0, ditch["y"], 0.0), lift=0.05) as world:
-            state = simulate(20.0, world=world, cmd=(0.4, 0.0))
+            state = simulate(20.0, world=world, cmd=(0.4, 0.0), params=physical())
         pose = state.poses["base_link"]
         self.assertGreater(state.rocker_peak, 0.9 * gen_model.Params().rocker_limit)
         self.assertGreater(pose[0], ditch["x"] + 2.0, pose)  # and drives on across

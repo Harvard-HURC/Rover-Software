@@ -3,7 +3,6 @@
 import copy
 import dataclasses
 import json
-import math
 import re
 import struct
 import tempfile
