@@ -7,17 +7,26 @@
 // ground has a static sinkage s > 0) lays a cross-section every <spacing> of its travel: the ground point under its
 // hub, the lateral direction of travel, the half-width it swept, its dig factor D, s, whether it slipped and its
 // heading. Two cross-sections of one wheel make a track segment. A wheel that barely moves (less than <spacing>)
-// while D grows by <pit_dig> digs a pit at its last cross-section; a pit dug deeper there replaces the one before.
-// Records (segments and pits) go into chunks of <chunk>, a ring of at most <max_segments> records: the oldest
-// chunk goes first (8000: about 100 m of the rover's travel, 4 wheels x 20 cross-sections per metre).
+// while D grows by <pit_dig> digs a pit at its last cross-section. A pit dug inside a standing one (within its
+// rim's crest: the same place deeper, or a wheel that scrubbed or crept while digging) replaces it, swept from
+// where the old one's hole began: one hole, never rims across each other's floors. A track segment laid while a pit
+// stands draws no berm on a side where it would lie over that pit (inside its rim's crest): a wheel backing out of
+// its pit, or another wheel crossing or passing it, lays no berms across the hole; the floor stays (review
+// 2026-10-07: on the proving ground's dig-and-back-out drive the berms of the tracks leaving the pits and a second,
+// shallower pit's rim covered 23-66 % of the pits' floors from above, now 0-8 %: only tracks laid before the pit was
+// dug keep theirs). Records (segments and pits) go into chunks of <chunk>, a ring of at most <max_segments> records:
+// the oldest chunk goes first (8000: about 100 m of the rover's travel, 4 wheels x 20 cross-sections per metre).
 //
-// Determinism (the snapshot rule). The rendering thread runs a frame's SceneUpdate while the next step's PreUpdate
-// lays more records (gz-sim's Sensors::PostUpdate starts the frame and returns; measured: one frame in ten, driving
-// on soft ground, found records laid after its time). So every record carries the sim
-// time of the step that laid it, a pit replaced by a deeper one the time it was replaced, and a frame draws exactly
-// the records visible at its own sim time (the scene's time): stamp <= time < until. TrackLayer::Take() copies only
-// those not drawn yet (plain data, under the layer's mutex); the geometry is built outside it. A reset starts a
-// new generation: a frame of the old one still rendering then (its time beyond the reset's) draws nothing new.
+// Determinism (the snapshot rule). The rendering thread runs a frame's SceneUpdate while the next step's PreUpdate lays
+// more records (gz-sim's Sensors::PostUpdate starts the frame and returns; measured: one frame in ten, driving on soft
+// ground, found records laid after its time). So every record carries the sim time of the step that laid it, a pit
+// replaced by a deeper one the time it was replaced, a chunk dropped from the ring the time it was dropped, and a frame
+// draws exactly the records visible at its own sim time (the scene's time): stamp <= time < until, from the chunks in
+// the ring at that time (the last kRetired = 4 chunks dropped stay readable for frames of an earlier time).
+// TrackLayer::Take() copies only those not drawn yet (plain data, under the layer's mutex); the geometry is built
+// outside it. A reset starts a new generation: a frame of the old one still rendering then (its time beyond the
+// reset's) draws nothing new; gz-sim 8.10 publishes no image of such a frame at its own time (the Sensors system, a
+// world plugin, resets before the drivetrain and sets the time its frame is published at to the reset's).
 //
 // Looks (s: the ground's static sinkage, D: the dig factor; the wheel already sits s into the visual surface, the
 // static carve of the collision heightmap):
@@ -26,13 +35,15 @@
 //   48 %); every other cross-section one level lighter (tread marks) unless the wheel slipped over <smear_slip> of
 //   its surface speed. It writes no depth: depth cameras and point clouds do not see it.
 // - berms: a ridge each side, crest h = berm_gain s (max(D - 1, 0) + berm_base), at most <berm_max>, drawn from
-//   <berm_min>: sand 6 mm at D = 1 and 2.6 cm at D = 2, wash sand up to 3.9 cm, the sand sheet 4.5 mm; regolith,
-//   gravel and biocrust (s 5 mm) only the faint floor. Each berm is 4 cm + 3 h wide, its crest at a quarter of that,
-//   lumpy by +-35 % (smooth value noise), its outer edge buried 1 cm: on the ground, never floating, so depth
-//   images only get closer. The apparent depth, carve plus berm, is about s (D + 0.3), what D means.
+//   <berm_min>: sand 6 mm at D = 1 and 2.6 cm at D = 2, wash sand up to 3.9 cm, the sand sheet 4.5-8 mm (D up to
+//   1.25); regolith, gravel and biocrust (s 5 mm), mudstone, bentonite and badland slopes (s 1 cm, D stays 1) only
+//   the faint floor. Each berm is 4 cm + 3 h wide, its crest at a quarter of that, lumpy by +-35 % (smooth value
+//   noise), its outer edge buried 1 cm: on the ground, never floating, so depth images only get closer. The
+//   apparent depth, carve plus berm, is about s (D + 0.3), what D means.
 // - width: half of W |cos t| + L |sin t|, t between the wheel's heading and its travel, L = 2 sqrt(2 r D s) the
 //   tyre's chord at that depth: a wheel scrubbing sideways in a spin leaves a wide smear.
-// - pits: a rim at crest height round the wheel's chord (a 16-sided superellipse), the dark floor inside.
+// - pits: a rim at crest height round the wheel's chord (a 16-sided superellipse), the dark floor inside; a pit
+//   swept from an earlier one's place is that shape stretched back to it.
 #pragma once
 
 #include <algorithm>
@@ -80,11 +91,13 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr int kLevels = 5;              ///< floor darkness levels; 0 draws nothing
 constexpr double kLayerOpacity = 0.15;  ///< level k: opacity 1 - (1 - kLayerOpacity)^k
 constexpr double kSharpTurn = 0.7071;   ///< cos 45 deg: a sharper turn between cross-sections starts a corner
+/// Chunks dropped from the ring that frames of an earlier time still read (a frame lags its step by one step, rarely
+/// a few; four chunks of 128 records are at least 128 steps of four wheels, seconds of driving in practice).
+constexpr size_t kRetired = 4;
 
 struct Vec3 {
   double x = 0.0, y = 0.0, z = 0.0;
 };
-inline bool operator==(const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
 /// One cross-section of a wheel's track.
 struct Section {
@@ -99,7 +112,8 @@ struct Section {
   bool smeared = false;     ///< the wheel slipped here: no tread marks
 };
 
-/// A record: a stretch of one wheel's track (a to b), or a pit (a == b) where the wheel dug in place.
+/// A record: a stretch of one wheel's track (a to b), or a pit where the wheel dug in place (at b; a is where its
+/// hole began, b's place unless it swept an earlier pit's: a's shape is b's).
 struct Segment {
   Section a, b;
   Stamp stamp = 0;       ///< the step that laid it
@@ -107,6 +121,7 @@ struct Segment {
   uint8_t wheel = 0;
   uint8_t ground = 0;    ///< the ground's id (the drivetrain's numbering): berms of one ground share a colour
   bool pit = false;
+  uint8_t bermless = 0;  ///< a track segment's sides (1 left, 2 right) whose berm would lie over a standing pit
 
   bool Visible(Stamp t) const { return stamp <= t && t < until; }
 };
@@ -128,7 +143,6 @@ struct PitRef {
   uint64_t chunk = 0;
   uint32_t index = 0;
 };
-inline bool operator==(const PitRef& a, const PitRef& b) { return a.chunk == b.chunk && a.index == b.index; }
 
 /// The rendering side's account of what it took from a layer (TrackLayer::Take keeps it).
 struct Drawn {
@@ -192,6 +206,40 @@ inline Section MakeSection(const Params& p, double x, double y, double z, double
   return s;
 }
 
+/// The berm's crest above the visual surface [m].
+inline double BermHeight(const Params& p, const Section& s) {
+  return std::min(p.berm_max, p.berm_gain * s.sink * (std::max(0.0, s.dig - 1.0) + p.berm_base));
+}
+
+/// A pit's shape round its cross-section c (BuildPit): its floor reaches `along` the heading and `across` it, the
+/// rim `rim` wide beyond, its crest at a quarter of that, `crest` high. The wheel, the static sinkage into the
+/// visual surface, meets the crest at a half-chord along its heading.
+struct PitShape {
+  double along = 0.0, across = 0.0, rim = 0.0, crest = 0.0;
+};
+inline PitShape ShapeOfPit(const Params& p, const Section& c) {
+  PitShape s;
+  s.crest = BermHeight(p, c);
+  const double y = c.sink + s.crest;  // the crest above the wheel's lowest point
+  s.along = std::sqrt(std::max(0.0, 2 * p.radius * y - y * y)) + 0.01;
+  s.across = std::max(c.half, p.width / 2) + 0.005;
+  s.rim = 0.04 + 3.0 * s.crest;
+  return s;
+}
+
+/// Whether (x, y) lies inside a pit's rim crest: the superellipse round the nearest point of its sweep (from a to
+/// b), grown by a quarter of the rim.
+inline bool InsidePit(const Params& p, const Segment& pit, double x, double y) {
+  const Section& c = pit.b;
+  const PitShape s = ShapeOfPit(p, c);
+  const double sx = pit.a.x - c.x, sy = pit.a.y - c.y, l2 = sx * sx + sy * sy;
+  const double f = l2 > 0 ? std::clamp(((x - c.x) * sx + (y - c.y) * sy) / l2, 0.0, 1.0) : 0.0;
+  const double dx = x - c.x - f * sx, dy = y - c.y - f * sy;
+  const double u = (dx * c.hx + dy * c.hy) / (s.along + s.rim / 4);
+  const double v = (dy * c.hx - dx * c.hy) / (s.across + s.rim / 4);
+  return u * u * u * u + v * v * v * v < 1.0;
+}
+
 /// The ruts' record of every wheel: laid by the server thread (Step, Reset, Stress), taken by the rendering
 /// thread (Take). Every public call locks.
 class TrackLayer {
@@ -214,6 +262,8 @@ class TrackLayer {
   void Reset(Stamp t) {
     std::lock_guard<std::mutex> lock(mutex_);
     chunks_.clear();
+    retired_.clear();
+    holes_.clear();
     total_ = 0;
     for (auto& r : runs_) r = Run();
     ++generation_;
@@ -240,8 +290,8 @@ class TrackLayer {
     }
   }
 
-  /// What a frame at sim time t draws that `drawn` has not: the records visible at t (stamp <= t < until),
-  /// newest chunk first, at most `budget` of them; and what to remove. Updates `drawn`.
+  /// What a frame at sim time t draws that `drawn` has not: the records visible at t (stamp <= t < until) in the
+  /// chunks of the ring at t, newest chunk first, at most `budget` of them; and what to remove. Updates `drawn`.
   Update Take(Stamp t, Drawn& drawn, size_t budget) const {
     std::lock_guard<std::mutex> lock(mutex_);
     Update u;
@@ -254,13 +304,14 @@ class TrackLayer {
       drawn = Drawn();
       drawn.generation = generation_;
     }
-    const uint64_t first = chunks_.empty() ? next_id_ : chunks_.front().id;
+    const Ring ring = At(t);
+    const uint64_t first = ring.size() ? ring[0].id : next_id_;
     for (auto it = drawn.taken.begin(); it != drawn.taken.end() && it->first < first;) {
       u.dropped.push_back(it->first);
       it = drawn.taken.erase(it);
     }
     for (auto it = drawn.pits.begin(); it != drawn.pits.end();) {
-      const Segment* s = Find(it->chunk, it->index);
+      const Segment* s = ring.Find(it->chunk, it->index);
       if (!s) {
         it = drawn.pits.erase(it);  // its chunk is gone
       } else if (s->until <= t) {
@@ -271,20 +322,21 @@ class TrackLayer {
       }
     }
     size_t left = budget;
-    for (auto c = chunks_.rbegin(); c != chunks_.rend() && left > 0; ++c) {
-      size_t& taken = drawn.taken[c->id];
-      size_t n = c->records.size();
-      while (n > 0 && c->records[n - 1].stamp > t) --n;  // stamps never decrease: only the newest can be due later
-      u.held += c->records.size() - n;
+    for (size_t k = ring.size(); k-- > 0 && left > 0;) {
+      const Chunk& c = ring[k];
+      size_t& taken = drawn.taken[c.id];
+      size_t n = c.records.size();
+      while (n > 0 && c.records[n - 1].stamp > t) --n;  // stamps never decrease: only the newest can be due later
+      u.held += c.records.size() - n;
       if (n <= taken) continue;
       const size_t end = taken + std::min(n - taken, left);
       Update::Batch batch;
-      batch.chunk = c->id;
+      batch.chunk = c.id;
       for (size_t i = taken; i < end; ++i) {
-        const Segment& s = c->records[i];
+        const Segment& s = c.records[i];
         if (s.pit) {
           if (!s.Visible(t)) continue;  // replaced already: never drawn
-          drawn.pits.push_back({c->id, uint32_t(i)});
+          drawn.pits.push_back({c.id, uint32_t(i)});
         }
         batch.index.push_back(uint32_t(i));
         batch.records.push_back(s);
@@ -322,14 +374,78 @@ class TrackLayer {
     uint64_t id = 0;
     std::vector<Segment> records;
   };
+  /// A chunk dropped from the ring, and the step that dropped it.
+  struct Retired {
+    Stamp stamp = 0;
+    Chunk chunk;
+  };
+  /// The chunks a frame sees, oldest first (ids consecutive): the ring's, after those dropped by later steps.
+  struct Ring {
+    const std::deque<Retired>& retired;
+    const std::deque<Chunk>& chunks;
+    size_t old = 0;  // retired chunks seen
+
+    size_t size() const { return old + chunks.size(); }
+    const Chunk& operator[](size_t i) const {
+      return i < old ? retired[retired.size() - old + i].chunk : chunks[i - old];
+    }
+    const Segment* Find(uint64_t chunk, uint32_t index) const {
+      if (!size() || chunk < (*this)[0].id || chunk > (*this)[size() - 1].id) return nullptr;
+      const Chunk& c = (*this)[size_t(chunk - (*this)[0].id)];
+      return index < c.records.size() ? &c.records[index] : nullptr;
+    }
+  };
   /// A wheel's track being laid.
   struct Run {
     bool active = false;
     Section last;            // the last cross-section (deepened in place by pits)
     double mark_dig = 1.0;   // D when the last cross-section or pit was made
-    bool pit = false;        // a pit stands at `last`: the one a deeper pit replaces
-    PitRef pit_ref;
   };
+  /// A pit standing in the ring (not replaced), and how far from the middle of its sweep its rim's crest reaches.
+  struct Hole {
+    PitRef ref;
+    Segment pit;
+    double reach = 0.0;
+  };
+
+  /// The ring as a frame at time t sees it.
+  Ring At(Stamp t) const {
+    size_t old = 0;
+    while (old < retired_.size() && retired_[retired_.size() - 1 - old].stamp > t) ++old;
+    return {retired_, chunks_, old};
+  }
+
+  /// The sides of a track segment whose berm would lie over a standing pit: its foot, a point on its slope or its
+  /// crest, at either end or in the middle, inside a pit's rim crest. Leaving a pit, or crossing one, a wheel draws
+  /// no berm across the hole (the floor stays); passing beside one, only the berm on that side goes.
+  uint8_t OverHoles(const Segment& s) const {
+    uint8_t sides = 0;
+    const double mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
+    const double span = 0.5 * std::hypot(s.b.x - s.a.x, s.b.y - s.a.y) + std::max(s.a.half, s.b.half) +
+                        0.45 * (0.04 + 3.0 * p_.berm_max);  // how far its berms reach from its middle
+    for (const Hole& h : holes_) {
+      const double hx = (h.pit.a.x + h.pit.b.x) / 2, hy = (h.pit.a.y + h.pit.b.y) / 2;
+      if (std::hypot(mx - hx, my - hy) > h.reach + span) continue;
+      for (const auto& [bit, side] : {std::pair<uint8_t, double>{1, 1.0}, {2, -1.0}}) {
+        for (const double f : {0.0, 0.5, 1.0}) {
+          if (sides & bit) break;
+          for (const double reach : {0.0, 0.25, 0.45}) {  // the foot, the crest, the slope beyond it
+            double x = 0.0, y = 0.0;
+            for (const auto& [c, weight] : {std::pair<const Section*, double>{&s.a, 1.0 - f}, {&s.b, f}}) {
+              const double out = c->half + reach * (0.04 + 3.0 * BermHeight(p_, *c));
+              x += weight * (c->x + side * c->lx * out);
+              y += weight * (c->y + side * c->ly * out);
+            }
+            if (InsidePit(p_, h.pit, x, y)) {
+              sides |= bit;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return sides;
+  }
 
   void Lay(Stamp t, size_t wheel, const WheelInput& in) {
     Run& r = runs_[wheel];
@@ -367,10 +483,10 @@ class TrackLayer {
       seg.stamp = t;
       seg.wheel = uint8_t(wheel);
       seg.ground = in.ground;
+      seg.bermless = OverHoles(seg);
       Append(seg);
       r.last = s;
       r.mark_dig = in.dig;
-      r.pit = false;
       return;
     }
     if (in.dig >= r.mark_dig + p_.pit_dig) {  // digging in place: a pit at the last cross-section, deeper each time
@@ -380,17 +496,39 @@ class TrackLayer {
       r.last.hx = here.hx;
       r.last.hy = here.hy;
       r.last.sink = std::max(r.last.sink, in.sink);
-      if (r.pit) {
-        if (Segment* old = Find(r.pit_ref.chunk, r.pit_ref.index)) old->until = t;
-      }
       Segment seg;
-      seg.a = seg.b = r.last;
+      seg.b = r.last;
+      Section start = r.last;
+      double half = here.half;
+      // Inside a standing pit (this one, dug deeper; one the wheel scrubbed or crept out of while digging; another
+      // wheel's): that one goes, and this one is swept from where its hole began, at least as deep and as wide. A
+      // swept pit is the wheel's own width (the sweep is the scrub that widened the last cross-section).
+      for (auto h = holes_.begin(); h != holes_.end();) {
+        if (!InsidePit(p_, h->pit, r.last.x, r.last.y)) {
+          ++h;
+          continue;
+        }
+        if (Segment* old = Find(h->ref.chunk, h->ref.index)) old->until = t;
+        start = h->pit.a;
+        half = std::max(half, h->pit.b.half);
+        seg.b.dig = std::max(seg.b.dig, h->pit.b.dig);
+        seg.b.sink = std::max(seg.b.sink, h->pit.b.sink);
+        h = holes_.erase(h);
+      }
+      if (start.x != r.last.x || start.y != r.last.y) seg.b.half = half;
+      seg.a = seg.b;
+      seg.a.x = start.x;
+      seg.a.y = start.y;
+      seg.a.z = start.z;
       seg.stamp = t;
       seg.wheel = uint8_t(wheel);
       seg.ground = in.ground;
       seg.pit = true;
-      r.pit_ref = Append(seg);
-      r.pit = true;
+      const PitRef ref = Append(seg);
+      const PitShape shape = ShapeOfPit(p_, seg.b);
+      const double reach = 0.5 * std::hypot(seg.a.x - seg.b.x, seg.a.y - seg.b.y) +
+                           std::hypot(shape.along + shape.rim / 4, shape.across + shape.rim / 4);
+      holes_.push_back({ref, seg, reach});
       r.mark_dig = in.dig;
     }
   }
@@ -398,8 +536,13 @@ class TrackLayer {
   PitRef Append(const Segment& s) {
     if (chunks_.empty() || chunks_.back().records.size() >= size_t(p_.chunk)) {
       while (!chunks_.empty() && total_ + size_t(p_.chunk) > size_t(p_.max_segments)) {
+        const uint64_t id = chunks_.front().id;
+        holes_.erase(std::remove_if(holes_.begin(), holes_.end(), [&](const Hole& h) { return h.ref.chunk == id; }),
+                     holes_.end());
         total_ -= chunks_.front().records.size();
+        retired_.push_back({s.stamp, std::move(chunks_.front())});  // frames before this step still see it
         chunks_.pop_front();
+        if (retired_.size() > kRetired) retired_.pop_front();
       }
       Chunk c;
       c.id = next_id_++;
@@ -412,18 +555,16 @@ class TrackLayer {
     return {c.id, uint32_t(c.records.size() - 1)};
   }
 
-  const Segment* Find(uint64_t chunk, uint32_t index) const {
-    if (chunks_.empty() || chunk < chunks_.front().id || chunk > chunks_.back().id) return nullptr;
-    const Chunk& c = chunks_[size_t(chunk - chunks_.front().id)];
-    return index < c.records.size() ? &c.records[index] : nullptr;
-  }
+  /// A record in the ring as it stands now.
   Segment* Find(uint64_t chunk, uint32_t index) {
-    return const_cast<Segment*>(static_cast<const TrackLayer*>(this)->Find(chunk, index));
+    return const_cast<Segment*>(Ring{retired_, chunks_, 0}.Find(chunk, index));
   }
 
   Params p_;
   mutable std::mutex mutex_;
   std::deque<Chunk> chunks_;  // ids consecutive; they keep counting across resets, so names never clash
+  std::deque<Retired> retired_;  // the last kRetired chunks dropped, oldest first
+  std::vector<Hole> holes_;      // the pits standing, oldest first
   size_t total_ = 0;
   uint64_t next_id_ = 1;
   uint64_t generation_ = 0;
@@ -439,11 +580,6 @@ inline int FloorLevel(const Params& p, const Section& s) {
   const double o = std::clamp(
       (p.opacity_base + p.opacity_dig * (s.dig - 1.0)) * std::clamp(s.sink / 0.02, 0.6, 1.5), 0.0, 0.62);
   return std::clamp(int(std::lround(std::log(1.0 - o) / std::log(1.0 - kLayerOpacity))), 0, kLevels - 1);
-}
-
-/// The berm's crest above the visual surface [m].
-inline double BermHeight(const Params& p, const Section& s) {
-  return std::min(p.berm_max, p.berm_gain * s.sink * (std::max(0.0, s.dig - 1.0) + p.berm_base));
 }
 
 /// A deterministic number in [-1, 1] for a grid cell and a channel.
@@ -517,6 +653,7 @@ inline void BuildTrack(const Params& p, const Segment& s, const HeightFn& h, Mes
   if (std::max(ha, hb) < p.berm_min) return;
   const double wa = 0.04 + 3.0 * ha, wb = 0.04 + 3.0 * hb;  // crest at a quarter, gentle outside
   for (const double side : {1.0, -1.0}) {
+    if (s.bermless & (side > 0 ? 1 : 2)) continue;  // it would lie over a standing pit
     // Lumpy, not extruded: crest height and place, and the outer edge, vary with smooth noise over the ground (a
     // cross-section shared by two segments gets the same vertices).
     const double na = Lumps(a.x, a.y, side), nb = Lumps(b.x, b.y, side);
@@ -536,24 +673,26 @@ inline void BuildTrack(const Params& p, const Segment& s, const HeightFn& h, Mes
   }
 }
 
-/// A pit's rim and dark floor, appended to `out`: the wheel, the static sinkage into the visual surface, meets
-/// the crest h above it at a half-chord along its heading.
+/// A pit's rim and dark floor, appended to `out` (ShapeOfPit). A pit swept from an earlier one's place (s.a) is the
+/// shape round b stretched back there: each point whose outward normal faces s.a moves by b to s.a.
 inline void BuildPit(const Params& p, const Segment& s, const HeightFn& h, Mesh& out) {
   using detail::Quad;
   const Section& c = s.b;
-  const double crest = BermHeight(p, c);
+  const PitShape shape = ShapeOfPit(p, c);
+  const double a = shape.along, wi = shape.across, b = shape.rim, crest = shape.crest;
   const int level = FloorLevel(p, c);
-  const double y = c.sink + crest;  // the crest above the wheel's lowest point
-  const double a = std::sqrt(std::max(0.0, 2 * p.radius * y - y * y)) + 0.01;
-  const double wi = std::max(c.half, p.width / 2) + 0.005, b = 0.04 + 3.0 * crest;
   const double tx = c.hx, ty = c.hy, nx = -c.hy, ny = c.hx;
+  const double sx = s.a.x - c.x, sy = s.a.y - c.y;              // the sweep, 0 for a pit dug where it stands
+  const double su = sx * tx + sy * ty, sv = sx * nx + sy * ny;  // in the pit's frame
   constexpr int kSides = 16;
   // A rounded rectangle (superellipse, exponent 4) round the wheel's footprint, counter-clockwise from above.
   const auto at = [&](int k, double along, double across, double dz) {
     const double th = 2 * kPi * (k % kSides) / kSides, co = std::cos(th), si = std::sin(th);
     const double u = std::copysign(std::sqrt(std::abs(co)), co), v = std::copysign(std::sqrt(std::abs(si)), si);
-    const double x = c.x + tx * (u * along) + nx * (v * across), yy = c.y + ty * (u * along) + ny * (v * across);
-    return Vec3{x, yy, h(x, yy, c.z) + dz};
+    const bool back = (u * u * u / a) * su + (v * v * v / wi) * sv > 0;  // the floor's normal there faces s.a
+    const double x = c.x + (back ? sx : 0.0) + tx * (u * along) + nx * (v * across);
+    const double yy = c.y + (back ? sy : 0.0) + ty * (u * along) + ny * (v * across);
+    return Vec3{x, yy, h(x, yy, back ? s.a.z : c.z) + dz};
   };
   if (crest >= p.berm_min) {
     for (int k = 0; k < kSides; ++k) {
@@ -568,7 +707,8 @@ inline void BuildPit(const Params& p, const Segment& s, const HeightFn& h, Mesh&
     }
   }
   if (level > 0) {
-    const Vec3 centre{c.x, c.y, h(c.x, c.y, c.z) + p.floor_offset};
+    const double mx = c.x + sx / 2, my = c.y + sy / 2;
+    const Vec3 centre{mx, my, h(mx, my, (c.z + s.a.z) / 2) + p.floor_offset};
     auto& f = out.floor[size_t(level)];
     for (int k = 0; k < kSides; ++k) {
       f.insert(f.end(), {centre, at(k, a, wi, p.floor_offset), at(k + 1, a, wi, p.floor_offset)});

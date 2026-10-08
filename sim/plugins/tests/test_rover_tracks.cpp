@@ -1,8 +1,10 @@
 // Unit tests of the ruts' layer and geometry (rover_tracks.hh): cross-section spacing, sharp turns, the pit rule,
-// the ring, reset, the time-stamp snapshot a frame draws, and the floor, berm and pit shapes against the design's
-// numbers.
+// pits kept open (no berms across them, one swept pit where a wheel dug on beside its own), the ring, reset, the
+// time-stamp snapshot a frame draws (with a ring that drops chunks too), and the floor, berm and pit shapes against
+// the design's numbers.
 #include <cmath>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "check.hh"
@@ -214,16 +216,118 @@ void TestPitRule() {
   const auto segs = Tracks(layer);
   CHECK(segs.size() >= 2);
   if (segs.size() >= 2) CHECK_NEAR(segs[1].a.dig, 2.0, 0);
-  // Digging in again further on leaves a second pit; the first stays.
+  // Digging in again beyond its rim (at 7/16 m, 3/8 m on) leaves a second pit; the first stays.
+  const double x = 1.0 / 16 + 64 / 4096.0 + 39 * kStep;  // where the drive out ended
+  t = Drive(layer, t, 64, x + kStep);
   dig = 1.0;
-  t = Dig(layer, t, 8, 1.0 / 16 + 103 / 4096.0, dig);
+  t = Dig(layer, t, 8, x + 64 * kStep, dig);
   size_t standing_now = 0;
   for (const auto& pit : Pits(layer)) standing_now += pit.until == kNever;
   CHECK(standing_now == 2);
+  CHECK_NEAR(Pits(layer).back().b.x, 7.0 / 16, 0);
   // Normal driving with D steady never digs a pit.
   TrackLayer steady(Exact());
   Drive(steady, kMs, 500, 0.0, 1.25);
   CHECK(Pits(steady).empty());
+}
+
+/// Whether a berm triangle of `mesh` stands over (x, y) more than `above` over the surface (Flat: z = 1).
+bool UnderBerm(const Mesh& mesh, double x, double y, double above) {
+  for (size_t i = 0; i + 2 < mesh.berm.size(); i += 3) {
+    const Vec3 &a = mesh.berm[i], &b = mesh.berm[i + 1], &c = mesh.berm[i + 2];
+    const double det = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+    if (std::abs(det) < 1e-15) continue;
+    const double l0 = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / det;
+    const double l1 = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / det;
+    const double l2 = 1.0 - l0 - l1;
+    if (l0 >= 0 && l1 >= 0 && l2 >= 0 && l0 * a.z + l1 * b.z + l2 * c.z > 1.0 + above) return true;
+  }
+  return false;
+}
+
+/// Whether (x, y) lies on a triangle of a triangle list (seen from above).
+bool OnTriangles(const std::vector<Vec3>& list, double x, double y) {
+  for (size_t i = 0; i + 2 < list.size(); i += 3) {
+    const Vec3 &a = list[i], &b = list[i + 1], &c = list[i + 2];
+    const double d0 = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    const double d1 = (c.x - b.x) * (y - b.y) - (c.y - b.y) * (x - b.x);
+    const double d2 = (a.x - c.x) * (y - c.y) - (a.y - c.y) * (x - c.x);
+    if (d0 >= 0 && d1 >= 0 && d2 >= 0) return true;
+  }
+  return false;
+}
+
+/// Pits stay open (review 2026-10-07: after a spin and a back-out the berms of the tracks leaving the pits lay
+/// across them, and a wheel that scrubbed 5 cm while digging left a second pit whose rim crossed the first's floor).
+void TestPitsStayOpen() {
+  // Wheel 0, heading +x, drives in to x = 1 and digs to D 1.5; scrubs sideways (a spin) past one cross-section;
+  // digs on to D 2 there; backs out 1/2 m. Then wheel 1 drives across the hole along +y.
+  TrackLayer layer(Exact(), 2);
+  Stamp t = kMs;
+  const WheelInput away;  // not on the soil
+  const auto step = [&](const WheelInput& w0, const WheelInput& w1) {
+    const WheelInput in[2] = {w0, w1};
+    layer.Step(t, in, 2);
+    t += kMs;
+  };
+  for (int k = 0; k <= 256; ++k) step(At(k * kStep, 0.0), away);
+  double dig = 1.0;
+  for (int k = 0; k < 32; ++k) step(At(1.0, 0.0, dig += 1.0 / 64), away);
+  for (int k = 1; k <= 20; ++k) step(At(1.0, k * kStep, dig), away);
+  for (int k = 0; k < 32; ++k) step(At(1.0, 20 * kStep, dig += 1.0 / 64), away);
+  for (int k = 1; k <= 128; ++k) step(At(1.0 - k * kStep, 20 * kStep, dig), away);
+  for (int k = 0; k <= 160; ++k) step(At(0.5, 20 * kStep, dig), At(1.0, -0.3 + k * kStep, 1.0, kSand, 0.0, 1.0));
+  // One pit stands, swept from where the wheel began digging to where it went on: both places in its floor.
+  std::vector<Segment> standing;
+  for (const auto& pit : Pits(layer))
+    if (pit.until == kNever) standing.push_back(pit);
+  CHECK(standing.size() == 1);
+  if (standing.size() != 1) return;
+  const Segment& pit = standing[0];
+  CHECK_NEAR(pit.a.x, 1.0, 0);
+  CHECK_NEAR(pit.a.y, 0.0, 0);
+  CHECK_NEAR(pit.b.y, 1.0 / 16, 0);
+  CHECK_NEAR(pit.b.dig, 2.0, 0);
+  const Params p = Exact();
+  Mesh hole;
+  BuildPit(p, pit, Flat, hole);
+  CHECK(hole.floor[4].size() == 16 * 3 && hole.berm.size() == 16 * 12);
+  CHECK(OnTriangles(hole.floor[4], 1.0, 0.0) && OnTriangles(hole.floor[4], 1.0, 1.0 / 16));
+  for (const auto* list : {&hole.berm, &hole.floor[4]}) {  // every triangle faces up
+    for (size_t i = 0; i + 2 < list->size(); i += 3) {
+      const Vec3 &a = (*list)[i], &b = (*list)[i + 1], &c = (*list)[i + 2];
+      CHECK((a.x - b.x) * (a.y - c.y) - (a.y - b.y) * (a.x - c.x) >= -1e-15);
+    }
+  }
+  // No track's berm stands over the pit's floor: the back-out's and the crossing wheel's first segments, which
+  // start or end inside it, draw only their floors; drawn with berms they would cover it.
+  std::vector<std::pair<double, double>> floor;
+  for (size_t i = 0; i + 2 < hole.floor[4].size(); i += 3) {
+    const Vec3 &a = hole.floor[4][i], &b = hole.floor[4][i + 1], &c = hole.floor[4][i + 2];
+    for (const auto& [wa, wb] : {std::pair{1.0 / 3, 1.0 / 3}, {0.6, 0.2}, {0.2, 0.6}, {0.2, 0.2}}) {
+      const double wc = 1.0 - wa - wb;
+      floor.push_back({wa * a.x + wb * b.x + wc * c.x, wa * a.y + wb * b.y + wc * c.y});
+    }
+  }
+  size_t covered = 0, covered_unclipped = 0, clipped[2] = {0, 0}, with_berms = 0;
+  for (const auto& s : Tracks(layer)) {
+    Mesh m, unclipped;
+    BuildTrack(p, s, Flat, m);
+    Segment raw = s;
+    raw.bermless = 0;
+    BuildTrack(p, raw, Flat, unclipped);
+    clipped[s.wheel] += s.bermless != 0;
+    with_berms += !m.berm.empty();
+    if (s.bermless) CHECK(m.berm.size() < unclipped.berm.size() && m.Vertices() > 0);
+    for (const auto& [x, y] : floor) {
+      covered += UnderBerm(m, x, y, p.floor_offset + 0.003);
+      covered_unclipped += UnderBerm(unclipped, x, y, p.floor_offset + 0.003);
+    }
+  }
+  CHECK(covered == 0);
+  CHECK(covered_unclipped > 5);  // 12 of the 64 points
+  CHECK(clipped[0] >= 3 && clipped[1] >= 3);  // the scrub and the back-out's start; the crossing's middle
+  CHECK(with_berms > 20);                   // elsewhere the berms stay
 }
 
 void TestRing() {
@@ -255,12 +359,19 @@ void TestReset() {
   for (const auto& s : Tracks(layer)) CHECK(s.a.x == 3.0);
 }
 
-/// What frames every 20 ms draw of a drive with a dig in place, each taken `lag` steps after its own step: per
-/// frame, the stamps of the records drawn and, negative, the indices of the pits removed.
-std::vector<std::vector<int64_t>> Frames(int lag) {
-  TrackLayer layer(Exact());
+/// What a frame changed: the stamps of the records drawn, the pits removed (chunk, index), the chunks dropped.
+struct Frame {
+  std::vector<Stamp> drawn;
+  std::vector<std::pair<uint64_t, uint32_t>> dead;
+  std::vector<uint64_t> dropped;
+  bool operator==(const Frame& o) const { return drawn == o.drawn && dead == o.dead && dropped == o.dropped; }
+};
+
+/// What frames every `every` ms draw of a drive with a dig in place, each taken `lag` steps after its own step.
+std::vector<Frame> Frames(int lag, const Params& p = Exact(), int every = 18) {
+  TrackLayer layer(p);
   Drawn drawn;
-  std::vector<std::vector<int64_t>> out;
+  std::vector<Frame> out;
   double dig = 1.0, x = 0.0;
   std::vector<Stamp> due;
   for (int k = 1; k <= 900; ++k) {
@@ -272,13 +383,14 @@ std::vector<std::vector<int64_t>> Frames(int lag) {
     }
     const WheelInput in = At(x, 0.0, dig);
     layer.Step(k * kMs, &in, 1);
-    if (k % 18 == 0) due.push_back(k * kMs);
+    if (k % every == 0) due.push_back(k * kMs);
     while (!due.empty() && (due.front() + lag * kMs <= k * kMs || k == 900)) {
       const Update u = layer.Take(due.front(), drawn, 100000);
-      std::vector<int64_t> frame;
+      Frame frame;
       for (const auto& b : u.batches)
-        for (const auto& r : b.records) frame.push_back(r.stamp);
-      for (const auto& d : u.dead) frame.push_back(-int64_t(d.index) - 1);
+        for (const auto& r : b.records) frame.drawn.push_back(r.stamp);
+      for (const auto& d : u.dead) frame.dead.push_back({d.chunk, d.index});
+      frame.dropped = u.dropped;
       out.push_back(frame);
       due.erase(due.begin());
     }
@@ -338,9 +450,26 @@ void TestSnapshot() {
   CHECK(prompt == Frames(3));
   CHECK(prompt.size() > 40);
   size_t removed = 0;
-  for (const auto& frame : prompt)
-    for (const int64_t v : frame) removed += v < 0;
+  for (const auto& frame : prompt) removed += frame.dead.size();
   CHECK(removed > 3);  // the dig in place deepened pits that frames had drawn
+  // A ring that wraps (chunks of 8, 16 records): a chunk dropped by the step after a frame's is still drawn by that
+  // frame, and removed by the first frame at or after the drop, however late frames are taken (review 2026-10-07:
+  // frames taken a step late dropped it a frame early, so a frame's image depended on thread timing).
+  Params small = Exact();
+  small.chunk = 8;
+  small.max_segments = 16;
+  for (const int every : {1, 18}) {
+    const auto first = Frames(0, small, every);
+    CHECK(first == Frames(1, small, every));
+    CHECK(first == Frames(3, small, every));
+    size_t dropped = 0, dead = 0;
+    for (const auto& frame : first) {
+      dropped += frame.dropped.size();
+      dead += frame.dead.size();
+    }
+    CHECK(dropped > 3);
+    CHECK(dead > 3);
+  }
 }
 
 void TestSnapshotAcrossAReset() {
@@ -515,6 +644,7 @@ int main() {
   TestWidthOfASpin();
   TestSharpTurn();
   TestPitRule();
+  TestPitsStayOpen();
   TestRing();
   TestReset();
   TestSnapshot();
