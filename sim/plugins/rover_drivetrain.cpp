@@ -21,6 +21,9 @@
 //   state as JSON (spec 9.3).
 // - the dig-in made visible (<dig_sink>, DriveParams.dig_sink): each wheel's visuals, never its collision, drawn
 //   (D - 1) x the ground's static sinkage lower (ShowSink). Physics never reads a visual's pose.
+// - the ruts and pits behind the wheels, if the plugin has <tracks> (gen_model.DriveParams.ruts, on by default):
+//   rover_tracks.hh and rover_tracks_render.hh, fed at the end of the step from each wheel's state; visual only,
+//   they read the state and write no component.
 //
 // The ground: the world's ground map (terrain_ground.hh: ground.png under the heightmap, ground.json's
 // collision map for the terrain model's other shapes); a plane is ground of the default surface; any other
@@ -63,6 +66,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <gz/common/Console.hh>
@@ -92,6 +96,7 @@
 #include <sdf/Geometry.hh>
 
 #include "rover_drivetrain.hh"
+#include "rover_tracks_render.hh"
 #include "terrain_ground.hh"
 
 namespace rover_sim {
@@ -128,6 +133,7 @@ struct Contact {
   const Traction* ground = nullptr;
   Vector3d point, normal = Vector3d::UnitZ;
   double slip = 0.0;  // [m/s] the wheel's material point over the ground
+  bool soil = false;  // on the terrain heightmap or a plane: ground the ruts may mark (only with <tracks>)
 };
 
 /// A wheel's tyre as drawn (<dig_sink>, ShowSink): its visuals with their SDF poses in the wheel link, and how
@@ -302,6 +308,10 @@ class RoverDrivetrain : public gz::sim::System,
     odom_pub_ = node_.Advertise<gz::msgs::Odometry>(text("odom_topic", "/model/rover/odometry"));
     tf_pub_ = node_.Advertise<gz::msgs::Pose_V>(text("tf_topic", "/model/rover/tf"));
     state_pub_ = node_.Advertise<gz::msgs::StringMsg>(text("state_topic", "/model/rover/drivetrain"));
+    if (sdf->HasElement("tracks")) {
+      tracks_ = std::make_unique<tracks::TrackSystem>(sdf->FindElement("tracks"), radius_, model_.Name(ecm),
+                                                      wheels_.size(), events);
+    }
     connection_ = events.Connect<gz::sim::events::CollectContactSurfaceProperties>(
         [this](const gz::sim::Entity& c1, const gz::sim::Entity& c2, const Vector3d& point,
                const std::optional<Vector3d>, const std::optional<Vector3d> normal, const std::optional<double> depth,
@@ -371,6 +381,7 @@ class RoverDrivetrain : public gz::sim::System,
       last_dust_ = t;
       PublishDust();
     }
+    if (tracks_) FeedTracks(info);
   }
 
   void PostUpdate(const gz::sim::UpdateInfo& info, const gz::sim::EntityComponentManager& ecm) override {
@@ -396,7 +407,7 @@ class RoverDrivetrain : public gz::sim::System,
     }
   }
 
-  void Reset(const gz::sim::UpdateInfo&, gz::sim::EntityComponentManager& ecm) override {
+  void Reset(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) override {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       cmd_ = {0.0, 0.0};
@@ -415,6 +426,7 @@ class RoverDrivetrain : public gz::sim::System,
     odometry_ = gz::math::DiffDriveOdometry();
     odometry_.SetWheelParams(track_, radius_, radius_);
     last_odom_ = last_state_ = last_dust_ = -std::numeric_limits<double>::infinity();
+    if (tracks_) tracks_->Reset(info.simTime);
   }
 
  private:
@@ -448,6 +460,7 @@ class RoverDrivetrain : public gz::sim::System,
     gzmsg << "RoverDrivetrain: "
           << (ground_ ? "ground map in " + terrain_.directory : std::string("no ground map")) << "; default surface "
           << default_->key << ", objects " << object_->key << "\n";
+    if (tracks_) tracks_->FindGround(ecm);
   }
 
   /// What every collision a wheel may touch is made of, worked out once per collision (spec 6.4). The
@@ -461,6 +474,7 @@ class RoverDrivetrain : public gz::sim::System,
       const Traction* surface = nullptr;
       if (geometry && geometry->Data().Type() == sdf::GeometryType::PLANE) {
         surface = default_;  // a plane is flat ground
+        planes_.insert(entity);
       } else if (ground_ && terrain_.model != gz::sim::kNullEntity &&
                  gz::sim::topLevelModel(entity, ecm) == terrain_.model) {
         surface = ground_->Collision(name ? name->Data() : std::string());
@@ -551,7 +565,8 @@ class RoverDrivetrain : public gz::sim::System,
     w.points.push_back(point);
     const double d = depth.value_or(0.0);
     if (!w.current.touched || d > w.current.depth) {
-      w.current = Contact{true, d, &ground, point, n, slip.Length()};
+      const bool soil = tracks_ && (other == terrain_.collision || planes_.count(other));
+      w.current = Contact{true, d, &ground, point, n, slip.Length(), soil};
     }
   }
 
@@ -751,6 +766,33 @@ class RoverDrivetrain : public gz::sim::System,
     ecm.SetChanged(visual, gz::sim::components::Pose::typeId, gz::sim::ComponentState::PeriodicChange);
   }
 
+  /// The ruts (rover_tracks.hh): each wheel's ground point under its hub, heading, dig factor and slip, from this
+  /// step's state. Reads only.
+  void FeedTracks(const gz::sim::UpdateInfo& info) {
+    track_input_.resize(wheels_.size());
+    for (size_t k = 0; k < wheels_.size(); ++k) {
+      const Wheel& w = wheels_[k];
+      const Contact& c = w.last;
+      tracks::WheelInput& in = track_input_[k];
+      in.soil = c.touched && c.soil && c.ground->sinkage_m > 0;
+      if (!in.soil) continue;
+      const Vector3d ground = w.pose.Pos() - c.normal * radius_;
+      const Vector3d heading = w.axle.Cross(Vector3d::UnitZ);
+      in.x = ground.X();
+      in.y = ground.Y();
+      in.z = ground.Z();
+      in.hx = heading.X();
+      in.hy = heading.Y();
+      in.sink = c.ground->sinkage_m;
+      in.dig = w.dig.factor;
+      in.slip = c.slip;
+      in.surface = std::abs(w.spin) * radius_;
+      const auto id = track_grounds_.emplace(c.ground, uint8_t(std::min<size_t>(track_grounds_.size(), 255)));
+      in.ground = id.first->second;
+    }
+    tracks_->Step(info.simTime, track_input_);
+  }
+
   static inline const Traction kCoulomb{};  // plain Coulomb mu 1, no resistance, no dig-in: DART's default
 
   gz::sim::Model model_;
@@ -778,6 +820,7 @@ class RoverDrivetrain : public gz::sim::System,
   TerrainShape terrain_;
   std::optional<GroundMap> ground_;
   std::unordered_map<gz::sim::Entity, const Traction*> surfaces_;
+  std::unordered_set<gz::sim::Entity> planes_;
   Vector3d gravity_{0, 0, -9.80665};
   std::deque<Wheel> wheels_;  // in place: SpeedLimiter cannot be copied or moved
   gz::math::DiffDriveOdometry odometry_;
@@ -786,6 +829,9 @@ class RoverDrivetrain : public gz::sim::System,
   gz::transport::Node node_;
   gz::transport::Node::Publisher odom_pub_, tf_pub_, state_pub_;
   gz::common::ConnectionPtr connection_;
+  std::unique_ptr<tracks::TrackSystem> tracks_;  // with <tracks>
+  std::vector<tracks::WheelInput> track_input_;
+  std::unordered_map<const Traction*, uint8_t> track_grounds_;
   std::mutex mutex_;  // the command, written by gz-transport's thread
   std::array<double, 2> cmd_{};
   double sim_time_ = 0.0, cmd_sim_ = 0.0;

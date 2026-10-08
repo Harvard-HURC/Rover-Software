@@ -549,6 +549,36 @@ class LookedWorld(unittest.TestCase):
             self.assertEqual(colour.size, (self.TEXELS, self.TEXELS))
         self.assertLess(self.sheet["terrain"]["colour_clipped"], 0.05)
 
+    def test_albedo_map_for_the_ruts(self):
+        """albedo.png beside ground.png: the colour map as Terra renders it,
+        before layer 0's compensation for the details (the ruts' berm colour,
+        plugins/rover_tracks_render.hh), here the colour map's own size (at
+        most ALBEDO_TEXELS); the sheet names it."""
+        self.assertEqual(self.sheet["terrain"]["albedo_map"], os.path.relpath(self.dir / "albedo.png",
+                                                                               self.world_path.parent))
+        albedo = textures.srgb_to_linear(np.asarray(Image.open(self.dir / "albedo.png").convert("RGB")))
+        layer0 = textures.srgb_to_linear(np.asarray(Image.open(self.dir / "colour.png").convert("RGB")))
+        self.assertEqual(albedo.shape, (self.TEXELS, self.TEXELS, 3))
+        # Terra renders a0 layer0 + (1 - a0) (the details' mean: the map's) below the cap, most of the map.
+        a0 = (1 - appearance.DEFAULT_DETAILS[0].weight) * (1 - appearance.DEFAULT_DETAILS[1].weight)
+        rendered = a0 * layer0 + (1 - a0) * albedo.reshape(-1, 3).mean(axis=0)
+        unclipped = np.all((layer0 > 0.01) & (layer0 < 0.99), axis=-1)  # the compensation fits in 8 bits
+        self.assertGreater(unclipped.mean(), 0.9)
+        self.assertLess(float(np.median(np.abs(rendered - albedo)[unclipped])), 0.01)
+
+    def test_albedo_map_size(self):
+        """A colour map 4 times the albedo map's size (the worlds': 4096 and
+        1024 texels) gives each albedo texel the mean of 4 x 4 in linear light;
+        a smaller one is taken as it is."""
+        rng = np.random.default_rng(3)
+        colour = rng.integers(0, 256, (1024, 1024, 3), dtype=np.uint8)
+        albedo = world_module.albedo_map(colour, texels=256)
+        self.assertEqual(albedo.shape, (256, 256, 3))
+        block = textures.srgb_to_linear(colour[8:12, 4:8]).reshape(-1, 3).mean(axis=0)
+        np.testing.assert_array_equal(albedo[2, 1], textures.linear_to_srgb(block))
+        np.testing.assert_array_equal(world_module.albedo_map(colour[:256, :256]), colour[:256, :256])
+        self.assertEqual(world_module.albedo_map(colour[:300, :300], texels=256).shape, (150, 150, 3))
+
     def test_colour_map_shows_the_ground_types(self):
         """The sand sheet, the block field and the regolith have their own
         colours: each type's median texel (undoing the detail compensation
@@ -838,6 +868,11 @@ class GeneratedWorlds(unittest.TestCase):
                 np.testing.assert_allclose(vec(root.findtext("world/light/direction")), lighting.MISSION.direction,
                                            atol=1e-4)
                 self.assertEqual("orthophoto" in s["terrain"], world == "urc_autonomy")
+                # The ruts' albedo map beside the ground map, 1024 texels.
+                albedo = WORLDS / s["terrain"]["albedo_map"]
+                self.assertEqual(albedo.parent, (WORLDS / s["terrain"]["ground_map"]).parent)
+                with Image.open(albedo) as image:
+                    self.assertEqual((image.size, image.mode), ((world_module.ALBEDO_TEXELS,) * 2, "RGB"))
 
     def test_clutter_within_budget(self):
         """Merged clutter stays within the render budget (gate G6: 1.5 M shrub

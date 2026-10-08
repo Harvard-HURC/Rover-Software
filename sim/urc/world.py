@@ -17,7 +17,8 @@ the light of the mission date (lighting.py), meshes and textures (meshes.py,
 textures.py, urc_media), and here zones, rocks, slabs, risers, shrubs,
 pebbles, blocks, signs and stations. A mission module only says where and
 how much. A world's own models hold only what is unique to it: its
-heightmaps, ground map, colour map, merged clutter meshes and far field.
+heightmaps, ground map, colour map (and its albedo.png for the ruts), merged
+clutter meshes and far field.
 
 Gazebo spends time on every shape every step, touched or not: measured on
 the proving ground, 0.56-0.83 us per collision and 0.1-0.18 us per visual
@@ -56,7 +57,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from . import appearance, dem, farfield, geo, landscape, lighting, meshes, props, rules, sdf, sheet, terrain, terrains
+from . import (appearance, dem, farfield, geo, landscape, lighting, meshes, props, rules, sdf, sheet, terrain, terrains,
+               textures)
 
 SYSTEMS = (
     ("gz-sim-physics-system", "gz::sim::systems::Physics", {}),
@@ -87,12 +89,30 @@ DIP_EASE = 0.5  # [m] it dips over this inside the mesh's footprint (A)
 MAX_SINKAGE = max(t.traction.sinkage_m for t in terrains.TYPES.values())  # [m] world z = 0 lies this far below
 # the lowest point when sinkage is on, so that any carve fits above it
 COLOUR_TEXELS = 4096  # colour map size (design 5.7: 0.5 m per texel at 2 km, 6.25 cm at 256 m)
+# albedo.png beside the ground map: the colour map as Terra renders it (before the detail compensation), at most
+# this size, for the ruts' berms (plugins/rover_tracks_render.hh): 3 MB to read where the 4096^2 layer 0 took
+# 0.2-0.65 s and a guess at the detail weights (M: the ruts research).
+ALBEDO_TEXELS = 1024
 CAP_DETAIL = 0.47  # weight slab joints fade in to at the terrain's top, above a world's cap height (M: prototype)
 # How each kind of merged clutter looks: roughness (A: matte) and whether it casts shadows (pebbles do not: 20,000
 # tiny shadows cost frame time and are not seen, M: render prototype).
 STYLE = {"rocks": (0.9, True), "slabs": (0.85, True), "risers": (0.9, True), "shrubs": (0.95, True),
          "pebbles": (0.9, False)}
 COLLIDING = ("rocks", "slabs", "risers")  # kinds with collisions (landscape.PREFIXES names their ground)
+
+
+def albedo_map(colour, texels=ALBEDO_TEXELS):
+    """The ruts' albedo.png (ALBEDO_TEXELS): a colour map (sRGB uint8 n x n x 3, what Terra renders, before
+    appearance.terra_layers compensates layer 0 for the details) averaged in linear light over square blocks to
+    at most `texels` a side (area-resampled where they do not divide it)."""
+    n = colour.shape[0]
+    k = max(1, -(-n // texels))
+    linear = textures.srgb_to_linear(colour)
+    if n % k:
+        linear = cv2.resize(linear, (n // k, n // k), interpolation=cv2.INTER_AREA)
+    else:
+        linear = linear.reshape(n // k, k, n // k, k, 3).mean(axis=(1, 3))
+    return textures.linear_to_srgb(linear)
 
 
 def site(lat, lon, paths=dem.SITE_DEMS):
@@ -424,10 +444,12 @@ class WorldBuilder:
         details = look["details"] if look["details"] is not None else self.detail_layers(look["cap"])
         layers = appearance.terra_layers(colour, surface, details, self.media)
         Image.fromarray(layers.layer0).save(directory / "colour.png", compress_level=1)
+        Image.fromarray(albedo_map(colour)).save(directory / "albedo.png")
         layers.write(self._heightmaps[1], sdf.model_uri(name, "colour.png"), self.media.flat_normal(),
                      self.hf.size)
         self.sheet["terrain"].update(
             colour_map=os.path.relpath(directory / "colour.png", self.worlds_dir), colour_texels=n,
+            albedo_map=os.path.relpath(directory / "albedo.png", self.worlds_dir),
             details=[dict(key=d.key, weight=d.weight, **({"above_z": round(d.above, 3)} if d.above is not None
                                                          else {})) for d in details],
             colour_clipped=round(layers.clipped, 4))

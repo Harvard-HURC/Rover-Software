@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import json
 import math
+import re
 import struct
 import tempfile
 import unittest
@@ -23,9 +24,12 @@ P = gen_model.Params()
 DIFFDRIVE = dataclasses.replace(P, drive=gen_model.DriveParams(mode="diffdrive"))
 DUST = dataclasses.replace(P, drive=dataclasses.replace(P.drive, dust=True))  # the opt-in dust (DriveParams.dust)
 DUST_PLUGIN_TAGS = ("dust_rate", "dust", "dust_rule")  # the drivetrain's dust elements
-# The dig-in cues off (Params.tread_tyre, DriveParams.dig_sink): the rover before them.
+# The tyre's dig-in cues off (Params.tread_tyre, DriveParams.dig_sink): the rover before them, but for the ruts
+# (their own switch, DriveParams.ruts).
 CUES_OFF = dataclasses.replace(P, tread_tyre=False, drive=dataclasses.replace(P.drive, dig_sink=False))
+NO_RUTS = dataclasses.replace(P, drive=dataclasses.replace(P.drive, ruts=False))  # DriveParams.ruts off
 WHEELS = [f"wheel_{e}{s}" for _, s, _ in gen_model.SIDES for _, e, _ in gen_model.ENDS]
+SIM = Path(gen_model.__file__).resolve().parent
 
 
 def canonical(element):
@@ -443,9 +447,10 @@ class DigCues(unittest.TestCase):
     def test_each_switch_takes_away_only_its_cue(self):
         """tread_tyre off gives back the plain tyre, a black visual of the
         collision's own cylinder; dig_sink off takes away <dig_sink>; nothing
-        else changes, in either drive mode. With both off the rover is the
-        one before the cues (byte for byte the model.sdf of b124f7d, checked
-        when they were built, 2026-10-07)."""
+        else changes, in either drive mode. With both off, and the ruts
+        (DriveParams.ruts, Ruts) too, the rover is the one before the cues
+        (byte for byte the model.sdf of b124f7d, checked when they were built
+        and again when they were merged, 2026-10-07)."""
         plain = ET.fromstring(gen_model.build_sdf(dataclasses.replace(P, tread_tyre=False))).find("model")
         no_sink = ET.fromstring(gen_model.build_sdf(dataclasses.replace(
             P, drive=dataclasses.replace(P.drive, dig_sink=False)))).find("model")
@@ -502,6 +507,60 @@ class DigCues(unittest.TestCase):
         rim = mark[np.hypot(mark[:, 0], mark[:, 2]) > 0.99]
         self.assertTrue(np.all(np.abs(np.degrees(np.arctan2(rim[:, 2], rim[:, 0]))) <= 7.5 + 1e-9))
         self.assertTrue(len(dark_n))
+
+
+class Ruts(unittest.TestCase):
+    """DriveParams.ruts, the one switch for the ruts and pits behind the wheels
+    (gen_model.TrackParams, plugins/rover_tracks.hh): on by default (the
+    user's decision of 2026-10-07), written as the drivetrain's <tracks>
+    group; off, the model is the default one without it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.default = ET.fromstring(gen_model.build_sdf(P)).find("model")
+        cls.tracked = ET.parse(MODELS / "rover" / "model.sdf").getroot().find("model")
+        cls.off = ET.fromstring(gen_model.build_sdf(NO_RUTS)).find("model")
+
+    def test_on_by_default(self):
+        """The default rover, generated and tracked (model://rover), has one
+        <tracks> in its drivetrain with every TrackParams field and the
+        wheel's width; DiffDrive has no drivetrain and no ruts."""
+        self.assertTrue(P.drive.ruts)
+        expected = {**dataclasses.asdict(P.drive.tracks), "width": P.wheel_width}
+        for name, model in (("generated", self.default), ("tracked", self.tracked)):
+            groups = model.findall("plugin[@name='rover_sim::RoverDrivetrain']/tracks")
+            self.assertEqual(len(groups), 1, name)
+            written = {e.tag: float(e.text) for e in groups[0]}
+            self.assertEqual(written, {k: float(v) for k, v in expected.items()}, name)
+        diffdrive = ET.fromstring(gen_model.build_sdf(DIFFDRIVE)).find("model")
+        self.assertEqual(list(diffdrive.iter("tracks")), [])
+
+    def test_switch_removes_only_the_tracks(self):
+        """With the switch off the model is the default one without <tracks>,
+        nothing else: the plugin then lays, reads and draws nothing."""
+        self.assertEqual(list(self.off.iter("tracks")), [])
+        model = ET.fromstring(gen_model.build_sdf(P)).find("model")  # a copy to strip
+        plugin = model.find("plugin[@name='rover_sim::RoverDrivetrain']")
+        plugin.remove(plugin.find("tracks"))
+        self.assertEqual(canonical(model), canonical(self.off))
+
+    def test_plugin_reads_every_element(self):
+        """Every element of <tracks> is one the plugin reads
+        (rover_tracks_render.hh ReadParams), and the defaults agree: a
+        misspelt parameter would silently keep the C++ default."""
+        source = (SIM / "plugins" / "rover_tracks_render.hh").read_text()
+        header = (SIM / "plugins" / "rover_tracks.hh").read_text()
+        for name, value in {**dataclasses.asdict(P.drive.tracks), "width": P.wheel_width}.items():
+            self.assertIn(f'get("{name}", p.{name})', source, name)
+            default = re.search(rf"\b(?:double|int) {name} = ([-\d.e]+);", header)
+            self.assertIsNotNone(default, name)
+            self.assertAlmostEqual(float(default.group(1)), float(value), msg=name)
+
+    def test_gz_accepts_it(self):
+        with temp_sdf(gen_model.build_sdf(P)) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Valid", result.stdout)
 
 
 class TyreCompliance(unittest.TestCase):

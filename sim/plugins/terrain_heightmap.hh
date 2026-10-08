@@ -1,5 +1,8 @@
 // The world's terrain heightmap for the rover's Gazebo systems (the fly camera's ground clearance, the
-// drivetrain's ground lookup): found in the entity-component manager and sampled exactly as Gazebo does.
+// drivetrain's ground lookup, the ruts' heights): found in the entity-component manager and sampled exactly as
+// Gazebo does. FindTerrainHeightmapShape() only finds it, so that LoadHeights() can read the image later on
+// another thread (the ruts read it on a thread of their own that their first frame starts: only a process
+// that renders reads it).
 //
 // Gazebo scales an image heightmap by the image's own highest pixel, height = pixel / max_pixel * size.z,
 // above the heightmap's world position (its model's pose plus <pos>; the URC worlds keep both at the
@@ -97,42 +100,64 @@ inline std::string ResolveUri(const std::string& uri) {
   return gz::common::findFile(uri);
 }
 
-/// The world's first heightmap of `kind`, loaded; std::nullopt (and a gzerr line) if there is none or
-/// its image cannot be read.
-inline std::optional<TerrainHeightmap> FindTerrainHeightmap(const gz::sim::EntityComponentManager& ecm,
-                                                            HeightmapGeometry kind) {
+/// The world's first heightmap of `kind` as found, its image not read yet (LoadHeights reads it): path (empty
+/// if its URI does not resolve), size and origin; std::nullopt if the world has none. `uri` and `texture`, if
+/// given, receive its SDF URI and its first texture's diffuse URI ("" without one).
+inline std::optional<TerrainHeightmap> FindTerrainHeightmapShape(const gz::sim::EntityComponentManager& ecm,
+                                                                 HeightmapGeometry kind, std::string* uri = nullptr,
+                                                                 std::string* texture = nullptr) {
   std::optional<TerrainHeightmap> out;
-  auto load = [&](const gz::sim::Entity& entity, const gz::sim::components::Geometry* geometry) {
+  auto find = [&](const gz::sim::Entity& entity, const gz::sim::components::Geometry* geometry) {
     if (geometry->Data().Type() != sdf::GeometryType::HEIGHTMAP) return true;
     const sdf::Heightmap* shape = geometry->Data().HeightmapShape();
     TerrainHeightmap map;
     map.path = ResolveUri(shape->Uri());
-    gz::common::ImageHeightmap image;
-    if (map.path.empty() || image.Load(map.path) != 0 || image.Width() != image.Height() || image.Width() < 2) {
-      gzerr << "cannot read the heightmap " << shape->Uri() << " as a square image\n";
-      return false;
-    }
     map.size = shape->Size();
     map.origin = gz::sim::worldPose(entity, ecm).Pos() + shape->Position();
-    map.samples = image.Width();
-    // FillHeightMap gives each pixel over the format's maximum, times size.z; Gazebo stretches the
-    // image's own highest pixel to size.z.
-    image.FillHeightMap(1, map.samples, map.size, gz::math::Vector3d::One, false, map.heights);
-    const float top = *std::max_element(map.heights.begin(), map.heights.end());
-    for (auto& h : map.heights) h = top > 0 ? float(h / top * map.size.Z()) : 0.0f;
+    if (uri) *uri = shape->Uri();
+    if (texture) *texture = shape->TextureCount() ? shape->TextureByIndex(0)->Diffuse() : std::string();
     out = std::move(map);
     return false;
   };
   if (kind == HeightmapGeometry::kVisual) {
     ecm.Each<gz::sim::components::Visual, gz::sim::components::Geometry>(
         [&](const gz::sim::Entity& e, const gz::sim::components::Visual*,
-            const gz::sim::components::Geometry* g) { return load(e, g); });
+            const gz::sim::components::Geometry* g) { return find(e, g); });
   } else {
     ecm.Each<gz::sim::components::Collision, gz::sim::components::Geometry>(
         [&](const gz::sim::Entity& e, const gz::sim::components::Collision*,
-            const gz::sim::components::Geometry* g) { return load(e, g); });
+            const gz::sim::components::Geometry* g) { return find(e, g); });
   }
   return out;
+}
+
+/// Read the samples of a heightmap found by FindTerrainHeightmapShape (any thread: no ECM); false if its image
+/// cannot be read as a square image.
+inline bool LoadHeights(TerrainHeightmap& map) {
+  gz::common::ImageHeightmap image;
+  if (map.path.empty() || image.Load(map.path) != 0 || image.Width() != image.Height() || image.Width() < 2) {
+    return false;
+  }
+  map.samples = image.Width();
+  // FillHeightMap gives each pixel over the format's maximum, times size.z; Gazebo stretches the image's own
+  // highest pixel to size.z.
+  image.FillHeightMap(1, map.samples, map.size, gz::math::Vector3d::One, false, map.heights);
+  const float top = *std::max_element(map.heights.begin(), map.heights.end());
+  for (auto& h : map.heights) h = top > 0 ? float(h / top * map.size.Z()) : 0.0f;
+  return true;
+}
+
+/// The world's first heightmap of `kind`, loaded; std::nullopt (and a gzerr line) if there is none or
+/// its image cannot be read.
+inline std::optional<TerrainHeightmap> FindTerrainHeightmap(const gz::sim::EntityComponentManager& ecm,
+                                                            HeightmapGeometry kind) {
+  std::string uri;
+  std::optional<TerrainHeightmap> map = FindTerrainHeightmapShape(ecm, kind, &uri);
+  if (map && !LoadHeights(*map)) {
+    gzerr << "cannot read the heightmap " << uri << " as a square image\n";
+    return std::nullopt;
+  }
+  return map;
 }
 
 /// The far field's surface round the terrain: its vertex heights on a regular grid (row 0 north, column 0
