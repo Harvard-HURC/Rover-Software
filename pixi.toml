@@ -1,8 +1,8 @@
 [workspace]
-authors = ["Alexander Belotserkovtsev <amb30239@gmail.com>"]
+authors = ["Beckett O'Brien <44044350+BeckettOBrien@users.noreply.github.com>", "Alexander Belotserkovtsev <amb30239@gmail.com>"]
 channels = ["https://prefix.dev/robostack-jazzy"]
-name = "Rover"
-platforms = ["osx-arm64"]
+name = "src"
+platforms = ["osx-arm64", "win-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
@@ -31,7 +31,12 @@ sim-realism = { cmd = "python sim/tools/realism_report.py", depends-on = ["sim-m
 # The mission routes driven by the physical rover (tens of minutes).
 sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 
+[target.osx-arm64.activation.env]
+GZ_TRANSPORT_LOCALHOST_ONLY="1"
+GZ_IP="127.0.0.1"
+
 [dependencies]
 ros-jazzy-desktop = ">=0.11.0,<0.12"
 ros2-ros-gz-sim = ">=1.0.23,<2"
 ros2-ros-gz-bridge = ">=1.0.23,<2"
+ros-dev-tools = ">=1.0.3,<2"
