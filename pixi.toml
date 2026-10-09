@@ -5,31 +5,46 @@ name = "src"
 platforms = ["osx-arm64", "win-64", "linux-64"]
 version = "0.1.0"
 
+# Run from this folder, the workspace's src/. The colcon tasks run in the workspace root above it (cwd ".."), where
+# the README's colcon build runs: build/, install/ and log/ land there.
 [tasks]
-driver-build = "cmake -S driver -B driver/build -DCMAKE_BUILD_TYPE=Release && cmake --build driver/build -j"
-driver-test = { cmd = "ctest --test-dir driver/build --output-on-failure", depends-on = ["driver-build"] }
-driver-viz = { cmd = "python driver/tools/viz.py", depends-on = ["driver-build"] }
-# The patched gz-rendering media (sky, haze, terrain roughness) in sim/build. Soft: without it Gazebo uses its stock media.
-sim-media = "python sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
-sim-build = { cmd = "cmake -S sim -B sim/build -DCMAKE_BUILD_TYPE=Release && cmake --build sim/build -j", depends-on = ["sim-media"] }
-sim-model = "python sim/gen_model.py"
-sim-relief = { cmd = "python sim/tools/make_relief_swatches.py", inputs = ["sim/tools/make_relief_swatches.py", "sim/urc/dem.py", "sim/urc/landscape.py", "sim/urc/terrain.py", "sim/data/dem/*_0p5m*", "sim/data/research/mdrs_terrain_measurements.json"], outputs = ["sim/data/relief/*.npz"] }
-sim-worlds = { cmd = "python sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["sim/gen_worlds.py", "sim/gen_model.py", "sim/urc/**/*.py", "sim/data/dem/*", "sim/data/imagery/*_naip2024.*", "sim/data/imagery/naip2021_far_60km.*", "sim/data/relief/*", "sim/data/soils/*", "sim/data/research/terrain_targets.json"], outputs = ["sim/worlds/urc_*.sdf", "sim/worlds/urc_*.json", "sim/worlds/proving_ground.sdf", "sim/worlds/proving_ground.json", "sim/models/urc_*/**"] }
+# Every package (on Windows without rover_sim, see the target below), after the simulation's patched media.
+build = { cmd = "colcon build", cwd = "..", depends-on = ["sim-media"] }
+# The C++ tests: rover_control's (GoogleTest, rover_state, viz.py) and rover_sim's three plugin test programs.
+colcon-test = { cmd = "colcon test --packages-select rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
+# The C++ tests and the simulation's suite. The rendering tests skip where there is no GPU and say why.
+test = { depends-on = ["colcon-test", "sim-test"] }
+# The git-ignored terrain rasters the simulation reads, from their official sources or the team's copy
+# (--all: every raster; --dry-run; --verify).
+fetch-data = "python rover_sim/tools/fetch_data.py"
+# rover_control's interactive view of the swerve kinematics.
+control-viz = { cmd = "python rover_control/tools/viz.py", env = { ROVER_STATE_EXE = "$PIXI_PROJECT_ROOT/../build/rover_control/rover_state" }, depends-on = ["build"] }
+# The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
+sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
+sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["sim-media"] }
+sim-model = "python rover_sim/gen_model.py"
+sim-relief = { cmd = "python rover_sim/tools/make_relief_swatches.py", inputs = ["rover_sim/tools/make_relief_swatches.py", "rover_sim/urc/dem.py", "rover_sim/urc/landscape.py", "rover_sim/urc/terrain.py", "rover_sim/data/dem/*_0p5m*", "rover_sim/data/research/mdrs_terrain_measurements.json"], outputs = ["rover_sim/data/relief/*.npz"] }
+sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/gen_model.py", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
 # Orthophoto maps of the worlds for the station's Map view (needs the GPU, so not part of sim-test).
-sim-maps = { cmd = "python sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
-sim = { cmd = "bash sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
-drive = { cmd = "python sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+sim-maps = { cmd = "python rover_sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+sim = { cmd = "bash rover_sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+drive = { cmd = "python rover_sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # Every world as a tile on one page: a click starts it with its driver station, Exit stops it.
-launcher = { cmd = "python sim/launcher/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
-referee = "python sim/referee.py"
-sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=sim/bridge.yaml"
-sim-test = { cmd = "python -m unittest discover -s sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+launcher = { cmd = "python rover_sim/launcher/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+referee = "python rover_sim/referee.py"
+sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=rover_sim/bridge.yaml"
+sim-test = { cmd = "python -m unittest discover -s rover_sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # The performance budgets (physics speed, start-up, memory, the drivetrain's cost against DiffDrive): slow, so opt-in.
-sim-perf = { cmd = "python -m unittest -v test_perf test_drivetrain.Cost", cwd = "sim/tests", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
-# The realism report (design spec section 11): sim/data/research/realism_report.json and its contact sheet.
-sim-realism = { cmd = "python sim/tools/realism_report.py", depends-on = ["sim-maps"] }
+sim-perf = { cmd = "python -m unittest -v test_perf test_drivetrain.Cost", cwd = "rover_sim/tests", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The realism report (realism design spec section 11): rover_sim/data/research/realism_report.json and its contact sheet.
+sim-realism = { cmd = "python rover_sim/tools/realism_report.py", depends-on = ["sim-maps"] }
 # The mission routes driven by the physical rover (tens of minutes).
-sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "rover_sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+
+[target.win-64.tasks]
+# Windows builds the rover's packages without their tests; the simulation and the tests run on macOS and Linux
+# (on Windows in WSL2, README, Platforms).
+build = { cmd = "colcon build --packages-skip rover_sim --cmake-args -DBUILD_TESTING=OFF", cwd = ".." }
 
 [target.osx-arm64.activation.env]
 GZ_TRANSPORT_LOCALHOST_ONLY="1"
@@ -40,3 +55,23 @@ ros-jazzy-desktop = ">=0.11.0,<0.12"
 ros2-ros-gz-sim = ">=1.0.23,<2"
 ros2-ros-gz-bridge = ">=1.0.23,<2"
 ros-dev-tools = ">=1.0.3,<2"
+# rover_control: the kinematics library and its tests
+eigen = ">=5.0.1,<6"
+gtest = ">=1.18.0,<2"
+
+# rover_sim: Gazebo's libraries for the plugins and the simulation's Python. macOS and Linux only: on Windows the
+# simulation runs in WSL2.
+[target.unix.dependencies]
+gz-sim8 = ">=8.10.0,<9"
+gz-sim8-python = ">=8.10.0,<9"
+gz-plugin2 = ">=2.0.4,<3"
+gz-rendering8 = ">=8.2.2,<9"
+gz-common5 = ">=5.7.1,<6"
+gz-transport13-python = ">=13.5.0,<14"
+gz-msgs10-python = ">=10.3.2,<11"
+gz-math7-python = ">=7.7.0,<8"
+numpy = ">=2.5.3,<3"
+py-opencv = ">=4.13.0,<5"
+pillow = ">=12.3.0,<13"
+matplotlib-base = ">=3.11.2,<4"
+aiohttp = ">=3.14.3,<4"
