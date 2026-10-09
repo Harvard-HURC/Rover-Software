@@ -1292,9 +1292,9 @@ wave 2 if Q2 approves it.
     https://joyofgiving.alumni.iitm.ac.in/data/utilreports/Team%20Anveshak%20-%20URC%202017%20Report%20(1)%20(2).pdf
 15. Shamah 1999, "Experimental comparison of skid steering vs. explicit steering for a wheeled mobile robot", CMU MS
     thesis. https://publications.ri.cmu.edu/experimental-comparison-of-skid-steering-vs-explicit-steering-for-a-wheeled-mobile-robot
-16. Mandow et al. 2007, "Experimental kinematics for wheeled skid-steer mobile robots", IROS (`papers/SkidDrive.pdf`):
+16. Mandow et al. 2007, "Experimental kinematics for wheeled skid-steer mobile robots", IROS:
     P3-AT χ 0.69–0.76 and α 0.90–0.95, so a yaw ratio α·χ of 0.63–0.71 on asphalt and concrete.
-17. Baril et al. 2020, arXiv:2004.05131, skid-steer on sub-arctic terrain (`papers/SkidOnSubArctic.pdf`).
+17. Baril et al. 2020, arXiv:2004.05131, skid-steer on sub-arctic terrain.
 18. Husky: motor and linear-graph model, McCormick et al., arXiv:2110.00323 https://arxiv.org/pdf/2110.00323 (its
     0.541 is a coefficient in a motor-voltage formula, not a measured yaw ratio); Clearpath `husky_control`
     `wheel_separation_multiplier: 1.875`
@@ -1303,7 +1303,7 @@ wave 2 if Q2 approves it.
     https://docs.clearpathrobotics.com/docs_robots/outdoor_robots/husky/a200/user_manual_husky
 19. Czapla, Fice & Niestroj 2022, Sci. Rep. 12:16015 (stick-slip at large slip angles). https://pmc.ncbi.nlm.nih.gov/articles/PMC9512802
 20. Ishigami et al. 2007, J. Field Robotics 24(3):233–250 (side force with sidewall bulldozing).
-21. Toupet et al. 2020, J. Field Robotics 37:699 (`papers/Inverse3d.pdf`).
+21. Toupet et al. 2020, J. Field Robotics 37:699.
 22. IMS gear datasheets https://www.imsgear.com/en/product-detail/ims.45-promax, https://www.imsgear.com/en/product-detail/ims.22-promax;
     REV NEO https://www.revrobotics.com/rev-21-1650/
 23. OpenStax College Physics, Table 5.1 (rubber on dry concrete μs 1.0 / μk 0.7) https://pressbooks.online.ucf.edu/phy2053bc/chapter/friction/;
