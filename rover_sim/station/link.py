@@ -363,8 +363,8 @@ class GzLink:
             return f"{model}: spawned"
         if ok and not reply.data:
             return f"{model}: not spawned, {service} refused it"
-        return (f"{model}: no state from it after the spawn request; its plugin needs "
-                "GZ_SIM_SYSTEM_PLUGIN_PATH to include sim/build (start the world with pixi run sim or pixi run drive)")
+        return (f"{model}: no state from it after the spawn request; its plugin needs GZ_SIM_SYSTEM_PLUGIN_PATH "
+                "to include the workspace's build/rover_sim (start the world with pixi run sim or pixi run drive)")
 
 
 def _pose(view, msg):

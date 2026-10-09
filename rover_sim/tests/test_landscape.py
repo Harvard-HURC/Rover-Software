@@ -148,7 +148,7 @@ class Painting(unittest.TestCase):
             landscape.ground_json(landscape.Legend(), 256.0, 1025, "regolith", {"x_collision": "test_mu010"})
 
 
-@unittest.skipUnless(ROUTE_3DEP.is_file(), "the route-area DEM is not linked (sim/tools/link_data.sh)")
+@unittest.skipUnless(ROUTE_3DEP.is_file(), "the route-area DEM is not here (pixi run fetch-data)")
 class Soils(unittest.TestCase):
     def test_autonomy_square_by_soil_unit_and_slope(self):
         """The Autonomy square painted by the soil map (design 5.3, measured
@@ -199,7 +199,7 @@ class Swatches(unittest.TestCase):
                     self.assertTrue({"window", "dem", "centre_lat_lon", "size_m"} <= set(source))
                 self.assertEqual(s.rms_cm, make_relief_swatches.rms_table(s.windows))
 
-    @unittest.skipUnless(ROUTE_LIDAR.is_file(), "the lidar DEMs are not linked (sim/tools/link_data.sh)")
+    @unittest.skipUnless(ROUTE_LIDAR.is_file(), "the lidar DEMs are not here (pixi run fetch-data)")
     def test_windows_lie_where_the_design_says(self):
         """Window centres (design 5.4's table: lat, lon from windows_def, before the lidar's datum shift)."""
         expected = {"sand_sheet_D": (38.40881, -110.76886), "sand_sheet_C": (38.41261, -110.77836),

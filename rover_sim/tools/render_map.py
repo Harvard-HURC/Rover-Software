@@ -470,7 +470,7 @@ def main():
     parser.add_argument("--pixels", type=int, default=PIXELS, help=f"map side [px] (default {PIXELS})")
     parser.add_argument("--force", action="store_true", help="render even if the map is current")
     parser.add_argument("--check", action="store_true", help="only report missing and stale maps (exit 1 if any)")
-    parser.add_argument("--build-dir", help="plugin build directory (default sim/build)")
+    parser.add_argument("--build-dir", help="plugin build directory (default: the workspace's build/rover_sim)")
     args = parser.parse_args()
     # Before any gz-transport node exists: the server and this process share a private partition.
     os.environ.update(gzenv.environment(args.build_dir, partition=f"render_map_{os.getpid()}", ip="127.0.0.1"))

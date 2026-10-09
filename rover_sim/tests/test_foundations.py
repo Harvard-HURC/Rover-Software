@@ -164,7 +164,7 @@ class Raster(unittest.TestCase):
         np.testing.assert_array_equal(d.z, bands[0])
         self.assertEqual((d.lon0, d.lat0, d.dlon, d.dlat), (lon0, lat0, dlon, -minus_dlat))
 
-    @unittest.skipUnless(NAIP_PATH.is_file(), "NAIP 2024 is not linked (sim/tools/link_data.sh)")
+    @unittest.skipUnless(NAIP_PATH.is_file(), "NAIP 2024 is not here (pixi run fetch-data)")
     def test_naip_keeps_its_near_infrared(self):
         bands, _ = dem.read_raster(NAIP_PATH)
         self.assertEqual(bands.shape[0], 4)

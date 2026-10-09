@@ -159,7 +159,7 @@ def build(source, build_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--build-dir", default=str(gzenv.BUILD_DIR), help="default sim/build")
+    parser.add_argument("--build-dir", default=str(gzenv.BUILD_DIR), help="default: the workspace's build/rover_sim")
     parser.add_argument("--source", default=str(environment_media()), help="stock media (default: the env's)")
     args = parser.parse_args()
     try:
