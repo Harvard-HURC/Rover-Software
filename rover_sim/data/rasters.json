@@ -1,0 +1,126 @@
+{
+ "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py).",
+ "mirror": "https://github.com/Harvard-HURC/Rover-Software/releases/download/data-2026-10-06/",
+ "rasters": [
+  {
+   "path": "dem/far_dem_3dep_60km.tif",
+   "provenance": "dem/far_dem_3dep_60km.json",
+   "required": true,
+   "official": true,
+   "bytes": 9439142,
+   "sha256": "cced8ed48550a918c131ae424ca97f2b699eb066726dc855efd2849b50fe6b7e",
+   "content_sha256": "ea0b760e94e43d2e9c8188252ca8c87ae8119fe61b2e976fa1c09c9a8031870a",
+   "shape": [1, 1440, 1500],
+   "dtype": "float32",
+   "transform": [-111.15, 0.0005, 0.0, 38.7, 0.0, -0.0004999999999999993]
+  },
+  {
+   "path": "dem/mdrs_area_3dep.tif",
+   "provenance": "dem/mdrs_area_3dep.json",
+   "required": true,
+   "official": true,
+   "bytes": 15024991,
+   "sha256": "22d2c12851c1347dbcc24028cad2f2ea25c19e5e8adc6915f803dafc4e97bdfc",
+   "content_sha256": "063c7bcee906e9c6f8b81b0c356da076b37ed9336f5a148e0e9c7c7b198d341a",
+   "shape": [1, 2617, 3490],
+   "dtype": "float32",
+   "transform": [-110.8100044091711, 1.1463844797180156e-05, 0.0, 38.419994708994714, 0.0, -1.1463844797179682e-05]
+  },
+  {
+   "path": "dem/mdrs_area_lidar2018_0p5m.tif",
+   "provenance": "dem/mdrs_area_lidar2018_0p5m.json",
+   "required": false,
+   "official": false,
+   "bytes": 58431428,
+   "sha256": "f09b7a3688f525ff977241f5c49bf953cd268ea0c47f0f4fa76352fd3ccfb5b5",
+   "content_sha256": "833648e4dc8e263c08bf09fbc479f10b321bea1ba7c7de194eb37aa357a9b8ee",
+   "shape": [1, 5840, 6980],
+   "dtype": "float32",
+   "transform": [-110.8100044091711, 5.731922398590078e-06, 0.0, 38.416334263340396, 0.0, -4.510348660943074e-06]
+  },
+  {
+   "path": "dem/route_area_3dep.tif",
+   "provenance": "dem/route_area_3dep.json",
+   "required": true,
+   "official": true,
+   "bytes": 8799642,
+   "sha256": "a278817e4fc2b1965ee86242128dd84d72fc10fe807c60e3ab95f2e668d627f2",
+   "content_sha256": "c33b2b54f46d7dd8fd0fba0b7002b7842c886522d8a6eefadbd224e4ae8b4278",
+   "shape": [1, 2442, 2268],
+   "dtype": "float32",
+   "transform": [-110.79, 1.1463844797182741e-05, 0.0, 38.43199735449736, 0.0, -1.1463844797182049e-05]
+  },
+  {
+   "path": "dem/route_area_lidar_0p5m.tif",
+   "provenance": "dem/route_area_lidar_0p5m.json",
+   "required": true,
+   "official": false,
+   "bytes": 41457287,
+   "sha256": "499c9454eac5433bbb0797bd2118b7b5b6295e283129a4dc727578f773847224",
+   "content_sha256": "0d2da6c0449e0690788c634e454d7f69651cf2fbbd04313a8e677934c352d3db",
+   "shape": [1, 6207, 4536],
+   "dtype": "float32",
+   "transform": [-110.79, 5.731922398588238e-06, 0.0, 38.43199735449736, 0.0, -4.5103486609427355e-06]
+  },
+  {
+   "path": "dem/route_area_lidar_0p5m_source.tif",
+   "provenance": "dem/route_area_lidar_0p5m.json",
+   "required": false,
+   "official": false,
+   "bytes": 214914,
+   "sha256": "2787f7f34c4aa7ad559dbfc2d75f4c903ee7cd7bd6cbd398029bf4f2d924f39c",
+   "content_sha256": "b587fd9040d401333934e4e042d5c7e41a897098e2e2bf97e09287998d53f266",
+   "shape": [1, 6207, 4536],
+   "dtype": "uint8",
+   "transform": [-110.79, 5.731922398588238e-06, 0.0, 38.43199735449736, 0.0, -4.5103486609427355e-06]
+  },
+  {
+   "path": "imagery/mdrs_area_naip2024.tif",
+   "provenance": "imagery/mdrs_area_naip2024.json",
+   "required": false,
+   "official": true,
+   "bytes": 60386308,
+   "sha256": "8f4d689ba36eb34a81ce53601fdbc3581e9767e3ad5b136780eabffc79ca14ed",
+   "content_sha256": "b1dbde60f9ad6946651ad6c9a260bf222c67ef9f9303cc96076dbd35af683201",
+   "shape": [4, 5234, 6980],
+   "dtype": "uint8",
+   "transform": [-110.8100044091711, 5.73192239859063e-06, 0.0, 38.41999470899472, 0.0, -5.731922398590967e-06]
+  },
+  {
+   "path": "imagery/naip2021_far_60km.tif",
+   "provenance": "imagery/naip2021_far_60km.json",
+   "required": true,
+   "official": true,
+   "bytes": 18681182,
+   "sha256": "851347de489c11c5e957a8a60ac8738c10f66c2e13b08209509b3e5d79882bcd",
+   "content_sha256": "3a99825b255a25cd680e406465fc602f269e9c62fdb0232ae87a554ea0b1dabd",
+   "shape": [3, 2400, 2500],
+   "dtype": "uint8",
+   "transform": [-111.15, 0.0003, 0.0, 38.7, 0.0, -0.00029999999999999954]
+  },
+  {
+   "path": "imagery/naip2021_route_area.tif",
+   "provenance": "imagery/naip2021_route_area.json",
+   "required": false,
+   "official": false,
+   "bytes": 69697630,
+   "sha256": "d7b6ef5e8f8aeda0e049c0fc736b18da4631fa604a74ee7a314337c80741e769",
+   "content_sha256": "ce82e853e252183169d41ef2999d6270406e31336556b200e677430825fdc7c1",
+   "shape": [3, 5600, 5200],
+   "dtype": "uint8",
+   "transform": [-110.79, 5e-06, 0.0, 38.432, 0.0, -5e-06]
+  },
+  {
+   "path": "imagery/route_area_naip2024.tif",
+   "provenance": "imagery/route_area_naip2024.json",
+   "required": true,
+   "official": true,
+   "bytes": 37737738,
+   "sha256": "6a33c4e476dedde5e2bd371a8d9c3527ce9ccb3d819986a9c35795b8d345981a",
+   "content_sha256": "8eef835aaf2a3dfc57913a176bc24c21b6a5f609367c4a0694cc0dcba434215f",
+   "shape": [4, 4884, 4536],
+   "dtype": "uint8",
+   "transform": [-110.79, 5.731922398589246e-06, 0.0, 38.43199735449737, 0.0, -5.731922398590323e-06]
+  }
+ ]
+}
