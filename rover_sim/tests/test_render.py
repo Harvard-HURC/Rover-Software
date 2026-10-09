@@ -33,6 +33,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import gpu
 from worldfiles import SIM_DIR
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
@@ -396,6 +397,7 @@ def residual(image, sigma=6):
     return float((img - cv2.GaussianBlur(img, (0, 0), sigma)).std())
 
 
+@gpu.needs_gpu
 class Render(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -720,6 +722,7 @@ def top_edge(depth, u, rows):
     return rows.start + int(near[0]) if len(near) else None
 
 
+@gpu.needs_gpu
 class DigCues(unittest.TestCase):
     """The dig-in made visible, each cue behind its own switch and visual
     only (the user's decisions of 2026-10-07): the tyre sink
@@ -891,6 +894,7 @@ def back_project(depth, eye, target, hfov=1.0):
     return cam @ rotation.T + np.asarray(eye)
 
 
+@gpu.needs_gpu
 class Ruts(unittest.TestCase):
     """The ruts and pits behind the wheels (gen_model.DriveParams.ruts, on by
     default since the user's decisions of 2026-10-07; plugins/rover_tracks.hh,

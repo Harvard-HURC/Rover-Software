@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import gpu
 from simulate import SIM_DIR, follow, simulate, spin_ratio
 from worldfiles import MODELS, WORLDS, model_root, sheet, terrain, vec, world_copy
 
@@ -185,6 +186,7 @@ class Worlds(unittest.TestCase):
         self.assertGreater(by - post["y"], 6.0)
         self.assertLess(bz, post["z"] - 3.0)
 
+    @gpu.needs_gpu
     def test_camera_sees_the_start_post(self):
         """The rover's camera, CAMERA_RANGE in front of one of the start
         post's faces and facing it, decodes ArUco 0 (rendered in a separate

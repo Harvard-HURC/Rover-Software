@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, TiffImagePlugin, TiffTags
 
+import gpu
 from simulate import ROVER_URI, cpu_time_per_step, diffdrive, simulate, twist_at, variant_sdf, world_sdf
 from worldfiles import MODELS, SIM_DIR, temp_sdf
 
@@ -87,6 +88,29 @@ class Environment(unittest.TestCase):
             self.assertEqual(value, want.get(key, ""), key)
         self.assertIn('eval "$(python "$here/gzenv.py")"', (SIM_DIR / "run.sh").read_text())
 
+
+class RenderingCheck(unittest.TestCase):
+    """gpu.rendering(): whether the rendering tests run on this machine."""
+
+    def test_rover_rendering_decides_when_set(self):
+        self.assertEqual(gpu.rendering({"ROVER_RENDERING": "1"}, "linux", Path("/nonexistent")), (True, ""))
+        self.assertEqual(gpu.rendering({"ROVER_RENDERING": "0"}, "darwin"), (False, "ROVER_RENDERING=0"))
+
+    def test_every_mac_renders(self):
+        self.assertEqual(gpu.rendering({}, "darwin", Path("/nonexistent")), (True, ""))
+
+    def test_linux_renders_with_a_render_node_or_wsl2s_gpu(self):
+        with tempfile.TemporaryDirectory() as d:
+            dev = Path(d)
+            available, why = gpu.rendering({}, "linux", dev)
+            self.assertFalse(available)
+            self.assertIn("no GPU", why)
+            (dev / "dxg").touch()
+            self.assertEqual(gpu.rendering({}, "linux", dev), (True, ""))
+            (dev / "dxg").unlink()
+            (dev / "dri").mkdir()
+            (dev / "dri" / "renderD128").touch()
+            self.assertEqual(gpu.rendering({}, "linux", dev), (True, ""))
 
 def _write_four_band_geotiff(path, pixels, lon0, lat0, step, alpha=False):
     """A 4-band uint8 GeoTIFF (EPSG:4326, PixelIsArea). PIL writes four bands

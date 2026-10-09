@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 from PIL import Image as PILImage
 
+import gpu
 from simulate import gen_model, world_sdf
 from worldfiles import SIM_DIR, gz_check, temp_sdf
 
@@ -614,6 +615,7 @@ def colour_mask(rgb, channel):
     return (rgb[..., channel] > 150) & (rgb[..., others[0]] < 90) & (rgb[..., others[1]] < 90)
 
 
+@gpu.needs_gpu
 class Rendering(unittest.TestCase):
     """The camera's pictures (GPU; each world in its own gz sim process)."""
 
