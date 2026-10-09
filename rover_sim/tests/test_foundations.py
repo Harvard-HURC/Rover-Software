@@ -37,7 +37,7 @@ class Environment(unittest.TestCase):
     def test_our_models_and_plugins_come_first(self):
         env = gzenv.environment(base=self.BASE)
         self.assertEqual(env["GZ_SIM_RESOURCE_PATH"], os.pathsep.join([str(SIM_DIR / "models"), "/elsewhere/models"]))
-        self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"], str(SIM_DIR / "build"))
+        self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"], str(SIM_DIR.parents[1] / "build" / "rover_sim"))
         self.assertEqual(env["OGRE2_RESOURCE_PATH"], "/env/lib/OGRE-Next")
         self.assertEqual(env["OGRE_RESOURCE_PATH"], "/env/lib/OGRE")
         self.assertEqual(env["PATH"], "/usr/bin")
@@ -47,6 +47,13 @@ class Environment(unittest.TestCase):
     def test_applying_it_twice_changes_nothing(self):
         once = gzenv.environment(base=self.BASE)
         self.assertEqual(gzenv.environment(base=once), once)
+
+    def test_colcon_builds_the_plugins_where_gzenv_looks(self):
+        """colcon build (pixi run build) puts the plugins in the workspace's
+        build/rover_sim: this repository is the workspace's src/."""
+        self.assertEqual(gzenv.BUILD_DIR, SIM_DIR.parents[1] / "build" / "rover_sim")
+        for name in ("ChaseCamera", "FlyCamera", "JointMonitor", "RockerDifferential", "RoverDrivetrain"):
+            self.assertTrue(list(gzenv.BUILD_DIR.glob(f"lib{name}.*")), f"no lib{name} in {gzenv.BUILD_DIR}")
 
     def test_a_set_ogre_path_and_a_chosen_build_dir_win(self):
         with tempfile.TemporaryDirectory() as build:

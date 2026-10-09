@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""The Gazebo environment, in one place: sim/run.sh (`eval "$(python
-sim/gzenv.py)"`), the driver station, the tests (tests/simulate.py) and the
-tools start Gazebo with environment().
+"""The Gazebo environment, in one place: rover_sim/run.sh (`eval "$(python
+rover_sim/gzenv.py)"`), the driver station, the tests (tests/simulate.py) and
+the tools start Gazebo with environment().
 
-- GZ_SIM_RESOURCE_PATH: sim/models first (model://rover, the cameras, urc_*).
-- GZ_SIM_SYSTEM_PLUGIN_PATH: the plugin build directory first (sim/build, or
-  another CMake build directory).
+- GZ_SIM_RESOURCE_PATH: rover_sim/models first (model://rover, the cameras,
+  urc_*).
+- GZ_SIM_SYSTEM_PLUGIN_PATH: the plugin build directory first: build/rover_sim
+  in the colcon workspace whose src/ this repository is, where colcon build
+  puts the plugins (BUILD_DIR), or another CMake build directory.
 - OGRE2_RESOURCE_PATH, OGRE_RESOURCE_PATH: the env's own OGRE plugin
   directories. The conda gz-rendering has a space-padded OGRE plugin path
   baked in; without these, cameras (and on some machines the GUI) cannot
@@ -23,7 +25,8 @@ import sys
 from pathlib import Path
 
 SIM_DIR = Path(__file__).resolve().parent
-BUILD_DIR = SIM_DIR / "build"
+WORKSPACE = SIM_DIR.parents[1]  # the colcon workspace: this repository is its src/
+BUILD_DIR = WORKSPACE / "build" / "rover_sim"  # where colcon builds this package
 MEDIA_DIR = "gz-rendering-media"  # in the build directory
 MEDIA_COMPLETE = ".complete"  # in MEDIA_DIR, written last by the tool that patches the media
 VARIABLES = ("GZ_SIM_RESOURCE_PATH", "GZ_SIM_SYSTEM_PLUGIN_PATH", "OGRE2_RESOURCE_PATH", "OGRE_RESOURCE_PATH",
@@ -32,7 +35,7 @@ VARIABLES = ("GZ_SIM_RESOURCE_PATH", "GZ_SIM_SYSTEM_PLUGIN_PATH", "OGRE2_RESOURC
 
 def environment(build_dir=None, *, partition=None, ip=None, base=None):
     """A copy of `base` (default os.environ) with the Gazebo variables set.
-    build_dir: where the plugins are built (default sim/build); partition,
+    build_dir: where the plugins are built (default BUILD_DIR); partition,
     ip: GZ_PARTITION and GZ_IP, left as they are when None."""
     env = dict(os.environ if base is None else base)
     build = Path(build_dir).resolve() if build_dir else BUILD_DIR
@@ -54,7 +57,7 @@ def environment(build_dir=None, *, partition=None, ip=None, base=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Print the Gazebo environment as shell exports.")
-    parser.add_argument("--build-dir", help="plugin build directory (default sim/build)")
+    parser.add_argument("--build-dir", help="plugin build directory (default: the workspace's build/rover_sim)")
     args = parser.parse_args()
     env = environment(args.build_dir)
     for key in VARIABLES:
