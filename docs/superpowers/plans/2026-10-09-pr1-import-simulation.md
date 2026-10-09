@@ -17,11 +17,11 @@
 | SOURCE | `/Users/alarion239/Desktop/Rover` (this repository; `main`, no remote) |
 | WS | `/Users/alarion239/Desktop/hurc_ws` (the colcon workspace) |
 | SRC | `/Users/alarion239/Desktop/hurc_ws/src` (the team's clone: `origin` = `https://github.com/Harvard-HURC/Rover-Software`, `main` at `408bc99`) |
-| T | `/private/tmp/claude-502/rover-pr1` (temporary clones and scripts; deleted in Task 19) |
+| T | `/private/tmp/claude-502/rover-pr1` (temporary clones and scripts; deleted in Task 19). If the implementing session lists a scratchpad directory, use `<scratchpad>/rover-pr1` as T in every command instead: the sandbox may refuse writes elsewhere |
 | pixi | `/Users/alarion239/.pixi/bin/pixi` (0.81) |
 
 - **Never push, never create anything on GitHub, never open a pull request.** `git fetch` and read-only `gh` calls are fine. The user approves each push separately.
-- **SOURCE is read-only** for this plan: no commit, no file change there (the data rasters are symlinked from it).
+- **SOURCE is read-only** for this plan: no commit, no file change there (the data rasters are symlinked from it). Commands that use SOURCE's environment run `pixi run --frozen --manifest-path /Users/alarion239/Desktop/Rover/pixi.toml ...`: without `--frozen`, pixi may rewrite SOURCE's `pixi.lock`.
 - Every commit message ends with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; the author is the configured `Alexander Belotserkovtsev <amb30239@gmail.com>`.
 - Every Gazebo run outside the test suite gets `GZ_IP=127.0.0.1` and its own `GZ_PARTITION` (the commands below set them). The suite sets its own partitions. Stop only processes you started; ports 8765 and 8766 belong to an unrelated app.
 - Shell state does not persist between tool calls: every command block sets the variables it uses and starts with `cd`.
@@ -37,8 +37,8 @@ The spec leaves these open; each is final for PR 1 and stated in the commit or d
 2. **Plugin directory.** colcon builds `rover_sim` in `<workspace>/build/rover_sim`; the plugins land there. `gzenv.BUILD_DIR` becomes that directory (the patched media stay in it too, as before in `sim/build`). The plugins are also installed to `install/rover_sim/lib/rover_sim` with an environment hook that adds them to `GZ_SIM_SYSTEM_PLUGIN_PATH` in a sourced workspace, for ROS launch files.
 3. **Linters.** The team's skeleton runs `ament_lint_auto` (flake8, pep257, uncrustify, cpplint...) under `colcon test`. The imported code keeps its own style (120 columns, its docstrings), which those linters reject file by file, so `rover_sim` drops the lint block and `rover_control` does not get one. `rover_description` keeps the team's block.
 4. **fetch-data.** No script in SOURCE rebuilds most rasters: only `tools/fetch_dem.py` exists, for one 3DEP request, and it refuses without `--force` on a fresh clone because the tracked `.json` exists. The 0.5 m lidar DEMs were made from USGS point clouds and tiles by processing that is not in the repository. So `tools/fetch_data.py` with a manifest `data/rasters.json` (SHA-256 of each file and of its content): the six rasters whose provenance lists their ImageServer `exportImage` requests are rebuilt from those official requests and kept only if their content matches; the other four (the two 0.5 m lidar DEMs and the lidar source map, made by processing not in the repository, among them `route_area_lidar_0p5m.tif`, which `urc_autonomy` needs; and the NAIP 2021 route mosaic, whose provenance gives only a URL template) and any official source that fails or changes come from the team's copy, a GitHub release `data-2026-10-06` of Harvard-HURC/Rover-Software. Creating that release needs the user's approval (Task 19 prepares the command); until it exists, fetch-data on a fresh clone cannot get the derived rasters and CI fails at its fetch step.
-5. **pixi.** The team's `pixi.lock` is the base: it already holds every package the simulation uses on all three platforms, and on osx-arm64 the physics and rendering packages are the versions SOURCE runs today (gz-sim 8.10.0, gz-physics 7.5.0, dartsim 6.19.4, ogre-next 2.3.3, gz-rendering 8.2.2). The simulation's direct dependencies are listed under `[target.unix.dependencies]`; on `win-64` the `build` task builds `rover_description` and `rover_control` only, without tests (the simulation runs in WSL2 there, spec section 7).
-6. **Compiler.** The team's `ros-dev-tools` brings conda's clang 21; SOURCE built the plugins and the driver with Apple's `/usr/bin/c++`. The full suite on the new build is the check (Task 12).
+5. **pixi.** The team's `pixi.lock` is the base: it already holds every package the simulation uses on all three platforms, and on osx-arm64 the physics and rendering packages are the versions SOURCE runs today (gz-sim 8.10.0, gz-physics 7.5.0, dartsim 6.19.4, ogre-next 2.3.3, gz-rendering 8.2.2). The simulation's direct dependencies are listed under `[target.unix.dependencies]` (the team's lock resolves the Gazebo packages on `win-64` too, through `ros2-ros-gz-sim`, and colcon, ament, Eigen, GoogleTest and `vs2022_win-64` are there; the simulation just does not run there); on `win-64` the `build` task builds `rover_description` and `rover_control` only, without tests (the simulation runs in WSL2 there, spec section 7).
+6. **Compiler.** The team's `ros-dev-tools` brings conda's clang 21 (`cxx-compiler`, whose activation CMake may follow); SOURCE built the plugins and the driver with Apple's `/usr/bin/c++` (its `CMakeCache.txt`). Task 5 Step 3 records which compiler colcon's CMake took; the full suite on the new build is the check (Task 12).
 7. **Paths in prose.** The move commit is pure renames (100 % similarity, so `git log --follow` and blame work). Afterwards only paths that run or that a user sees at run time change (build directory, tasks, help texts, skip reasons, one station message, `link_data.sh`). Comments and docstrings that say `sim/...` stay: changing them would touch `gen_model.py` (PR 2), the tracked generated models and the media caches keyed on `urc/` sources. `rover_sim/README.md` tells readers how to read them.
 8. **Rendering tests.** A small helper `tests/gpu.py` decides whether this machine can render (every Mac; Linux with `/dev/dri/renderD*`; WSL2's `/dev/dxg`; `ROVER_RENDERING=1|0` overrides). The 27 rendering tests (`test_render.Render`, `.DigCues`, `.Ruts`, `test_fly_camera.Rendering`, `test_urc_sim.Worlds.test_camera_sees_the_start_post`) skip without a GPU and print why.
 
@@ -79,7 +79,7 @@ git clone --no-local --single-branch --branch main /Users/alarion239/Desktop/Rov
 cd "$T/rover-filtered" && git remote remove origin && git rev-list --count main
 ```
 
-Expected: the clone succeeds and prints the commit count of SOURCE (91 on 2026-10-09, with this plan's commit).
+Expected: the clone succeeds and prints the commit count of SOURCE (92 on 2026-10-09, with this plan's commit and its critic's; more if the plan was committed again).
 
 - [ ] **Step 2: Remove `papers/` from every commit**
 
@@ -264,9 +264,10 @@ git merge-base --is-ancestor origin/main HEAD && echo "team main is an ancestor"
 git rev-list --count HEAD
 git diff --stat origin/main HEAD -- README.md rover_description rover_sim .gitattributes
 git log --format='%an <%ae>' origin/main..HEAD | sort | uniq -c
+git rev-list --objects --all | grep -c " papers/"
 ```
 
-Expected: `team main is an ancestor`; count = SOURCE's count + 4 team commits + 1 merge (96 on 2026-10-09); the `diff --stat` prints nothing (the team's files are untouched); all commits on the branch are by `Alexander Belotserkovtsev <amb30239@gmail.com>`.
+Expected: `team main is an ancestor`; count = SOURCE's count + 4 team commits + 1 merge (97 on 2026-10-09); the `diff --stat` prints nothing (the team's files are untouched); all commits on the branch are by `Alexander Belotserkovtsev <amb30239@gmail.com>`; `0`: no object of `papers/` reached this repository (the publishers' PDFs must never be pushed).
 
 - [ ] **Step 8: Delete the temporary clone**
 
@@ -700,9 +701,10 @@ rover_sim	src/rover_sim	(ros.ament_cmake)
 T=/private/tmp/claude-502/rover-pr1
 cd /Users/alarion239/Desktop/hurc_ws && /Users/alarion239/.pixi/bin/pixi run --manifest-path src/pixi.toml colcon build > "$T/build.log" 2>&1; tail -4 "$T/build.log"
 ls build/rover_sim/*.dylib install/rover_sim/lib/rover_sim/
+grep -h "^CMAKE_CXX_COMPILER:" build/rover_sim/CMakeCache.txt build/rover_control/CMakeCache.txt
 ```
 
-Expected: `Summary: 3 packages finished` (a line `1 package had stderr output: rover_sim` from compiler warnings is acceptable; read them once). Both listings show `libChaseCamera.dylib libFlyCamera.dylib libJointMonitor.dylib libRockerDifferential.dylib libRoverDrivetrain.dylib`.
+Expected: `Summary: 3 packages finished` (a line `1 package had stderr output: rover_sim` from compiler warnings is acceptable; read them once). Both listings show `libChaseCamera.dylib libFlyCamera.dylib libJointMonitor.dylib libRockerDifferential.dylib libRoverDrivetrain.dylib`. Write down the compiler the last line names (conda's `clang++` from the environment, or Apple's `/usr/bin/c++` as SOURCE used): Task 12 needs it if a test regresses (decision 6).
 
 - [ ] **Step 4: The installed plugins find their libraries and a sourced workspace finds the plugins**
 
@@ -1898,7 +1900,7 @@ def walk(suite):
 for test in walk(unittest.defaultTestLoader.discover(".", pattern="test_*.py")):
     print(test.id())
 EOF
-(cd /Users/alarion239/Desktop/Rover/sim/tests && $P run --manifest-path /Users/alarion239/Desktop/Rover/pixi.toml python "$T/list_tests.py" 2>/dev/null | sort > "$T/tests_source.txt")
+(cd /Users/alarion239/Desktop/Rover/sim/tests && PYTHONDONTWRITEBYTECODE=1 $P run --frozen --manifest-path /Users/alarion239/Desktop/Rover/pixi.toml python "$T/list_tests.py" 2>/dev/null | sort > "$T/tests_source.txt")
 (cd /Users/alarion239/Desktop/hurc_ws/src/rover_sim/tests && $P run python "$T/list_tests.py" 2>/dev/null | sort > "$T/tests_ws.txt")
 wc -l < "$T/tests_source.txt"; wc -l < "$T/tests_ws.txt"; diff "$T/tests_source.txt" "$T/tests_ws.txt"
 ```
@@ -1935,8 +1937,10 @@ Expected: the media, the colcon build, the rover model, the five worlds (about 6
 
 ```bash
 T=/private/tmp/claude-502/rover-pr1
-cd /Users/alarion239/Desktop/hurc_ws/src && GZ_IP=127.0.0.1 /Users/alarion239/.pixi/bin/pixi run test > "$T/test.log" 2>&1; echo "exit $?" >> "$T/test.log"
+cd /Users/alarion239/Desktop/hurc_ws/src && GZ_IP=127.0.0.1 GZ_PARTITION=pr1_test_$$ /Users/alarion239/.pixi/bin/pixi run test > "$T/test.log" 2>&1; echo "exit $?" >> "$T/test.log"
 ```
+
+(The suite gives every simulation its own partition; `GZ_PARTITION` covers anything that does not.)
 
 Run it with `run_in_background` and wait for it to finish. Then:
 
@@ -1957,7 +1961,7 @@ exit 0
 
 The 9 skips are the opt-in performance and slow tests (`test_perf.Budgets`, `test_drivetrain.Cost` x2, `test_urc_sim.MissionRoutes` x6), the two expected failures the slow-turn judder and dust in depth, as in SOURCE (its README, Performance: 495 tests, 9 skipped, 2 expected failures).
 
-If a test fails: run the same test in SOURCE (`cd /Users/alarion239/Desktop/Rover/sim/tests && pixi run --manifest-path ../../pixi.toml python -m unittest -v <test id>`). A test that fails in SOURCE too is not caused by this PR: write it down for the report. A test that passes in SOURCE and fails here is a regression: find the cause (paths, the build directory, the compiler) with superpowers:systematic-debugging, fix it in a new commit, and rerun the suite.
+If a test fails: run the same test in SOURCE (`cd /Users/alarion239/Desktop/Rover/sim/tests && GZ_IP=127.0.0.1 GZ_PARTITION=pr1_src_$$ PYTHONDONTWRITEBYTECODE=1 pixi run --frozen --manifest-path ../../pixi.toml python -m unittest -v <test id>`). A test that fails in SOURCE too is not caused by this PR: write it down for the report. A test that passes in SOURCE and fails here is a regression: find the cause (paths, the build directory, the compiler) with superpowers:systematic-debugging, fix it in a new commit, and rerun the suite. If the compiler noted in Task 5 Step 3 is conda's and the regression is numeric (a calibration row, a tolerance), rebuild once with Apple's compiler to tell (`rm -rf build/rover_sim && pixi run --manifest-path src/pixi.toml colcon build --packages-select rover_sim --cmake-args -DCMAKE_CXX_COMPILER=/usr/bin/c++` from the workspace root, then `pixi run sim-media` and the failing test; afterwards `rm -rf build/rover_sim` and `pixi run build` again, so the workspace is back on the default compiler); report the result to the user instead of pinning a compiler in the build files.
 
 - [ ] **Step 4: Nothing tracked changed**
 
@@ -2081,6 +2085,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -2094,12 +2101,17 @@ jobs:
         include:
           - name: Ubuntu 24.04 (no GPU, the rendering tests skip)
             os: ubuntu-24.04
+            rendering: "0"
           - name: macOS, Apple silicon (with the rendering tests)
             os: macos-15
+            rendering: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     env:
       GZ_IP: 127.0.0.1
+      # tests/gpu.py: 0 skips the rendering tests (the Ubuntu runner has no GPU, whatever device nodes its virtual
+      # machine shows); empty lets gpu.py decide (every Mac renders).
+      ROVER_RENDERING: ${{ matrix.rendering }}
     defaults:
       run:
         working-directory: src
@@ -2114,15 +2126,26 @@ jobs:
           manifest-path: src/pixi.toml
           locked: true
           cache: true
-      - name: Terrain rasters, cached by their manifest
-        uses: actions/cache@v6.1.0
+      # The build needs no terrain data, so it is checked even when fetch-data fails.
+      - run: pixi run build
+      # The terrain rasters, cached by their manifest and saved as soon as they are fetched, whatever the tests do.
+      - name: Restore the terrain rasters
+        id: rasters
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
-          key: rasters-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
       - run: pixi run fetch-data
-      - run: pixi run build
+      - name: Save the terrain rasters
+        if: steps.rasters.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            src/rover_sim/data/dem/*.tif
+            src/rover_sim/data/imagery/*.tif
+          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
       - run: pixi run test
 
   windows:
@@ -2145,7 +2168,7 @@ jobs:
       - run: pixi run build
 ```
 
-The action versions are their releases older than two weeks on 2026-10-09 (`gh release list -R <repo>`); all three run on node24.
+The action versions are their releases older than two weeks on 2026-10-09 (`gh release list -R <repo>`: checkout v7.0.1 of 2026-07-20, setup-pixi v0.10.2 of 2026-08-28, cache v6.1.0 of 2026-06-26, whose `restore` and `save` sub-actions take `path` and `key`, and `restore` outputs `cache-hit`); all run on node24. The plain `actions/cache` would save only when the whole job succeeds, so until the suite is green every run would download the rasters again.
 
 - [ ] **Step 2: Validate it**
 
@@ -2155,7 +2178,7 @@ python3 -c "import sys, yaml; d = yaml.safe_load(open('.github/workflows/ci.yml'
   || /Users/alarion239/.pixi/bin/pixi run python -c "import yaml; d = yaml.safe_load(open('.github/workflows/ci.yml')); print(sorted(d['jobs']))"
 ```
 
-Expected: `actionlint ok` (actionlint 1.7.12 from conda-forge, about 2 MB, into pixi's cache) and `['unix', 'windows']`.
+Expected: `actionlint ok` (actionlint 1.7.12 from conda-forge, about 2 MB, into pixi's cache; `pixi clean cache --exec` removes it afterwards) and `['unix', 'windows']`.
 
 - [ ] **Step 3: Commit**
 
@@ -2165,11 +2188,12 @@ CI: build and test on Ubuntu and macOS, build on Windows
 
 GitHub Actions with prefix-dev/setup-pixi (pixi 0.81, the locked
 environment, cached), the repository checked out as a workspace's src/.
-Ubuntu 24.04 and macOS (Apple silicon): pixi run fetch-data (the rasters
-cached by their manifest), pixi run build, pixi run test; the rendering
-tests skip on the GPU-less Ubuntu runner and run on macOS. Windows: pixi
-run build (rover_description and rover_control). fetch-data needs the data
-release for the derived lidar DEM before the first green run.
+Ubuntu 24.04 and macOS (Apple silicon): pixi run build, pixi run
+fetch-data (the rasters cached by their manifest as soon as they are
+fetched), pixi run test; the rendering tests skip on the GPU-less Ubuntu
+runner (ROVER_RENDERING=0) and run on macOS. Windows: pixi run build
+(rover_description and rover_control). fetch-data needs the data release
+for the derived lidar DEM before the first green run.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -2240,7 +2264,7 @@ QUICK_START_NEW = """From the repository's root (`<workspace>/src`), after `pixi
 
 ```bash
 pixi run fetch-data             # the terrain rasters, once (git-ignored; --all for the research ones too)
-pixi run sim                    # build the workspace, regenerate rover and worlds, open Gazebo (rover_test)
+pixi run sim                    # build the plugins (colcon), regenerate rover and worlds, open Gazebo (rover_test)
 pixi run drive urc_autonomy     # or drive from the browser: starts the world headless, opens the station page
 pixi run launcher               # every world as a tile: a click starts it with its station
 pixi run sim-bridge             # second terminal: ROS 2 <-> Gazebo topics
@@ -2390,14 +2414,14 @@ From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in t
 ### Simulation
 The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows it runs in WSL2 (see Platforms). From the `src` folder:
 1. `pixi run fetch-data` downloads the terrain rasters the simulation reads, once (about 130 MB of USGS elevation and lidar data and USDA NAIP imagery; git ignores them)
-2. `pixi run sim` builds the workspace, generates the rover and the worlds and opens Gazebo on the test ground (`pixi run sim urc_autonomy` opens a URC mission world)
+2. `pixi run sim` builds the simulation's plugins, generates the rover and the worlds and opens Gazebo on the test ground (`pixi run sim urc_autonomy` opens a URC mission world)
 3. `pixi run drive urc_autonomy` drives the rover from the browser; `pixi run launcher` shows every world as a tile that starts it with its driver station
 
 The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](docs/sim/design-notes.md) and [Gazebo lessons](docs/sim/gazebo-lessons.md).
 
 ### Tests
 - `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run fetch-data`, `pixi run build` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`
 
 ### Platforms
 - **macOS (Apple silicon):** everything
@@ -2429,7 +2453,7 @@ From the repository's root (`<workspace>/src`), after `pixi install`:
 
 ```bash
 pixi run fetch-data             # the terrain rasters, once (git-ignored)
-pixi run sim                    # build, generate rover and worlds, open Gazebo (rover_test)
+pixi run sim                    # build the plugins, generate rover and worlds, open Gazebo (rover_test)
 pixi run sim urc_autonomy       # a mission world (also urc_equipment_servicing, urc_delivery, urc_astrobiology, proving_ground)
 pixi run drive urc_autonomy     # drive from the browser
 pixi run launcher               # every world as a tile
@@ -2543,10 +2567,10 @@ with
 ```bash
 cd /Users/alarion239/Desktop/hurc_ws/src
 git grep -n "papers/" -- . ':!docs/superpowers/specs/2026-10-09-rover-software-integration-design.md' ':!docs/superpowers/plans'
-for f in README.md rover_sim/README.md; do grep -o -E "\]\([^)]+\)" "$f" | sed -E 's/^\]\(|\)$//g' | grep -v '^http' | while read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "broken link in $f: $l"; done; done
+for f in README.md rover_sim/README.md rover_control/README.md docs/research/README.md docs/sim/*.md; do grep -o -E "\]\([^)]+\)" "$f" | sed -E 's/^\]\(|\)$//g' | grep -v '^http' | while read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "broken link in $f: $l"; done; done
 ```
 
-Expected: the grep prints nothing (only the integration spec and this plan mention `papers/`, as history); no broken link.
+Expected: the grep prints nothing (only the integration spec and this plan mention `papers/`, as history); no broken link (the manual's only relative links are its two new files and `../urc_worlds.png`, checked on SOURCE's README while this plan was reviewed).
 
 - [ ] **Step 7: Commit**
 
@@ -2628,9 +2652,11 @@ Expected: `Summary: 3 packages finished`; `rover_control`, `rover_description`, 
 
 ```bash
 T=/private/tmp/claude-502/rover-pr1
-cd "$T/freshws/src" && /Users/alarion239/.pixi/bin/pixi run fetch-data --dry-run
+cd "$T/freshws/src" && PYTHONDONTWRITEBYTECODE=1 /Users/alarion239/.pixi/bin/pixi run fetch-data --dry-run
 git status --porcelain --ignored
 ```
+
+(`PYTHONDONTWRITEBYTECODE=1`: otherwise importing `urc.dem` leaves an ignored `rover_sim/urc/__pycache__/` that the status check would list.)
 
 Expected:
 ```
@@ -2666,7 +2692,26 @@ gh release create data-2026-10-06 --repo Harvard-HURC/Rover-Software --target ma
 
 The assets keep their file names, which `rasters.json`'s `mirror` URL expects; the release does not depend on the pull request (its tag only marks `main`).
 
-- [ ] **Step 2: SOURCE untouched, the branch complete, nothing pushed**
+- [ ] **Step 2: The suites on the branch as it will be pushed**
+
+Task 12 ran them before the launch-file fix, its test (Task 13) and the documents. Run `pixi run test` once more on the final branch, in the background (about 15 minutes):
+
+```bash
+T=/private/tmp/claude-502/rover-pr1
+cd /Users/alarion239/Desktop/hurc_ws/src && GZ_IP=127.0.0.1 GZ_PARTITION=pr1_final_$$ /Users/alarion239/.pixi/bin/pixi run test > "$T/final_test.log" 2>&1; echo "exit $?" >> "$T/final_test.log"
+```
+
+Then:
+
+```bash
+T=/private/tmp/claude-502/rover-pr1
+grep -E "tests passed|^Summary" "$T/final_test.log"; grep -E "^Ran |^OK|^FAILED|^exit" "$T/final_test.log"
+cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && echo "tree clean"
+```
+
+Expected: as in Task 12 Step 3, with `Ran 508 tests` (Task 13 added `test_launch_files`), `OK (skipped=9, expected failures=2)`, `exit 0`, then `tree clean`. A failure here is handled as in Task 12 Step 3.
+
+- [ ] **Step 3: SOURCE untouched, the branch complete, nothing pushed**
 
 ```bash
 cd /Users/alarion239/Desktop/Rover && git status --porcelain && git log --oneline -1
@@ -2675,9 +2720,9 @@ git branch -vv | grep import/simulation
 git ls-remote --heads origin import/simulation | wc -l
 ```
 
-Expected: SOURCE clean, its last commit this plan's; SRC clean; the branch's newest commits are the ones of Tasks 2 to 17 (merge, layout x2, pixi, gzenv, rendering skips, paths, fetch-data, launch fix, CI, docs x2); `import/simulation` has no upstream; `0` (the branch does not exist on GitHub).
+Expected: SOURCE clean, its last commit a commit of this plan (`Plan PR 1: critic fixes...` or a later revision of the plan); SRC clean; the branch's newest commits are the ones of Tasks 2 to 17 (merge, layout x2, pixi, gzenv, rendering skips, paths, fetch-data, launch fix, CI, docs x2, and Task 17's if it found something); `import/simulation` has no upstream; `0` (the branch does not exist on GitHub).
 
-- [ ] **Step 3: Remove the temporary files**
+- [ ] **Step 4: Remove the temporary files**
 
 ```bash
 rm -rf /private/tmp/claude-502/rover-pr1 && ls /private/tmp/claude-502 | grep -c rover-pr1
@@ -2685,9 +2730,9 @@ rm -rf /private/tmp/claude-502/rover-pr1 && ls /private/tmp/claude-502 | grep -c
 
 Expected: `0`. The workspace keeps its environment (`src/.pixi`), `build/`, `install/`, `log/`, the generated worlds and the raster symlinks.
 
-- [ ] **Step 4: Report to the user**
+- [ ] **Step 5: Report to the user**
 
-Report: the branch and its commits; the test results of Task 12 (counts, skips, expected failures, any failure that SOURCE shares); the fresh-clone result; that nothing is pushed; and the decisions that need them: the data release (Step 1; without it fetch-data cannot get `route_area_lidar_0p5m.tif` on a fresh clone and CI stops at its fetch step), and the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below).
+Report: the branch and its commits; the test results of Task 12 and Step 2 (counts, skips, expected failures, any failure that SOURCE shares); the compiler the build used (Task 5 Step 3); the fresh-clone result; that nothing is pushed; and the decisions that need them: the data release (Step 1; without it fetch-data cannot get `route_area_lidar_0p5m.tif` on a fresh clone and CI stops at its fetch step, after the build), and the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below).
 
 ---
 
@@ -2700,8 +2745,8 @@ Report: the branch and its commits; the test results of Task 12 (counts, skips, 
 | The team's README steps work (clone into `<ws>/src`, `pixi install`, `colcon build`) | Task 18 |
 | `colcon build` builds the three packages; plugins installed | Task 5 |
 | pixi resolves osx-arm64, linux-64 and win-64; one manifest, tasks from the repository root | Task 6 |
-| The full simulation suite passes on this Mac, with no change in behaviour | Task 12 (507 tests, 9 skipped, 2 expected failures; SOURCE's 495 among them) |
-| rover_control's tests pass | Task 5 Step 5, Task 12 (57 tests) |
+| The full simulation suite passes on this Mac, with no change in behaviour | Task 12 (507 tests, 9 skipped, 2 expected failures; SOURCE's 495 among them), Task 19 Step 2 on the final branch (508) |
+| rover_control's tests pass | Task 5 Step 5, Task 12 and Task 19 Step 2 (57 tests) |
 | fetch-data works on a fresh clone without `--force` (logic and dry run) | Task 11, Task 18 Step 3 |
 | The team's launch-file bug fixed | Task 13 |
 | CI file valid | Task 14 Step 2 (CI green on GitHub needs the push and the data release) |
@@ -2715,8 +2760,9 @@ Report: the branch and its commits; the test results of Task 12 (counts, skips, 
 | The 0.5 m lidar DEMs (one of them required by `urc_autonomy`) cannot be rebuilt from official sources with code in the repository | fetch-data takes them from the team's release, which needs the user's approval (Task 19); until then CI fails at fetch-data. The alternative is a later PR that scripts the lidar processing from the USGS tiles and point clouds |
 | The official ImageServers may return other pixels later (3DEP is a dynamic mosaic) or be down | fetch-data checks the content and falls back to the team's copy; downloads were not run for this plan (offline tests only) |
 | Linux and Windows are built for the first time in CI: GCC on the plugins, MSVC on rover_control, numeric tolerances on Linux, wall-clock-sensitive tests on slower runners | Nothing can be built for them locally (no Docker); expect a fix-up commit after the first CI run |
-| conda's clang 21 replaces Apple's compiler for the plugins and rover_control | The full suite (Task 12) decides; a test that passes in SOURCE and fails here is treated as a regression |
-| macOS runners may not render with ogre2 (virtualised GPU), and the suite may take over an hour there (3 cores, 7 GB) | `ROVER_RENDERING=0` in the macOS job is the fallback; timeout 150 minutes |
+| conda's clang 21 may replace Apple's compiler for the plugins and rover_control (the team's `ros-dev-tools` brings `cxx-compiler`) | Task 5 Step 3 records which one CMake took; the full suite (Task 12) decides; a test that passes in SOURCE and fails here is treated as a regression, and Task 12 Step 3 says how to tell a compiler effect |
+| macOS runners may not render with ogre2 (virtualised GPU), the suite may take over an hour there (3 cores), and 7 GB of memory is tight for generating the 4097² Autonomy world and rendering | `ROVER_RENDERING: "0"` in the macOS matrix entry is the fallback for rendering; timeout 150 minutes; a larger runner if memory runs out |
+| The suite always runs Gazebo transport on 127.0.0.1 (simulate.py's default `GZ_IP`), which was only ever run on macOS; Linux's loopback interface has no MULTICAST flag, which gz-transport's discovery may need | If the Ubuntu job's simulations hear nothing from Gazebo, add a step `sudo ip link set lo multicast on` before `pixi run test` (GitHub's runners allow sudo) and say so in the README's Linux note |
 | The team may object to dropping `ament_lint_auto` in `rover_sim` | Stated in the CMake file and the commit; re-enabling is a few lines once the code is brought to ROS style |
 | The team's `main` moves before the push | Task 2 Step 1 stops if it moved; at push time a new merge of `main` may be needed |
 | A pull request with about 700 renames and a 1.5 MB lock is hard to review | The move commit is renames only; the other commits are small and described |
