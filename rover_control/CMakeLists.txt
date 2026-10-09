@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(rover_driver CXX)
+project(rover_control CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,9 +8,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
+# MSVC (the Windows build) gets /W4: its -Wall would be /Wall, every warning of every header.
+if(MSVC)
+  set(warnings /W4)
+else()
+  set(warnings -Wall -Wextra -Wpedantic)
+endif()
 
+find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED NO_MODULE)
 
+# rover_driver: the swerve design's kinematics, superseded by tank drive and kept
+# until the ros2_control work replaces it (design spec 2026-10-09, section 9.2).
 add_library(rover_driver STATIC
   src/kinematics_2d.cpp
   src/kinematics_3d.cpp
@@ -18,11 +27,15 @@ add_library(rover_driver STATIC
 )
 target_include_directories(rover_driver PUBLIC include)
 target_link_libraries(rover_driver PUBLIC Eigen3::Eigen)
-target_compile_options(rover_driver PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(rover_driver PRIVATE ${warnings})
 
 add_executable(rover_state tools/rover_state.cpp)
 target_link_libraries(rover_state PRIVATE rover_driver)
-target_compile_options(rover_state PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(rover_state PRIVATE ${warnings})
+
+install(DIRECTORY include/ DESTINATION include)
+install(TARGETS rover_driver ARCHIVE DESTINATION lib)
+install(TARGETS rover_state RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 include(CTest)
 if(BUILD_TESTING)
@@ -33,7 +46,7 @@ if(BUILD_TESTING)
     tests/test_steering.cpp
   )
   target_link_libraries(rover_driver_tests PRIVATE rover_driver GTest::gtest_main)
-  target_compile_options(rover_driver_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(rover_driver_tests PRIVATE ${warnings})
   include(GoogleTest)
   gtest_discover_tests(rover_driver_tests)
   add_test(NAME rover_state_runs COMMAND rover_state --mode 3d --vx 0.5 --wz 0.2 --ql 0.1 --dqr -0.2)
@@ -73,3 +86,8 @@ if(BUILD_TESTING)
     endif()
   endif()
 endif()
+
+ament_export_include_directories(include)
+ament_export_libraries(rover_driver)
+ament_export_dependencies(Eigen3)
+ament_package()

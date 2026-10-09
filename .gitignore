@@ -66,16 +66,17 @@ __pycache__/
 
 # generated URC mission worlds, test courses and their models (pixi run sim-worlds; deterministic), and their
 # rendered maps (pixi run sim-maps)
-sim/models/urc_*/
-sim/worlds/urc_*
-sim/worlds/proving_ground.*
-sim/worlds/*_map.*
+rover_sim/models/urc_*/
+rover_sim/worlds/urc_*
+rover_sim/worlds/proving_ground.*
+rover_sim/worlds/*_map.*
 # world copies the tests run (worldfiles.temp_sdf), left behind by a killed run
-sim/worlds/tmp*.sdf
+rover_sim/worlds/tmp*.sdf
 
-# Large source rasters (re-fetchable from their .json provenance; worktrees link them with sim/tools/link_data.sh)
-sim/data/**/*.tif
-sim/data/research/render/prototype/textures/
+# the terrain rasters (pixi run fetch-data; rover_sim/data/rasters.json lists them, the .json beside each says
+# where it came from), and the textures a research prototype makes
+rover_sim/data/**/*.tif
+docs/research/render/prototype/textures/
 
 # agent worktrees and local Claude state
 .claude/

@@ -3,14 +3,25 @@
 <package format="3">
   <name>rover_sim</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>The rover's Gazebo simulation: system plugins (drivetrain and motors, rocker differential, joint monitor, the driver station's cameras), the URC 2027 mission worlds and their generator, the driver station, launcher and referee, and their tests. macOS and Linux; on Windows in WSL2.</description>
   <maintainer email="44044350+BeckettOBrien@users.noreply.github.com">beckett</maintainer>
+  <maintainer email="amb30239@gmail.com">Alexander Belotserkovtsev</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <test_depend>ament_lint_auto</test_depend>
-  <test_depend>ament_lint_common</test_depend>
+  <depend>gz_sim_vendor</depend>
+  <depend>gz_plugin_vendor</depend>
+  <depend>gz_rendering_vendor</depend>
+  <depend>gz_common_vendor</depend>
+
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  <exec_depend>python3-aiohttp</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

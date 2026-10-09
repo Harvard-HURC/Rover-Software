@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rover_control</name>
+  <version>0.0.0</version>
+  <description>The rover's drive code. For now the swerve design's kinematics library rover_driver (2D and 3D inverse and forward kinematics, steering), its tests and the rover_state and viz.py tools; superseded by tank drive and kept until the ros2_control work replaces it.</description>
+  <maintainer email="amb30239@gmail.com">Alexander Belotserkovtsev</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+
+  <test_depend>gtest</test_depend>
+  <test_depend>python3-matplotlib</test_depend>
+  <test_depend>python3-numpy</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
