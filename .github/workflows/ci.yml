@@ -1,0 +1,89 @@
+# CI for every pull request and for main: the pixi tasks a laptop runs (README, Tests).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04 (no GPU, the rendering tests skip)
+            os: ubuntu-24.04
+            rendering: "0"
+          - name: macOS, Apple silicon (with the rendering tests)
+            os: macos-15
+            rendering: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    env:
+      GZ_IP: 127.0.0.1
+      # tests/gpu.py: 0 skips the rendering tests (the Ubuntu runner has no GPU, whatever device nodes its virtual
+      # machine shows); empty lets gpu.py decide (every Mac renders).
+      ROVER_RENDERING: ${{ matrix.rendering }}
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      # The repository is the src/ folder of a colcon workspace: colcon builds in the folder above it.
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: src
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.81.0
+          manifest-path: src/pixi.toml
+          locked: true
+          cache: true
+      # The build needs no terrain data, so it is checked even when fetch-data fails.
+      - run: pixi run build
+      # The terrain rasters, cached by their manifest and saved as soon as they are fetched, whatever the tests do.
+      - name: Restore the terrain rasters
+        id: rasters
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            src/rover_sim/data/dem/*.tif
+            src/rover_sim/data/imagery/*.tif
+          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+      - run: pixi run fetch-data
+      - name: Save the terrain rasters
+        if: steps.rasters.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            src/rover_sim/data/dem/*.tif
+            src/rover_sim/data/imagery/*.tif
+          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+      - run: pixi run test
+
+  windows:
+    name: Windows (rover_description, rover_control)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: src
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.81.0
+          manifest-path: src/pixi.toml
+          locked: true
+          cache: true
+      - run: pixi run build
