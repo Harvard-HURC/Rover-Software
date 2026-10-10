@@ -20,6 +20,7 @@ import threading
 import time
 import unittest
 import xml.etree.ElementTree as ET
+from unittest import mock
 
 import aiohttp
 import cv2
@@ -46,6 +47,7 @@ from gz.msgs10.vector3d_pb2 import Vector3d  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 
+from station import __main__ as station_main  # noqa: E402
 from station import link as gz_link  # noqa: E402
 from test_fly_camera import heightmap_model, write_hill  # noqa: E402
 import render_map  # noqa: E402  (server.py puts sim/tools on the path)
@@ -1404,6 +1406,30 @@ class DrivetrainReadout(unittest.TestCase):
         # Skid-steer turning slips: about 0.38 of the asked rate on regolith (design spec 5.6).
         ratio = seen["pose"]["yaw_rate"] / asked
         self.assertTrue(0.25 < ratio < 0.5, ratio)
+
+
+class WorldArgument(unittest.TestCase):
+    """pixi run drive <world>: a name in sim/worlds or a path; a world that is
+    not here says why when sim-worlds skipped it (fetch_data.world_missing)."""
+
+    def test_a_name_or_a_path(self):
+        path = WORLDS / "rover_test.sdf"
+        self.assertEqual(station_main.resolve_world("rover_test"), (path.resolve(), "rover_test"))
+        self.assertEqual(station_main.resolve_world(str(path)), (path.resolve(), "rover_test"))
+
+    def test_a_world_sim_worlds_skipped_says_why(self):
+        with mock.patch.object(station_main.fetch_data, "world_missing", return_value="the reason") as why, \
+                self.assertRaises(SystemExit) as caught:
+            station_main.resolve_world("urc_made_up")
+        why.assert_called_once_with("urc_made_up")
+        self.assertEqual(caught.exception.code, "no world 'urc_made_up': the reason")
+
+    def test_another_lists_the_worlds(self):
+        with self.assertRaises(SystemExit) as caught:
+            station_main.resolve_world("no_such_world")
+        self.assertTrue(caught.exception.code.startswith("no world 'no_such_world': give an .sdf path or one of "),
+                        caught.exception.code)
+        self.assertIn("rover_test", caught.exception.code)
 
 
 class StationProcess(unittest.TestCase):

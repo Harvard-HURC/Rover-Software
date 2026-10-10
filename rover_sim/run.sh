@@ -22,6 +22,12 @@ done
 if [[ ! -f "$world" && -f "$here/worlds/$world.sdf" ]]; then
   world="$here/worlds/$world.sdf"
 fi
+if [[ ! -f "$world" ]]; then  # a typo, or a world sim-worlds skipped because a raster is not here: say which
+  why="$(python -c 'import sys; sys.path.insert(0, sys.argv[1]); import fetch_data
+print(fetch_data.world_missing(sys.argv[2]) or "")' "$here/tools" "$world")"
+  echo "run.sh: no world $world: ${why:-give an .sdf path or a name in rover_sim/worlds}" >&2
+  exit 1
+fi
 
 gui_service() {  # name, request type, request: true if the GUI accepted it
   gz service -s "$1" --reqtype "$2" --reptype gz.msgs.Boolean --timeout 1000 --req "$3" 2>/dev/null \

@@ -88,6 +88,15 @@ class Environment(unittest.TestCase):
             self.assertEqual(value, want.get(key, ""), key)
         self.assertIn('eval "$(python "$here/gzenv.py")"', (SIM_DIR / "run.sh").read_text())
 
+    def test_run_sh_stops_without_the_world(self):
+        """pixi run sim <a world that is not here> says so instead of starting gz sim; a world sim-worlds skipped
+        says which raster it needs (fetch_data.world_missing, test_fetch_data)."""
+        env = dict(self.BASE, PATH=os.pathsep.join((os.path.join(sys.prefix, "bin"), self.BASE.get("PATH", ""))))
+        result = subprocess.run(["/bin/bash", str(SIM_DIR / "run.sh"), "no_such_world"], capture_output=True,
+                                text=True, env=env, timeout=60)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, "", "run.sh: no world no_such_world: give an .sdf path or a name in rover_sim/worlds\n"))
+
 
 class RenderingCheck(unittest.TestCase):
     """gpu.rendering(): whether the rendering tests run on this machine."""

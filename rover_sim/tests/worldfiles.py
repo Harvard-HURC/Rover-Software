@@ -31,10 +31,7 @@ def world_missing(world):
     """Why sim/worlds/<world>.sdf (urc_<mission>, proving_ground) is not
     generated here, or None: a raster it reads that fetch-data cannot rebuild
     yet is not here (rasters.json's worlds), so gen_worlds skipped it."""
-    for entry in fetch_data.load_manifest()["rasters"]:
-        if world in entry.get("worlds", ()) and not (fetch_data.DATA_DIR / entry["path"]).exists():
-            return f"{world} needs data/{entry['path']}, which is not here: {fetch_data.cannot_fetch(entry)}"
-    return None
+    return fetch_data.world_missing(world)
 
 
 def raster_missing(path):
@@ -44,7 +41,7 @@ def raster_missing(path):
         return None
     entry = fetch_data.entry_of(path)
     how = "pixi run fetch-data" if entry is None or entry["official"] else fetch_data.cannot_fetch(entry)
-    return f"data/{path.relative_to(fetch_data.DATA_DIR)} is not here: {how}"
+    return f"{fetch_data.shown(path)} is not here: {how}"
 
 
 def needs_world(world):

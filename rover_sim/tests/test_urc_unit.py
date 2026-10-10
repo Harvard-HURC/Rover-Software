@@ -443,5 +443,6 @@ class MissingRaster(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.run_main(Path(tempfile.gettempdir()) / "made_up.tif")
 
+
 if __name__ == "__main__":
     unittest.main()

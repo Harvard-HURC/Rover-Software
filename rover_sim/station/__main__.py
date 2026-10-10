@@ -26,9 +26,11 @@ from pathlib import Path
 
 SIM_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_DIR))
+sys.path.insert(0, str(SIM_DIR / "tools"))
 
 from aiohttp import web  # noqa: E402
 
+import fetch_data  # noqa: E402
 import gzenv  # noqa: E402
 from station import link, server  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
@@ -48,13 +50,14 @@ STOP_SIGNALS = tuple(sig for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHU
 
 
 def resolve_world(arg):
-    """(path, world name) for a path or a name in sim/worlds."""
+    """(path, world name) for a path or a name in sim/worlds. A world sim-worlds skipped because a raster
+    fetch-data cannot rebuild yet is not here says so (fetch_data.world_missing)."""
     path = Path(arg)
     if not path.is_file():
         path = SIM_DIR / "worlds" / f"{arg}.sdf"
     if not path.is_file():
-        sys.exit(f"no world {arg!r}: give an .sdf path or one of "
-                 f"{', '.join(sorted(p.stem for p in (SIM_DIR / 'worlds').glob('*.sdf')))}")
+        sys.exit(f"no world {arg!r}: " + (fetch_data.world_missing(arg) or "give an .sdf path or one of "
+                 f"{', '.join(sorted(p.stem for p in (SIM_DIR / 'worlds').glob('*.sdf')))}"))
     return path.resolve(), ET.parse(path).getroot().find("world").get("name")
 
 

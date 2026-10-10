@@ -2,8 +2,9 @@
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
 a fresh clone, official tiles made into a raster and checked, nothing
-installed that does not match, and the rasters it cannot rebuild yet named
-with the worlds that need them and how to get them, without failing the run."""
+installed that does not match, the rasters it cannot rebuild yet named with
+the worlds that need them and how to get them, without failing the run, and
+its exit status in --help."""
 import contextlib
 import hashlib
 import io
@@ -123,8 +124,8 @@ class Manifest(unittest.TestCase):
                 self.assertEqual(bool(requests) and all("exportImage" in url for url in requests), e["official"])
 
     def test_the_rasters_it_cannot_rebuild_name_their_worlds_and_what_is_planned(self):
-        """There is no data release: a raster that is not official has only a
-        teammate's clone, and the manifest says which worlds need it (the
+        """A raster that is not official has no copy to fetch, only a
+        teammate's clone: the manifest says which worlds need it (the
         required ones, read by the simulation) and what is planned."""
         self.assertNotIn("mirror", MANIFEST)
         names = {f"urc_{key}" for key in MISSIONS} | set(COURSES)
@@ -280,6 +281,30 @@ class CannotRebuild(unittest.TestCase):
         self.assertEqual(len(run(self.data, Server({}))[1]), 2)
         self.assertIn("2 raster(s) it cannot rebuild yet are not here (above); without them sim-worlds skips "
                       "urc_made_up", err.getvalue())
+
+    def test_world_missing_says_why_a_world_is_not_here(self):
+        """What sim, drive and the tests' skips say about a world sim-worlds skipped."""
+        lidar = self.data.absolute() / "dem" / "lidar.tif"  # outside the repository: shown as it is
+        self.assertEqual(fetch_data.world_missing("urc_made_up", self.data),
+                         f"urc_made_up needs {lidar}, which is not here: fetch-data cannot rebuild it from official "
+                         f"sources yet (a made-up script is planned); {LINK}")
+        self.assertIsNone(fetch_data.world_missing("urc_other", self.data))  # no raster it reads is missing
+        (self.data / "dem" / "lidar.tif").write_bytes(self.lidar)
+        self.assertIsNone(fetch_data.world_missing("urc_made_up", self.data))
+
+    def test_the_autonomy_lidar_is_shown_from_the_repository(self):
+        self.assertEqual(fetch_data.shown(autonomy.DEM_PATH), "rover_sim/data/dem/route_area_lidar_0p5m.tif")
+
+
+class Help(unittest.TestCase):
+    def test_help_gives_the_exit_status(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
+            fetch_data.main(["--help"])
+        self.assertEqual(caught.exception.code, 0)
+        self.assertIn("Exit status: 0 when every listed raster fetch-data can fetch is here", out.getvalue())
+        self.assertIn("2 for a usage\nerror.", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

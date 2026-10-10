@@ -13,7 +13,9 @@ lidar DEMs and their source map, made by processing that is not in the
 repository; the NAIP 2021 route mosaic, whose .json gives only a URL
 template): for each one missing it names the worlds that need it (`worlds`)
 and what is planned (`rebuild`), and a teammate's clone lends it
-(tools/link_data.sh <that clone>). There is no other copy to fetch from.
+(tools/link_data.sh <that clone>). There is no other copy to fetch from;
+without such a raster sim-worlds skips the worlds that need it, and sim,
+drive and the tests' skips say why (world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
@@ -50,6 +52,7 @@ LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clon
 
 
 def load_manifest(data_dir=DATA_DIR):
+    """data_dir's rasters.json."""
     return json.loads((Path(data_dir) / MANIFEST).read_text())
 
 
@@ -70,6 +73,22 @@ def needed_by(entry):
     """Which generated worlds read the raster, as a clause."""
     worlds = entry["worlds"]
     return f"{', '.join(worlds)} need{'s' if len(worlds) == 1 else ''} it" if worlds else "no world reads it"
+
+
+def shown(path):
+    """path as a user sees it, from the repository's root when it is in it."""
+    path = Path(path).absolute()
+    return path.relative_to(SIM_DIR.parent).as_posix() if path.is_relative_to(SIM_DIR.parent) else str(path)
+
+
+def world_missing(world, data_dir=DATA_DIR):
+    """Why the generated world (urc_<mission>, proving_ground) is not here, or None: a raster it reads that
+    fetch-data cannot rebuild yet is missing (the manifest's `worlds`), so sim-worlds skips it."""
+    for entry in load_manifest(data_dir)["rasters"]:
+        path = Path(data_dir) / entry["path"]
+        if world in entry.get("worlds", ()) and not path.exists():
+            return f"{world} needs {shown(path)}, which is not here: {cannot_fetch(entry)}"
+    return None
 
 
 def file_sha256(path):
@@ -205,7 +224,9 @@ def fetch(entry, data_dir, get=download, log=print):
 
 
 def main(argv=None, get=download):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
+                                     epilog=__doc__[__doc__.index("Exit status"):],  # the docstring's last paragraph
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--all", action="store_true",
                         help="also the rasters only the research and the relief tool read")
     parser.add_argument("--dry-run", action="store_true", help="say what would be fetched; fetch nothing")
@@ -243,6 +264,7 @@ def main(argv=None, get=download):
                  f"{'it' if len(worlds) == 1 else 'them'} skip" if worlds else ""),
               file=sys.stderr)
     return 1 if failed else 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
