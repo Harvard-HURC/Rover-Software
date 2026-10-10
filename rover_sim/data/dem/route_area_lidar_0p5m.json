@@ -1,5 +1,5 @@
 {
-  "source": "USGS 3DEP lidar: south of ~38.4163 N the 2018 UT_Southern_QL1 OPR 0.5 m DEM (as mdrs_area_lidar2018_0p5m.json); north of it a 0.5 m grid of class-2 ground returns from the 2020 UT_StatewideSouth_2020_A20 point clouds (flown 2020-07-25..29, Leica TerrainMapper, 9.4-9.6 ground returns/m2 measured)",
+  "source": "USGS 3DEP lidar: south of ~38.4163 N the 2018 UT_Southern_QL1 OPR 0.5 m DEM (as mdrs_area_lidar2018_0p5m.json); north of it a 0.5 m grid of class-2 ground returns from the 2020 UT_StatewideSouth_2020_A20 point clouds (flown 2020-07-25..29, Leica TerrainMapper; 9.2 ground returns/m2 inside the survey's coverage, 8.9-9.5 per tile, measured 2026-10-10 on the 6 tiles listed)",
   "license": "public domain (USGS)",
   "fetched": "2026-10-06",
   "recipe": "route_area",
@@ -74,7 +74,7 @@
       "sha256": "791a3accd03f043c897ab39a41103ac8c77a56cc7514b7c7d7ffd003540576fd"
     }
   ],
-  "processing": "2020: mean of ground returns per 0.5 m UTM cell (2.35 returns per cell on average, 6 % empty cells filled by normalized Gaussian interpolation, sigma 0.35-0.75 m); 2018 and 2020 feathered by distance to each survey's edge (they differ by +1.0 cm median, 2.8 cm std on flat ground); gdalwarp bilinear to EPSG:4326 0.5 m grid on the route_area_3dep.tif column lattice; horizontal datum shift below",
+  "processing": "2020: mean of ground returns per 0.5 m UTM cell (inside the survey's coverage, the 4 m blocks with a return closed by one block: 2.30 returns per cell on average and 7.6 % of the cells empty, measured 2026-10-10 on the 6 tiles listed), the empty cells filled by normalized Gaussian interpolation, sigma 0.35 m for 98 % of them and up to 3 m for the rest; 2018 and 2020 feathered by distance to each survey's edge (they differ by +1.0 cm median, 2.8 cm std on flat ground); gdalwarp bilinear to EPSG:4326 0.5 m grid on the route_area_3dep.tif column lattice; horizontal datum shift below",
   "source_map": "route_area_lidar_0p5m_source.tif (uint8, same grid): 1 = 2018 OPR, 2 = 2020 lidar, 3 = blend, 4 = 3DEP 1 m fill (none inside these bounds)",
   "source_fractions": {
     "2018": 0.551,

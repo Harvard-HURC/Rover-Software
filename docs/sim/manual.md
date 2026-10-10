@@ -508,7 +508,7 @@ micro-relief, ground types and clutter. URC has not released its own DEM
 **Terrain source.** `data/dem/route_area_lidar_0p5m.tif`: USGS 3DEP lidar,
 public domain. South of about 38.4163 N the 2018 UT_Southern_QL1 0.5 m DEM;
 north of it a 0.5 m grid of the ground returns of the 2020
-UT_StatewideSouth point clouds (9.4–9.6 ground returns/m²), feathered at the
+UT_StatewideSouth point clouds (9.2 ground returns/m²), feathered at the
 seam (the two differ by 1 cm median on flat ground); NAVD88 metres; shifted
 by (−0.89, +0.62) m east, north so it lines up with the 3DEP and NAIP
 services' datum (PROJ's default NAD83(2011) → WGS84 is a null
