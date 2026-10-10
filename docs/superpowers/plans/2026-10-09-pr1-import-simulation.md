@@ -36,7 +36,7 @@ The spec leaves these open; each is final for PR 1 and stated in the commit or d
 1. **Research split.** `sim/data/research` has 543 tracked files. Four are read or written by code and stay at `rover_sim/data/research/` (so no code path changes): `terrain_targets.json` (urc/realism.py, tools/terrain_targets.py, test_landscape, test_urc_terrain, the sim-worlds inputs), `mdrs_terrain_measurements.json` (tools/make_relief_swatches.py), `realism_report.json` and `realism_contact_sheet.jpg` (tools/realism_report.py writes them; it stores the sheet's path relative to `rover_sim/`, so they must stay under it). The other 539 move to `docs/research/`. That includes `gates/` and `gates.json`: no code or test reads them (grep: only comments cite them); they are research scripts that themselves locate the repository by `parents[4] / "sim"`, so they run only on the tree before the move wherever they live. `docs/research/README.md` says how to run them (check out the commit before the move).
 2. **Plugin directory.** colcon builds `rover_sim` in `<workspace>/build/rover_sim`; the plugins land there. `gzenv.BUILD_DIR` becomes that directory (the patched media stay in it too, as before in `sim/build`). The plugins are also installed to `install/rover_sim/lib/rover_sim` with an environment hook that adds them to `GZ_SIM_SYSTEM_PLUGIN_PATH` in a sourced workspace, for ROS launch files.
 3. **Linters.** The team's skeleton runs `ament_lint_auto` (flake8, pep257, uncrustify, cpplint...) under `colcon test`. The imported code keeps its own style (120 columns, its docstrings), which those linters reject file by file, so `rover_sim` drops the lint block and `rover_control` does not get one. `rover_description` keeps the team's block.
-4. **fetch-data.** No script in SOURCE rebuilds most rasters: only `tools/fetch_dem.py` exists, for one 3DEP request, and it refuses without `--force` on a fresh clone because the tracked `.json` exists. The 0.5 m lidar DEMs were made from USGS point clouds and tiles by processing that is not in the repository. So `tools/fetch_data.py` with a manifest `data/rasters.json` (SHA-256 of each file and of its content): the six rasters whose provenance lists their ImageServer `exportImage` requests are rebuilt from those official requests and kept only if their content matches; the run fails (exit 1) when one of them fails or now returns other pixels. The other four (the two 0.5 m lidar DEMs and the lidar source map, made by processing not in the repository, among them `route_area_lidar_0p5m.tif`, which `urc_autonomy` needs; and the NAIP 2021 route mosaic, whose provenance gives only a URL template) it cannot rebuild yet, and there is no other copy to fetch (**amended 2026-10-09, the user's decision**: no copy of the rasters is published; a later pull request rebuilds the 0.5 m lidar DEMs with a script from USGS's public lidar). For each of them that is missing it names the worlds that need it (`route_area_lidar_0p5m.tif`: `urc_autonomy`; the others no world), what is planned and `rover_sim/tools/link_data.sh <a teammate's clone>`, without failing the run. `gen_worlds` skips a world whose raster it cannot rebuild, `pixi run sim` and `pixi run drive` say why that world is not there, and the tests that need it or the raster skip, saying why, so CI on a fresh clone runs with what fetch-data can fetch. Task 11 shows the code as amended.
+4. **fetch-data.** No script in SOURCE rebuilds most rasters: only `tools/fetch_dem.py` exists, for one 3DEP request, and it refuses without `--force` on a fresh clone because the tracked `.json` exists. The 0.5 m lidar DEMs were made from USGS point clouds and tiles by processing that is not in the repository. So `tools/fetch_data.py` with a manifest `data/rasters.json` (SHA-256 of each file and of its content): the six rasters whose provenance lists their ImageServer `exportImage` requests are rebuilt from those official requests and kept only if their content matches; the run fails (exit 1) when one of them fails or now returns other pixels. The other four (the two 0.5 m lidar DEMs and the lidar source map, made by processing not in the repository, among them `route_area_lidar_0p5m.tif`, which `urc_autonomy` needs; and the NAIP 2021 route mosaic, whose provenance gives only a URL template) it cannot rebuild yet, and there is no other copy to fetch (**amended 2026-10-09, the user's decision**: no copy of the rasters is published; a later pull request rebuilds the 0.5 m lidar DEMs with a script from USGS's public lidar). For each of them that is missing it names the worlds that need it (`route_area_lidar_0p5m.tif`: `urc_autonomy`; the others no world), what is planned and `rover_sim/tools/link_data.sh <a teammate's clone>`, without failing the run. `gen_worlds` skips a world whose raster it cannot rebuild, `pixi run sim` and `pixi run drive` say why that world is not there, and the tests that need it or the raster skip, saying why, so CI on a fresh clone runs with what fetch-data can fetch. Task 11 shows the code as amended. (**Amended 2026-10-10**, a real fetch-data on a fresh clone, Task 18 Step 4: USDA's ImageServer now marks the near infrared of its NAIP 2024 tiles alpha, which `read_tile` clears; and a rebuilt raster carries the original file's georeferencing and metadata, which the manifest lists (`tags`), so it is the original but for its encoding. CI ends with `git diff --exit-code`, Task 14.)
 5. **pixi.** The team's `pixi.lock` is the base: it already holds every package the simulation uses on all three platforms, and on osx-arm64 the physics and rendering packages are the versions SOURCE runs today (gz-sim 8.10.0, gz-physics 7.5.0, dartsim 6.19.4, ogre-next 2.3.3, gz-rendering 8.2.2). The simulation's direct dependencies are listed under `[target.unix.dependencies]` (the team's lock resolves the Gazebo packages on `win-64` too, through `ros2-ros-gz-sim`, and colcon, ament, Eigen, GoogleTest and `vs2022_win-64` are there; the simulation just does not run there); on `win-64` the `build` task builds `rover_description` and `rover_control` only, without tests (the simulation runs in WSL2 there, spec section 7).
 6. **Compiler.** The team's `ros-dev-tools` brings conda's clang 21 (`cxx-compiler`, whose activation CMake may follow); SOURCE built the plugins and the driver with Apple's `/usr/bin/c++` (its `CMakeCache.txt`). Task 5 Step 3 records which compiler colcon's CMake took; the full suite on the new build is the check (Task 12).
 7. **Paths in prose.** The move commit is pure renames (100 % similarity, so `git log --follow` and blame work). Afterwards only paths that run or that a user sees at run time change (build directory, tasks, help texts, skip reasons, one station message, `link_data.sh`). Comments and docstrings that say `sim/...` stay: changing them would touch `gen_model.py` (PR 2), the tracked generated models and the media caches keyed on `urc/` sources. `rover_sim/README.md` tells readers how to read them.
@@ -1276,6 +1276,8 @@ Expected: `10`; `git status --porcelain` prints nothing; `.gitignore:<line>:rove
 
 > Amended 2026-10-09 (Decision 4, the user's decision): the steps show the code as the branch holds it. The first version, committed by Step 7, also fetched the four rasters it cannot rebuild, and any official one whose source failed, from a copy of the rasters to be published on GitHub; the commits of 2026-10-09 removed that copy and added the worlds, the skips and `world_missing`.
 
+> Amended 2026-10-10 (Decision 4): the first real fetch-data on a fresh clone (Task 18 Step 4) found two faults that the checks with linked rasters had not. USDA's ImageServer returns the NAIP 2024 tiles with their near infrared marked alpha (ExtraSamples 2), which `dem.read_raster` refuses: `read_tile` clears the mark (`clear_alpha`, shared with `write_geotiff`). And fetch-data wrote three GeoKeys where the originals have their whole georeferencing and GDAL's metadata, so `test_urc_dem.GeoTiff.test_file_is_compressed_and_keeps_its_geotiff_tags` failed on a fetched `route_area_3dep.tif`: the manifest lists each official raster's tags as the original has them (`tags`), fetch-data writes them (`raster_tags`) and `matches` wants them.
+
 **Files:**
 - Create: `rover_sim/data/rasters.json`
 - Create: `rover_sim/tools/fetch_data.py`
@@ -1283,11 +1285,11 @@ Expected: `10`; `git status --porcelain` prints nothing; `.gitignore:<line>:rove
 
 - [ ] **Step 1: Write the manifest `rover_sim/data/rasters.json`**
 
-The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file; `content_sha256` = SHA-256 of `urc.dem.read_raster`'s float32 bands followed by `repr` of its geotransform tuple).
+The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file; `content_sha256` = SHA-256 of `urc.dem.read_raster`'s float32 bands followed by `repr` of its geotransform tuple); the `tags` were read from the same files (`fetch_data.tags_of`) on 2026-10-10.
 
 ```json
 {
- "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). The rasters that are not official fetch-data cannot rebuild yet, and there is no other copy to fetch; for each of them worlds: the generated worlds that read it; rebuild: what is planned. A teammate's clone lends them (tools/link_data.sh <that clone>).",
+ "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; tags (the official ones): the original file's other georeferencing and its metadata (GeoTIFF's GeoKeyDirectory, GeoDoubleParams and GeoAsciiParams, GDAL_METADATA, ImageDescription), which fetch-data writes with the transform into a raster it rebuilds, so that it is the original but for its encoding; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). The rasters that are not official fetch-data cannot rebuild yet, and there is no other copy to fetch; for each of them worlds: the generated worlds that read it; rebuild: what is planned. A teammate's clone lends them (tools/link_data.sh <that clone>).",
  "rasters": [
   {
    "path": "dem/far_dem_3dep_60km.tif",
@@ -1299,7 +1301,13 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "ea0b760e94e43d2e9c8188252ca8c87ae8119fe61b2e976fa1c09c9a8031870a",
    "shape": [1, 1440, 1500],
    "dtype": "float32",
-   "transform": [-111.15, 0.0005, 0.0, 38.7, 0.0, -0.0004999999999999993]
+   "transform": [-111.15, 0.0005, 0.0, 38.7, 0.0, -0.0004999999999999993],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/mdrs_area_3dep.tif",
@@ -1311,7 +1319,13 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "063c7bcee906e9c6f8b81b0c356da076b37ed9336f5a148e0e9c7c7b198d341a",
    "shape": [1, 2617, 3490],
    "dtype": "float32",
-   "transform": [-110.8100044091711, 1.1463844797180156e-05, 0.0, 38.419994708994714, 0.0, -1.1463844797179682e-05]
+   "transform": [-110.8100044091711, 1.1463844797180156e-05, 0.0, 38.419994708994714, 0.0, -1.1463844797179682e-05],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"0\">100</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/mdrs_area_lidar2018_0p5m.tif",
@@ -1337,7 +1351,13 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "c33b2b54f46d7dd8fd0fba0b7002b7842c886522d8a6eefadbd224e4ae8b4278",
    "shape": [1, 2442, 2268],
    "dtype": "float32",
-   "transform": [-110.79, 1.1463844797182741e-05, 0.0, 38.43199735449736, 0.0, -1.1463844797182049e-05]
+   "transform": [-110.79, 1.1463844797182741e-05, 0.0, 38.43199735449736, 0.0, -1.1463844797182049e-05],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/route_area_lidar_0p5m.tif",
@@ -1377,7 +1397,14 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "b1dbde60f9ad6946651ad6c9a260bf222c67ef9f9303cc96076dbd35af683201",
    "shape": [4, 5234, 6980],
    "dtype": "uint8",
-   "transform": [-110.8100044091711, 5.73192239859063e-06, 0.0, 38.41999470899472, 0.0, -5.731922398590967e-06]
+   "transform": [-110.8100044091711, 5.73192239859063e-06, 0.0, 38.41999470899472, 0.0, -5.731922398590967e-06],
+   "tags": {
+    "ImageDescription": "USDA NAIP 2024-07-06 m_3811034_se_12_060_20240706, bands R,G,B,NIR",
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"SourceBandIndex\" sample=\"3\">3</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "imagery/naip2021_far_60km.tif",
@@ -1389,7 +1416,13 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "3a99825b255a25cd680e406465fc602f269e9c62fdb0232ae87a554ea0b1dabd",
    "shape": [3, 2400, 2500],
    "dtype": "uint8",
-   "transform": [-111.15, 0.0003, 0.0, 38.7, 0.0, -0.00029999999999999954]
+   "transform": [-111.15, 0.0003, 0.0, 38.7, 0.0, -0.00029999999999999954],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"COLORINTERP\" sample=\"0\" role=\"colorinterp\">Undefined</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"COLORINTERP\" sample=\"1\" role=\"colorinterp\">Undefined</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"COLORINTERP\" sample=\"2\" role=\"colorinterp\">Undefined</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "imagery/naip2021_route_area.tif",
@@ -1415,7 +1448,14 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "content_sha256": "8eef835aaf2a3dfc57913a176bc24c21b6a5f609367c4a0694cc0dcba434215f",
    "shape": [4, 4884, 4536],
    "dtype": "uint8",
-   "transform": [-110.79, 5.731922398589246e-06, 0.0, 38.43199735449737, 0.0, -5.731922398590323e-06]
+   "transform": [-110.79, 5.731922398589246e-06, 0.0, 38.43199735449737, 0.0, -5.731922398590323e-06],
+   "tags": {
+    "ImageDescription": "USDA NAIP 2024-07-06 m_3811034_se_12_060_20240706, bands R,G,B,NIR",
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"0\">249</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"0\">220.94851074018</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"0\">54</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"0\">10.5383148399</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"0\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"1\">245</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"1\">199.55382696008</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"1\">52</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"1\">13.874298790507</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"1\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"2\">245</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"2\">177.79395444326</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"2\">64</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"2\">16.361550737759</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"2\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"3\">3</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"3\">240</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"3\">208.58127806739</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"3\">49</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"3\">10.816683152964</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"3\">100</Item>\n</GDALMetadata>\n"
+   }
   }
  ]
 }
@@ -1427,8 +1467,8 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
 #!/usr/bin/env python3
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
-a fresh clone, official tiles made into a raster and checked, nothing
-installed that does not match, the rasters it cannot rebuild yet named with
+a fresh clone, official tiles made into a raster with the original's tags
+and checked, nothing installed that does not match, the rasters it cannot rebuild yet named with
 the worlds that need them and how to get them, without failing the run, and
 its exit status in --help."""
 import contextlib
@@ -1442,6 +1482,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from worldfiles import SIM_DIR
 
@@ -1454,13 +1495,21 @@ MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+# An original's tags (rasters.json's `tags`) as GDAL writes them for EPSG:4326 (mdrs_area_3dep.tif, the NAIP 2024
+# mosaics), with a description.
+ORIGINAL_TAGS = {"ImageDescription": "made-up imagery, bands R,G,B,NIR",
+                 "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0,
+                                     2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+                 "GeoDoubleParams": [298.257223563, 6378137.0], "GeoAsciiParams": "WGS 84|",
+                 "GDAL_METADATA": '<GDALMetadata>\n  <Item name="DataType">Generic</Item>\n</GDALMetadata>\n'}
 
 
-def raster_bytes(bands, transform):
-    """A GeoTIFF of bands (B, H, W) as fetch_data writes it."""
+def raster_bytes(bands, transform, tags=None):
+    """A GeoTIFF of bands (B, H, W) as fetch_data writes it, with the original's tags (rasters.json's `tags`) or,
+    without them, the three GeoKeys dem.read_raster checks."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "r.tif"
-        fetch_data.write_geotiff(path, bands, fetch_data.geotags(transform))
+        fetch_data.write_geotiff(path, bands, fetch_data.raster_tags({"transform": transform, "tags": tags or {}}))
         return path.read_bytes()
 
 
@@ -1477,14 +1526,24 @@ class Server:
         return self.bodies[url]
 
 
-def case(directory, bands):
+def marked_alpha(body):
+    """A 4-band GeoTIFF body as write_geotiff writes it, its fourth band marked alpha (ExtraSamples 2), as USDA's
+    conus_naip ImageServer marks NAIP 2024's near infrared."""
+    entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
+    assert body.count(entry + b"\x00\x00") == 1
+    return body.replace(entry + b"\x00\x00", entry + b"\x02\x00")
+
+
+def case(directory, bands, tags=None):
     """A data directory holding the manifest and provenance of one raster,
-    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
-    (data directory, {url: body} of the tiles)."""
+    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles, with
+    the original's tags if given (the tiles have the three GeoKeys
+    dem.read_raster checks). Returns (data directory, {url: body} of the
+    tiles)."""
     data = Path(directory)
     (data / "dem").mkdir()
     count, height, width = bands.shape
-    whole = raster_bytes(bands, TRANSFORM)
+    whole = raster_bytes(bands, TRANSFORM, tags)
     (data / "whole.tif").write_bytes(whole)
     lon0, dlon, _, lat0, _, dlat = TRANSFORM
     bodies, urls = {}, []
@@ -1498,7 +1557,7 @@ def case(directory, bands):
     entry = {"path": "dem/made_up.tif", "provenance": "dem/made_up.json", "required": True, "official": True,
              "bytes": len(whole), "sha256": fetch_data.file_sha256(data / "whole.tif"),
              "content_sha256": fetch_data.content_sha256(data / "whole.tif"), "shape": list(bands.shape),
-             "dtype": str(bands.dtype), "transform": list(TRANSFORM)}
+             "dtype": str(bands.dtype), "transform": list(TRANSFORM), **({"tags": tags} if tags else {})}
     (data / "whole.tif").unlink()
     (data / fetch_data.MANIFEST).write_text(json.dumps({"rasters": [entry]}))
     return data, bodies
@@ -1575,6 +1634,46 @@ class Manifest(unittest.TestCase):
             with self.subTest(e["path"]):
                 self.assertTrue(fetch_data.matches(e, fetch_data.DATA_DIR / e["path"]))
 
+    def test_an_official_raster_lists_its_georeferencing(self):
+        """The tags fetch-data writes into an official raster (`tags`): a GeoKey directory with the GeoKeys
+        dem.read_raster checks, whose other keys find their values in the double and ASCII parameters, and WGS 84's
+        ellipsoid where they give one."""
+        params = {dem.GEO_DOUBLE_PARAMS: "GeoDoubleParams", dem.GEO_ASCII_PARAMS: "GeoAsciiParams"}
+        for e in MANIFEST["rasters"]:
+            if not e["official"]:
+                continue
+            with self.subTest(e["path"]):
+                tags = e["tags"]
+                self.assertLessEqual(set(tags), set(fetch_data.TAGS))
+                keys = tags["GeoKeyDirectory"]
+                self.assertEqual(len(keys), 4 + 4 * keys[3])
+                values = {}
+                for key, location, count, offset in (keys[i:i + 4] for i in range(4, len(keys), 4)):
+                    if location == 0:
+                        values[key] = offset
+                    else:
+                        self.assertLessEqual(offset + count, len(tags[params[location]]), key)
+                        values[key] = tags[params[location]][offset:offset + count]
+                for key, (value, _) in dem.GEOKEYS.items():
+                    self.assertEqual(values[key], value, key)
+                for key, value in ((2057, 6378137.0), (2059, 298.257223563)):  # semi-major axis, inverse flattening
+                    if key in values:
+                        self.assertEqual(values[key], [value], key)
+
+    def test_the_official_rasters_here_have_the_originals_tags(self):
+        """An official raster here, the original or fetched, has the manifest's tags and the pixel scale and
+        tiepoint of its transform: with the original files this checks the manifest, with fetched ones fetch-data."""
+        here = [e for e in MANIFEST["rasters"] if e["official"] and (fetch_data.DATA_DIR / e["path"]).exists()]
+        if not here:
+            self.skipTest("no rasters here (pixi run fetch-data)")
+        for e in here:
+            with self.subTest(e["path"]):
+                path = fetch_data.DATA_DIR / e["path"]
+                self.assertEqual(fetch_data.tags_of(path), e["tags"])
+                with Image.open(path) as img:
+                    for tag in (dem.MODEL_PIXEL_SCALE, dem.MODEL_TIEPOINT):
+                        self.assertEqual(img.tag_v2[tag], fetch_data.geotags(e["transform"])[tag][0], tag)
+
 
 class DryRun(unittest.TestCase):
     def test_a_fresh_clone_says_what_it_would_fetch_and_touches_nothing(self):
@@ -1618,6 +1717,19 @@ class Fetch(unittest.TestCase):
                 self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json", "made_up.tif"])
                 self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
 
+    def test_the_raster_gets_the_originals_tags_not_the_tiles(self):
+        """The servers' tiles carry their own GeoTIFF tags (USDA's NAIP 2024 tiles ESRI's, where the original
+        mosaics have GDAL's): the raster gets the original's (`tags`), and a file with its pixels but other tags is
+        not the original."""
+        data, bodies = case(self.tmp.name, naip_bands(), tags=ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server(bodies)),
+                         (0, ["dem/made_up.tif: fetched from its official source, content verified"]))
+        made_up = data / "dem" / "made_up.tif"
+        self.assertEqual(fetch_data.tags_of(made_up), ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
+        made_up.write_bytes(raster_bytes(naip_bands(), TRANSFORM))  # the same pixels, the three GeoKeys only
+        self.assertEqual(run(data, Server({}), "--verify"), (1, ["dem/made_up.tif: DIFFERS"]))
+
     def test_other_pixels_from_the_source_fail_and_install_nothing(self):
         data, bodies = case(self.tmp.name, dem_band())
         first = next(url for url in bodies if "row=0&col=0" in url)
@@ -1629,6 +1741,20 @@ class Fetch(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
         self.assertIn("1 raster(s) not fetched (FAILED above); a clone that has them can link them here: "
                       "rover_sim/tools/link_data.sh <that clone>", err.getvalue())
+
+    def test_naip_tiles_marked_alpha_make_the_raster(self):
+        """USDA's NAIP 2024 tiles mark their near infrared alpha, which dem.read_raster refuses; fetch-data clears
+        the mark and the raster's content is verified."""
+        data, bodies = case(self.tmp.name, naip_bands())
+        bodies = {url: marked_alpha(body) for url, body in bodies.items()}
+        tile = data / "tile.tif"
+        tile.write_bytes(next(iter(bodies.values())))
+        with self.assertRaisesRegex(ValueError, "alpha"):
+            dem.read_raster(tile)
+        tile.unlink()
+        self.assertEqual(run(data, Server(bodies)),
+                         (0, ["dem/made_up.tif: fetched from its official source, content verified"]))
+        np.testing.assert_array_equal(dem.read_raster(data / "dem" / "made_up.tif")[0], naip_bands())
 
     def test_nothing_is_installed_when_the_source_fails(self):
         data, bodies = case(self.tmp.name, naip_bands())
@@ -1758,15 +1884,17 @@ urc.dem.read_raster reads) and the tracked .json that says where it came
 from. A missing raster is fetched from its official source when it is one or
 more ImageServer exportImage requests (`official`; its .json lists them as
 url, urls or requests): each tile is placed on the raster's grid by its own
-georeferencing, the mosaic is written as a deflate GeoTIFF and kept only if
-its content matches. The others fetch-data cannot rebuild yet (the 0.5 m
-lidar DEMs and their source map, made by processing that is not in the
-repository; the NAIP 2021 route mosaic, whose .json gives only a URL
-template): for each one missing it names the worlds that need it (`worlds`)
-and what is planned (`rebuild`), and a teammate's clone lends it
-(tools/link_data.sh <that clone>). There is no other copy to fetch from;
-without such a raster sim-worlds skips the worlds that need it, and sim,
-drive and the tests' skips say why (world_missing).
+georeferencing, the mosaic is written as a deflate GeoTIFF with the original
+file's georeferencing and metadata (its geotransform and `tags`) and kept
+only if its content matches, so it is the original but for its encoding. The
+others fetch-data cannot rebuild yet (the 0.5 m lidar DEMs and their source
+map, made by processing that is not in the repository; the NAIP 2021 route
+mosaic, whose .json gives only a URL template): for each one missing it
+names the worlds that need it (`worlds`) and what is planned (`rebuild`),
+and a teammate's clone lends it (tools/link_data.sh <that clone>). There is
+no other copy to fetch from; without such a raster sim-worlds skips the
+worlds that need it, and sim, drive and the tests' skips say why
+(world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
@@ -1800,6 +1928,14 @@ MANIFEST = "rasters.json"  # in the data directory
 TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+# The TIFF tags of an original raster beyond its pixels' layout and encoding and the pixel scale and tiepoint its
+# geotransform gives (geotags), by the names rasters.json's `tags` gives them, with their TIFF types: GeoTIFF's
+# GeoKey directory and its double and ASCII parameters, GDAL's metadata and an image description.
+TAGS = {"ImageDescription": (270, TiffTags.ASCII),
+        "GeoKeyDirectory": (dem.GEO_KEY_DIRECTORY, TiffTags.SHORT),
+        "GeoDoubleParams": (dem.GEO_DOUBLE_PARAMS, TiffTags.DOUBLE),
+        "GeoAsciiParams": (dem.GEO_ASCII_PARAMS, TiffTags.ASCII),
+        "GDAL_METADATA": (dem.GDAL_METADATA, TiffTags.ASCII)}
 
 
 def load_manifest(data_dir=DATA_DIR):
@@ -1860,15 +1996,24 @@ def content_sha256(path):
     return h.hexdigest()
 
 
+def tags_of(path):
+    """The tags of the TIFF at path that rasters.json's `tags` lists (TAGS), as JSON gives them."""
+    with Image.open(path) as img:
+        found = {name: img.tag_v2[tag] for name, (tag, _) in TAGS.items() if tag in img.tag_v2}
+    return {name: list(value) if isinstance(value, tuple) else value for name, value in found.items()}
+
+
 def matches(entry, path):
     """Whether the raster at path is entry's: the same file, or (fetched from
-    its official source, so encoded anew) the same content."""
+    its official source, so encoded anew) the same content and tags."""
     if file_sha256(path) == entry["sha256"]:
         return True
     try:
-        return content_sha256(path) == entry["content_sha256"]
+        if content_sha256(path) != entry["content_sha256"]:
+            return False
     except Exception:  # not a raster dem.read_raster accepts
         return False
+    return "tags" not in entry or tags_of(path) == entry["tags"]
 
 
 def download(url):
@@ -1900,6 +2045,27 @@ def geotags(transform):
             dem.GEO_KEY_DIRECTORY: ((1, 1, 0, len(dem.GEOKEYS), *keys), TiffTags.SHORT)}
 
 
+def raster_tags(entry):
+    """The tags {tag: (value, type)} of the raster entry describes: the pixel scale and tiepoint of its transform,
+    and the original file's GeoKeys, their parameters and its metadata (`tags`). Without `tags` (a test's made-up
+    raster) the GeoKeys are the three dem.read_raster checks."""
+    tags = geotags(entry["transform"])
+    for name, value in entry.get("tags", {}).items():
+        tag, kind = TAGS[name]
+        tags[tag] = (tuple(value) if isinstance(value, list) else value, kind)
+    return tags
+
+
+def clear_alpha(path):
+    """Marks the fourth band of the 4-band TIFF at path unspecified (ExtraSamples 0) instead of alpha (2): its IFD
+    entry (tag 338, SHORT, count 1, little-endian), which must be there once, is patched."""
+    entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
+    data = Path(path).read_bytes()
+    if data.count(entry + b"\x02\x00") != 1:
+        raise RuntimeError(f"{path}: not one alpha mark to clear")
+    Path(path).write_bytes(data.replace(entry + b"\x02\x00", entry + b"\x00\x00"))
+
+
 def write_geotiff(path, bands, tags):
     """bands (B, H, W), one float32 band or three or four uint8 bands (R, G,
     B(, NIR)), as a deflate GeoTIFF with tags {tag: (value, type)}. PIL writes
@@ -1917,18 +2083,20 @@ def write_geotiff(path, bands, tags):
         info.tagtype[tag] = kind
     img.save(path, format="TIFF", compression="tiff_deflate", tiffinfo=info)
     if count == 4:
-        entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
-        data = Path(path).read_bytes()
-        if data.count(entry + b"\x02\x00") != 1:
-            raise RuntimeError(f"{path}: not one alpha mark to clear")
-        Path(path).write_bytes(data.replace(entry + b"\x02\x00", entry + b"\x00\x00"))
+        clear_alpha(path)
 
 
 def read_tile(body):
-    """(bands, geotransform) of a GeoTIFF body."""
+    """(bands, geotransform) of a GeoTIFF body. USDA's conus_naip ImageServer marks the fourth band of its NAIP 2024
+    tiles (R, G, B, NIR) alpha (ExtraSamples 2; M, 2026-10-10), which dem.read_raster refuses: the mark is cleared,
+    as write_geotiff clears it, and the content check against rasters.json decides whether the pixels are right."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "tile.tif"
         path.write_bytes(body)
+        with Image.open(path) as img:
+            alpha = img.tag_v2.get(dem.EXTRA_SAMPLES) == (2,)
+        if alpha:
+            clear_alpha(path)
         return dem.read_raster(path)
 
 
@@ -1949,7 +2117,7 @@ def mosaic(entry, provenance, get, out_path):
         covered[row:row + h, col:col + w] = True
     if not covered.all():
         raise ValueError(f"the requests leave {np.count_nonzero(~covered)} pixels uncovered")
-    write_geotiff(out_path, out, geotags(entry["transform"]))
+    write_geotiff(out_path, out, raster_tags(entry))
 
 
 def fetch(entry, data_dir, get=download, log=print):
@@ -2027,7 +2195,7 @@ if __name__ == "__main__":
 cd /Users/alarion239/Desktop/hurc_ws/src/rover_sim/tests && /Users/alarion239/.pixi/bin/pixi run python -m unittest -v test_fetch_data 2>&1 | tail -3
 ```
 
-Expected: `Ran 17 tests`, `OK` (`test_the_rasters_here_are_the_manifests` checks the ten linked rasters).
+Expected: `Ran 21 tests`, `OK` (`test_the_rasters_here_are_the_manifests` checks the ten linked rasters, `test_the_official_rasters_here_have_the_originals_tags` the six official ones; amended 2026-10-10, 17 before).
 
 - [ ] **Step 6: Verify the linked data and the dry run through the task (no download)**
 
@@ -2037,7 +2205,7 @@ $P run fetch-data --verify --all
 $P run fetch-data --dry-run
 ```
 
-Expected: ten lines `<path>: verified`; then six lines `<path>: present` (the required ones: `dem/far_dem_3dep_60km.tif`, `dem/mdrs_area_3dep.tif`, `dem/route_area_3dep.tif`, `dem/route_area_lidar_0p5m.tif`, `imagery/naip2021_far_60km.tif`, `imagery/route_area_naip2024.tif`). Do not run `pixi run fetch-data` without `--dry-run`/`--verify` against an empty data directory: that downloads (Task 18 checks the fresh-clone dry run).
+Expected: ten lines `<path>: verified`; then six lines `<path>: present` (the required ones: `dem/far_dem_3dep_60km.tif`, `dem/mdrs_area_3dep.tif`, `dem/route_area_3dep.tif`, `dem/route_area_lidar_0p5m.tif`, `imagery/naip2021_far_60km.tif`, `imagery/route_area_naip2024.tif`). Do not run `pixi run fetch-data` without `--dry-run`/`--verify` against an empty data directory: that downloads (Task 18 checks the fresh-clone dry run, and since 2026-10-10 a real fetch in its temporary workspace, Step 4).
 
 - [ ] **Step 7: Commit**
 
@@ -2338,6 +2506,10 @@ jobs:
             src/rover_sim/data/imagery/*.tif
           key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
       - run: pixi run test
+      # The tests regenerate tracked files (sim-model writes the rover's and the cameras' models, the wheel mesh and
+      # the dust sprite): a generated file committed stale, or a test that changes a tracked file, fails here.
+      - name: The tests left every tracked file as committed
+        run: git diff --exit-code
 
   windows:
     name: Windows (rover_description, rover_control)
@@ -2359,7 +2531,7 @@ jobs:
       - run: pixi run build
 ```
 
-The action versions are their releases older than two weeks on 2026-10-09 (`gh release list -R <repo>`: checkout v7.0.1 of 2026-07-20, setup-pixi v0.10.2 of 2026-08-28, cache v6.1.0 of 2026-06-26, whose `restore` and `save` sub-actions take `path` and `key`, and `restore` outputs `cache-hit`); all run on node24. The plain `actions/cache` would save only when the whole job succeeds, so until the suite is green every run would download the rasters again.
+The action versions are their releases older than two weeks on 2026-10-09 (`gh release list -R <repo>`: checkout v7.0.1 of 2026-07-20, setup-pixi v0.10.2 of 2026-08-28, cache v6.1.0 of 2026-06-26, whose `restore` and `save` sub-actions take `path` and `key`, and `restore` outputs `cache-hit`); all run on node24. The plain `actions/cache` would save only when the whole job succeeds, so until the suite is green every run would download the rasters again. (Amended 2026-10-10: the last step, `git diff --exit-code`, fails when the tests left a tracked file changed: `sim-test` depends on `sim-model`, which rewrites the tracked rover and camera models, so a generated file committed stale would otherwise pass CI as regenerated.)
 
 - [ ] **Step 2: Validate it**
 
@@ -2613,7 +2785,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ### Tests
 - `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data`, `pixi run test` (the rendering tests on macOS only) and then `git diff --exit-code`, which fails when the tests left a tracked file changed (they regenerate the tracked rover model, so one committed stale fails); on Windows `pixi run build`
 
 ### Platforms
 - **macOS (Apple silicon):** everything
@@ -2863,7 +3035,23 @@ fetch-data: 1 raster(s) it cannot rebuild yet are not here (above); without them
 (the lidar line and the last line as amended on 2026-10-09, Decision 4; the last line on stderr; exit 0)
 and `git status` lists only `!! .pixi/...` (build/, install/ and log/ are in the workspace root, outside the repository).
 
-- [ ] **Step 4: Delete the temporary workspace**
+- [ ] **Step 4: As CI runs it: the real fetch-data, the suite and a clean tree**
+
+Amended 2026-10-10 (Decision 4): the dry run above and the suites of Task 12 ran with the rasters linked, so they did not see the two faults of a real fetch that Task 11's amendment fixes. In the fresh workspace, with nothing linked, the steps of the CI file's unix job:
+
+```bash
+T=/private/tmp/claude-502/rover-pr1
+cd "$T/freshws/src" && P=/Users/alarion239/.pixi/bin/pixi
+$P run build > "$T/fresh_ci_build.log" 2>&1; tail -1 "$T/fresh_ci_build.log"
+$P run fetch-data
+GZ_IP=127.0.0.1 GZ_PARTITION=pr1_fresh_$$ ROS_DOMAIN_ID=61 $P run test > "$T/fresh_test.log" 2>&1; echo "exit $?" >> "$T/fresh_test.log"
+grep -E "tests passed|^Ran |^OK|^FAILED|^exit" "$T/fresh_test.log"
+git diff --exit-code && git status --porcelain && echo "tree clean"
+```
+
+Expected: fetch-data downloads from the official services and prints five lines `<path>: fetched from its official source, content verified` and the lidar line of Step 3, exit 0; then `100% tests passed out of 57`, `100% tests passed out of 3`, `Ran 529 tests`, `OK (skipped=62, expected failures=2)`, `exit 0` and `tree clean`. The 62 skips are the 9 opt-in tests of Task 12, 52 that need the Autonomy world or its lidar DEM (each saying that fetch-data cannot rebuild `route_area_lidar_0p5m.tif` yet and how to link it) and `no orthophoto maps (pixi run sim-maps)`. Measured 2026-10-10 on this Mac: `pixi install --locked` 23 s (from pixi's cache), `pixi run build` 63 s, fetch-data 32 s, `pixi run test` 14 minutes (the suite 748 s).
+
+- [ ] **Step 5: Delete the temporary workspace**
 
 ```bash
 rm -rf /private/tmp/claude-502/rover-pr1/freshws && df -h /Users/alarion239/Desktop | tail -1
@@ -2894,7 +3082,7 @@ grep -E "tests passed|^Summary" "$T/final_test.log"; grep -E "^Ran |^OK|^FAILED|
 cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && echo "tree clean"
 ```
 
-Expected: as in Task 12 Step 3, with `Ran 508 tests` (Task 13 added `test_launch_files`), `OK (skipped=9, expected failures=2)`, `exit 0`, then `tree clean`. A failure here is handled as in Task 12 Step 3. (Amended 2026-10-09: the review fixes and Decision 4's amendment bring the suite to 525 tests.)
+Expected: as in Task 12 Step 3, with `Ran 508 tests` (Task 13 added `test_launch_files`), `OK (skipped=9, expected failures=2)`, `exit 0`, then `tree clean`. A failure here is handled as in Task 12 Step 3. (Amended 2026-10-09: the review fixes and Decision 4's amendment bring the suite to 525 tests. Amended 2026-10-10: 529, with the test of the NAIP 2024 alpha mark and the three of the originals' tags, Task 11.)
 
 - [ ] **Step 3: SOURCE untouched, the branch complete, nothing pushed**
 
@@ -2938,9 +3126,9 @@ Report: the branch and its commits; the test results of Task 12 and Step 2 (coun
 | pixi resolves osx-arm64, linux-64 and win-64; one manifest, tasks from the repository root | Task 6 |
 | The full simulation suite passes on this Mac, with no change in behaviour | Task 12 (507 tests, 9 skipped, 2 expected failures; SOURCE's 495 among them), Task 19 Step 2 on the final branch (508) |
 | rover_control's tests pass | Task 5 Step 5, Task 12 and Task 19 Step 2 (57 tests) |
-| fetch-data works on a fresh clone without `--force` (logic and dry run) | Task 11, Task 18 Step 3 |
+| fetch-data works on a fresh clone without `--force` (logic, dry run, and a real fetch with the suite after it) | Task 11, Task 18 Steps 3 and 4 (amended 2026-10-10) |
 | The team's launch-file bug fixed | Task 13 |
-| CI file valid | Task 14 Step 2 (CI green on GitHub needs the push; without the lidar DEM the Autonomy world's tests skip there) |
+| CI file valid | Task 14 Step 2 (CI green on GitHub needs the push; without the lidar DEM the Autonomy world's tests skip there); its unix job's steps pass on a fresh clone, the tree clean after the tests (Task 18 Step 4) |
 | README extended; `sim/README.md` split into `rover_sim/README.md` and `docs/sim/` without losing content | Tasks 15 and 16 |
 | Nothing of ours ignored | Task 17 |
 
@@ -2949,7 +3137,7 @@ Report: the branch and its commits; the test results of Task 12 and Step 2 (coun
 | Risk | Handling |
 |---|---|
 | The 0.5 m lidar DEMs (one of them required by `urc_autonomy`) cannot be rebuilt from official sources with code in the repository | No copy of them is published (the user's decision, 2026-10-09; Decision 4): fetch-data names them and how to get them (link_data.sh from a teammate's clone); without the Autonomy DEM `sim-worlds` skips that world and its tests skip, so CI runs with what fetch-data can fetch. A later PR scripts the lidar processing from the USGS tiles and point clouds |
-| The official ImageServers may return other pixels later (3DEP is a dynamic mosaic) or be down | fetch-data checks the content and fails (exit 1) when it differs or the source fails; there is no other copy to fall back on, so CI then stops at its fetch step unless its raster cache holds the raster, and a teammate links the raster from a clone (link_data.sh) |
+| The official ImageServers may return other pixels later (3DEP is a dynamic mosaic), encode their tiles differently (by 2026-10-10 USDA's marked the NAIP 2024 near infrared alpha; `read_tile` clears the mark, Task 11) or be down | fetch-data checks the content and fails (exit 1) when it differs or the source fails; there is no other copy to fall back on, so CI then stops at its fetch step unless its raster cache holds the raster, and a teammate links the raster from a clone (link_data.sh) |
 | Linux and Windows are built for the first time in CI: GCC on the plugins, MSVC on rover_control, numeric tolerances on Linux, wall-clock-sensitive tests on slower runners | Nothing can be built for them locally (no Docker); expect a fix-up commit after the first CI run |
 | conda's clang 21 may replace Apple's compiler for the plugins and rover_control (the team's `ros-dev-tools` brings `cxx-compiler`) | Task 5 Step 3 records which one CMake took; the full suite (Task 12) decides; a test that passes in SOURCE and fails here is treated as a regression, and Task 12 Step 3 says how to tell a compiler effect |
 | macOS runners may not render with ogre2 (virtualised GPU), the suite may take over an hour there (3 cores), and 7 GB of memory is tight for generating the 4097² Autonomy world and rendering | `ROVER_RENDERING: "0"` in the macOS matrix entry is the fallback for rendering; timeout 150 minutes; a larger runner if memory runs out |
