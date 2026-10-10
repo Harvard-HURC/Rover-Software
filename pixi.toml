@@ -13,8 +13,9 @@ version = "0.1.0"
 _workspace = '''python -c "import os, sys; os.path.basename(os.environ['PIXI_PROJECT_ROOT']) == 'src' or sys.exit('clone this repository into a folder called src in your workspace (README, Setup): the colcon tasks run in the folder above it')"'''
 # Every package (on Windows without the tests, see the target below), after the simulation's patched media.
 build = { cmd = "colcon build", cwd = "..", depends-on = ["_workspace", "sim-media"] }
-# The colcon tests: rover_description's (xacro and check_urdf, the team's linters), rover_control's (GoogleTest,
-# rover_state, viz.py) and rover_sim's three plugin test programs.
+# The colcon tests: rover_description's (xacro and check_urdf, the team's linters), rover_control's (GoogleTest: the
+# tank kinematics, controllers.yaml, the hardware stub; rover.launch.py with the stub) and rover_sim's C++ tests (the
+# plugins' parts, the rover's ECM components, RoverSimSystem).
 colcon-test = { cmd = "colcon test --packages-select rover_description rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
 # The colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite. The rendering tests skip
 # where there is no GPU and say why.
@@ -23,8 +24,6 @@ test = { depends-on = ["colcon-test", "sim-test"] }
 # rebuild yet (the Autonomy world's lidar: link it from a teammate's clone, README) (--all: every raster; --dry-run;
 # --verify).
 fetch-data = "python rover_sim/tools/fetch_data.py"
-# rover_control's interactive view of the swerve kinematics.
-control-viz = { cmd = "python rover_control/tools/viz.py", depends-on = ["build"] }
 # The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
 sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
 sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["_workspace", "sim-media"] }
@@ -66,8 +65,7 @@ ros-dev-tools = ">=1.0.3,<2"
 # rover_description: xacro builds the description from rover.yaml; the view launch file's joint sliders
 ros2-xacro = ">=2.1.1,<3"
 ros2-joint-state-publisher-gui = ">=2.4.3,<3"
-# rover_control: the kinematics library and its tests
-eigen = ">=5.0.1,<6"
+# rover_control: the tank kinematics' rover.yaml loader and the tests
 gtest = ">=1.18.0,<2"
 yaml-cpp = ">=0.8.0,<0.9"
 # The drive boundary (design spec 2026-10-09, section 6): the controller manager and the hardware interface that the

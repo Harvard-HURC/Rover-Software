@@ -3,17 +3,17 @@
 <package format="3">
   <name>rover_control</name>
   <version>0.0.0</version>
-  <description>The rover's drive code. For now the swerve design's kinematics library rover_driver (2D and 3D inverse and forward kinematics, steering), its tests and the rover_state and viz.py tools; superseded by tank drive and kept until the ros2_control work replaces it.</description>
+  <description>The rover's drive: the controllers the real and the simulated rover run (config/controllers.yaml: diff_drive_controller and joint_state_broadcaster), the real rover's launch file and its ros2_control hardware stub until the motor controllers are chosen, and a skid-steer kinematics library that reads rover_description's rover.yaml.</description>
   <maintainer email="amb30239@gmail.com">Alexander Belotserkovtsev</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <!-- rover.yaml: the tests' geometry, and the description rover.launch.py publishes -->
+  <depend>rover_description</depend>
 
   <test_depend>gtest</test_depend>
-  <test_depend>python3-matplotlib</test_depend>
-  <test_depend>python3-numpy</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -7,9 +7,9 @@
 # midway between the four wheels, with the rockers at zero. Write every number that is not a count with a decimal
 # point: the tools keep the type (20.0 is a float, 20 an int).
 # Sources: (A) assumed, (M) measured or tuned in the simulation, (R) from a reference in docs/research, with the
-# design that chose it. The geometry is the swerve design's placeholder (rover_control's config.hpp, kRover) until
-# the mechanical team has real numbers. To change the rover, edit this file and run `pixi run sim-model`
-# (rover_description/README.md).
+# design that chose it. The geometry is the swerve design's placeholder (kRover of rover_control's old config.hpp,
+# in git history) until the mechanical team has real numbers. To change the rover, edit this file and run
+# `pixi run sim-model` (rover_description/README.md).
 
 chassis:
   size: [0.80, 0.50, 0.20]          # [m] the body, a box (A: rover model design 2026-10-05)
