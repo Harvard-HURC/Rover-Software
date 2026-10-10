@@ -2732,7 +2732,13 @@ Expected: `0`. The workspace keeps its environment (`src/.pixi`), `build/`, `ins
 
 - [ ] **Step 5: Report to the user**
 
-Report: the branch and its commits; the test results of Task 12 and Step 2 (counts, skips, expected failures, any failure that SOURCE shares); the compiler the build used (Task 5 Step 3); the fresh-clone result; that nothing is pushed; and the decisions that need them: the data release (Step 1; without it fetch-data cannot get `route_area_lidar_0p5m.tif` on a fresh clone and CI stops at its fetch step, after the build), and the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below).
+Report: the branch and its commits; the test results of Task 12 and Step 2 (counts, skips, expected failures, any failure that SOURCE shares); the compiler the build used (Task 5 Step 3); the fresh-clone result; that nothing is pushed; and the decisions that need them: the data release (Step 1; without it fetch-data cannot get `route_area_lidar_0p5m.tif` on a fresh clone and CI stops at its fetch step, after the build), and the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below). The description also says:
+
+- Merge with **Create a merge commit**, not squash or rebase (the repository allows all three). A squash or a rebase would leave the imported history out of `main` (spec 9.1: every commit with its message and author, `git log --follow` and blame back to `sim/` and `driver/`) and break `docs/research/README.md`'s command for the tree before the move.
+- Review commit by commit: against `main`, which has no `sim/`, the Files tab shows about 700 added files; the renames show only in the moves-only commit (`Layout: sim/ becomes rover_sim/ ...`, 678 renames, no line changed).
+- Bisecting: the pixi tasks do not run on the three commits from the moves-only commit (47fdf57) to `pixi: three platforms ...` (a5cf8eb): their tasks or `.gitignore` name the old paths, or gzenv does not yet look in colcon's build directory, as it does from 6ad7091 on. Skip them (`git bisect skip`), or bisect `main` with `git bisect --first-parent` once the merge commit is there.
+- `.pixi/config.toml` comes with the simulation's history and lets the packages run their post-link scripts: graphviz, gtk3 and gdk-pixbuf, from the team's `ros-jazzy-desktop`, build their caches with them (without graphviz's, `dot`, rqt_graph and view_frames fail). The simulation needs none of them.
+- Until the data release exists, fetch-data cannot get `route_area_lidar_0p5m.tif`: the Ubuntu and macOS jobs stop at their fetch step, and a teammate links the rasters from a clone that has them (`rover_sim/tools/link_data.sh <that clone>`, README).
 
 ---
 

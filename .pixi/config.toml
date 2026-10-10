@@ -1,1 +1,5 @@
+# Run the packages' post-link scripts, as conda does (pixi's default skips them with a warning). The team's
+# ros-jazzy-desktop brings graphviz, gtk3 and gdk-pixbuf, whose scripts build the caches they read at run time:
+# without graphviz's (`dot -c`), `dot` knows no output format, and rqt_graph and tf2_tools' view_frames, which call it,
+# fail. The simulation needs none of them.
 run-post-link-scripts = "insecure"

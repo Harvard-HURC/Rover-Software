@@ -1,7 +1,8 @@
 # Gazebo lessons (gz-sim 8.10, gz-rendering 8.2.2, DART, ogre2 on Metal)
 
 Moved from the simulation's manual ([manual.md](manual.md)); code comments cite them as
-"sim/README.md, Gazebo lessons".
+"sim/README.md, Gazebo lessons". Paths here are relative to `rover_sim/` unless they start
+with a top-level folder of the repository (`rover_sim/`, `rover_control/`, `docs/`).
 
 Measured while building the worlds, the station and the realism work; each
 cost a wrong first attempt.

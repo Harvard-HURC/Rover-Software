@@ -1,7 +1,8 @@
 # Design notes
 
 Moved from the simulation's manual ([manual.md](manual.md)); code comments cite them as
-"sim/README.md, design notes".
+"sim/README.md, design notes". Paths here are relative to `rover_sim/` unless they start
+with a top-level folder of the repository (`rover_sim/`, `rover_control/`, `docs/`).
 
 ## Why the differential is a plugin, not a mimic joint
 
