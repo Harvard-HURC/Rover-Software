@@ -63,14 +63,31 @@ that has ros2_control, at the same pose. With `station:=true` it also starts
 the driver station, attached, which opens its page in the browser.
 
 The controllers' clock is the bridged `/clock` (sim time): without the
-bridge nothing drives. Harmless lines in the launch's log:
+bridge nothing drives. A world reset (the GUI's reset button, the world's
+control service) reloads gz_ros2_control, which does not implement Gazebo's
+reset: the launch spawns the controllers again (`the world was reset:
+gz_ros2_control started a new controller manager, so the controllers are
+spawned again`), and `/odom` starts again from the origin. A spawner that
+fails stops the launch, saying why at error level (`the controllers did not
+start ...`). Harmless lines in the launch's log:
 `Velocity command timed out. Braking.` once a second while no command comes,
 `Received TwistStamped with zero timestamp` once (the stamp is left zero on
-purpose, `docs/topics.md`), once each `Executor is not available during
-hardware component initialization for 'rover'`, gz_ros2_control's `Desired
-controller update period (0.01 s) is slower than the gazebo simulation period
-(0.001 s)` (100 Hz controllers on the 1 ms step, by design) and
-robot_state_publisher's KDL warning about the root link's inertia. Gazebo's
+purpose, `docs/topics.md`), the drive controller's `Can't accept new
+commands. subscriber is inactive` while commands come before it is active
+(a station or script already publishing), once each `Executor is not available
+during hardware component initialization for 'rover'`, `The resource manager
+is not yet initialized, will wait for the robot description to initialize
+it..` and gz_ros2_control's `Waiting RM to load and initialize hardware...`
+(the controller manager inside Gazebo waits for robot_state_publisher's
+`/robot_description`; repeated without end only when it never comes),
+`Component 'rover' does not have read or write statistics initialized,
+skipping registration.`, gz_ros2_control's `Desired controller update period
+(0.01 s) is slower than the gazebo simulation period (0.001 s)` (100 Hz
+controllers on the 1 ms step, by design) and robot_state_publisher's KDL
+warning about the root link's inertia; after a reset the start-up lines come
+again. On a stop the bridge now and then dies with Fast DDS's `mutex lock
+failed: Invalid argument` (exit code -6; 2 of 39 stops in the PR 3 review's
+logs). Gazebo's
 GUI does not load the rover's own components (`WheelSetpoint`,
 `WheelMotorCurrent`, on the wheel joints): at its default verbosity it skips
 them silently, at `-v 2` or more it warns once for each, `Component type
@@ -520,6 +537,33 @@ drivetrain; visible dig-in; skid-steer friction.
 - Equipment Servicing runs on Dantzig (per-wheel friction approximate), and
   the lander's parts skip collision with the heightmap (collide bitmask).
 - One world per `GZ_PARTITION` and ROS domain: the rover's topics are not world-scoped.
+- `pixi run sim` and `pixi run drive` put the rover's ROS 2 topics in the
+  shell's ROS domain (0 unless `ROS_DOMAIN_ID` is set) with ROS 2's default
+  discovery, which reaches every computer on the subnet, as tools on another
+  computer (RViz, the rover's computer) need. Two simulations, or a
+  simulation and the rover, in one domain on one network drive each other:
+  each drive controller takes every `/cmd_vel`, and the nodes see two
+  `/clock`s. Give each its own `ROS_DOMAIN_ID`, or keep a simulation on this
+  computer with `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` (a `pixi shell` on
+  this computer still reaches it). The launcher's worlds and the tests take
+  private domains with `LOCALHOST`.
+- Stopping the ROS stack while it starts, before the controllers are active
+  (some 5 s on `rover_test`, about 18 s on `urc_autonomy`, longer on a busy
+  machine), takes 5 to 11 s and often ends with `ros2 launch` killing
+  Gazebo's server, and the spawner (`failed to terminate`, `exit code -9`;
+  now and then the server aborts with an `RCLError` stack trace instead).
+  gz_ros2_control's destructor waits for its controller manager, which is
+  still creating its services or loading the controllers (PR 3 review: every
+  stop in that window, against 0.1 to 1.7 s for `gz sim -s` without
+  ros2_control). Nothing is left behind; the station gives a world 10 s, the
+  launcher 25 s. A stop once the controllers are active is usually clean.
+- Rarely gz_ros2_control cannot load RoverSimSystem: `Could not load library
+  dlclose error: dlclose(0x0): invalid handle` (once in some 170 starts on
+  this Mac, PR 3 review), a race in ROS 2's library loader on macOS (rcutils
+  6.7 searches the loaded images while another thread of Gazebo's server
+  loads or unloads one). The controllers cannot start, and `sim.launch.py`
+  stops, saying so: start it again. RoverSimSystem links only the libraries
+  it uses, which keeps that search short.
 - Gazebo prints `XML Element[gz_frame_id], child of element[sensor], not
   defined in SDF` on load. Harmless: `gz_frame_id` is a gz-sensors extension
   that sets a sensor's frame id; SDF has no standard element for it.
@@ -1206,7 +1250,11 @@ spin.
 - **The rover does not move:** nothing drives it through ROS. Start the world
   with `pixi run sim` or `pixi run drive <world>` (sim.launch.py brings the
   controllers; `ros2 control list_controllers` lists them active), and keep
-  the `/clock` bridge: the controllers run on sim time.
+  the `/clock` bridge: the controllers run on sim time. After a world reset
+  the launch spawns the controllers again within a few seconds (`the world
+  was reset` in its log); `ros2 launch rover_control controllers.launch.py`
+  spawns them by hand. If the launch stopped with `the controllers did not
+  start`, the lines before it say why (Known limitations).
 - **`dyld: symbol not found in flat namespace '_PyExc_RuntimeError'`** from a
   new ROS library or test program: link it with only the libraries it uses,
   as `rover_control/CMakeLists.txt` and the Gazebo system plugins do

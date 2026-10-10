@@ -38,9 +38,10 @@ drivetrain:
 
 # The ROS-free helpers (wheel_cmd.py: the tests, tools and scripts that speak twists to a rover without ROS) turn a
 # twist into wheel setpoints as the drivetrain did before the ros2_control boundary (PR 3): skid steer with the
-# geometric track, clamped to the top speed, each wheel's setpoint ramped at accel, so every run drives as it did. The
-# ROS stack's drive controller ramps vx and wz at the same wheel rate (rover_control/config/controllers.yaml;
-# tests/test_wheel_cmd.py checks it).
+# geometric track, clamped to the top speed, each wheel's setpoint ramped at accel, so a run that keeps commanding
+# (every calibration run) drives as it did; one that stops commanding stops harder, the watchdog zeroing a stale
+# setpoint at once (docs/sim/design-notes.md, Watchdog). The ROS stack's drive controller ramps vx and wz at the same
+# wheel rate (rover_control/config/controllers.yaml; tests/test_wheel_cmd.py checks it).
 wheel_cmd:
   accel: 8.0                        # [rad/s^2] each wheel's setpoint, 1.2 m/s^2 (A: until the driver team's, Q7)
 

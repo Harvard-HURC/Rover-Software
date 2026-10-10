@@ -7757,6 +7757,11 @@ Report: the commits; the prototype's results (Task 6: RoverSimSystem loaded by g
 | The ROS-free helpers' ramp is not the plugin's to the bit (libgz-math7 fuses the multiply-add on osx-arm64) | `wheel_cmd.fused` rounds once, as `fmadd` does; `test_wheel_cmd.RampSteps.test_one_rounding_as_libgz_math_computes_it` pins a residue measured from the library |
 | The pixi lock conflicts with PR 2's and the data pull request's | `merge=binary`; whichever merges later regenerates with `pixi lock` after merging `pixi.toml` by hand (Task 21's report) |
 | The drive controller's numbers drift from rover.yaml | `test_controllers_yaml` fails and names the number; rover_description's README says to change both |
+| A world reset reloads gz_ros2_control (1.2.19 has no ISystemReset), whose new controller manager has no controllers (found by the PR 3 review) | `sim.launch.py` spawns the controllers again each time RoverSimSystem comes up after the first; the smoke test resets the world and drives again |
+| gz_ros2_control cannot load RoverSimSystem now and then on macOS (`dlclose(0x0): invalid handle`, a race in rcutils' loader; once in some 170 starts, the review) | RoverSimSystem links only the libraries it uses (a short search of the loaded images); a spawner that fails stops `sim.launch.py`, saying why; the manual's Known limitations. Not retried in the tests |
+| The spawner's lock file in `~/.ros/locks` is every spawner's on the machine, whatever the ROS domain (the review) | `sim.launch.py`'s spawners, `test_ros2_control`'s and `test_rover_launch`'s get a ROS_HOME of their own (`gzenv.private_ros_home`) |
+| A stop before the controllers are active takes 5 to 11 s and ends in SIGKILL (gz_ros2_control's destructor waits for its controller manager; the review) | Upstream behaviour; the manual's Known limitations; the station's 10 s and the launcher's 25 s bound it |
+| `pixi run sim` and `drive` use domain 0 with ROS 2's subnet discovery (the review) | Documented with the remedy (`docs/topics.md`, the manual); the default is the user's decision (Review fixes) |
 
 ## The plan critic's checks (2026-10-10)
 
@@ -7838,3 +7843,30 @@ What differed from this plan:
 - For later tasks: Task 13's `test_rover_launch.py` stops its launch with a bare `os.killpg(launch.pid, ...)`. If the
   launch has already ended there, macOS raises the same `PermissionError` and hides the test's own failure; reap it
   first (`launch.poll()`) or use `rosstack.stop`'s rule.
+
+## Review fixes (2026-10-10)
+
+The PR 3 review's confirmed findings, each with what was done. Commits start `PR 3 review fixes:`.
+
+| Finding | Done |
+|---|---|
+| A world reset leaves the ROS stack without controllers | `sim.launch.py` spawns them again (`RespawnAfterReset`, on RoverSimSystem's line in the server's output); the smoke test resets `rover_test` and drives again; the manual and `docs/topics.md` |
+| The watchdog on the ros2_control path has no test | `test_ros2_control` stops the `/clock` bridge (SIGSTOP) mid-drive: the setpoints drop from the arc's to zero at once, 0.502 s later (M) |
+| `librover_sim_system.dylib` lacks the link option of the other plugins | `-dead_strip_dylibs` / `--as-needed` for it and its test: 0 `*__rosidl_generator_py` libraries, 18 lines of `otool -L` where 274 (M) |
+| RoverSimSystem did not load once (`dlclose(0x0)`) | The link option; `sim.launch.py` stops and says why when a spawner fails (`stop_if_a_spawner_fails`); the manual's Known limitations. The tests do not retry a stack that fails this way |
+| "Every run drives as before PR 3" is too broad | `design-notes.md`, `sim.yaml`, `wheel_cmd.py` and `simulate.twist_publisher` say which runs: those that keep commanding (every calibration run); a run that stops commanding stops harder (0.558 m where 0.651 m, the review's numbers), the cost runs ramp coarser |
+| The spawner's lock is shared by every stack on the machine | A ROS_HOME of their own for the spawners of `sim.launch.py`, `test_ros2_control` and `test_rover_launch`, the logs left where they went |
+| `test_rover_launch` hard-codes 3.33 rad/s | 0.5 m/s over the installed `controllers.yaml`'s `wheel_radius` |
+| The stub logs `-0.00` and nothing when the wheels stop | 0.00 below 0.005 rad/s; one `would send 0 to every wheel` line when they are back at zero; formatted only when logged; a GoogleTest captures the lines, `test_rover_launch` checks the stop |
+| Ctrl-C of `rover.launch.py` prints two ERROR lines | `rover_control/README.md` names them (pal_statistics' `context cannot be slept with`, and the second SIGINT's `exit code -2`) |
+| A stop during start-up takes 10 s and ends in SIGKILL | The manual's Known limitations and a Risks row; upstream, not changed |
+| `pixi run drive` and `sim` use domain 0 with subnet discovery | Documented, with the remedy (`ROS_DOMAIN_ID`, or `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`), in `docs/topics.md` and the manual. The default was not changed: one skeptic refuted the finding; the spec has ROS tools on other computers (RViz on Windows beside Gazebo in WSL2, the rover's computer); pixi's ros_environment hook sets `SUBNET` when unset, so a LOCALHOST default for the simulation could not tell an explicit opt-out. The user decides |
+| The station's warning timer raises after `close()` | `CmdVel` cancels its timers in `close()`, and a lock keeps them and the station's threads off the destroyed node; a test fails on the old code |
+| Camera images reach ROS at 2 to 4 Hz on this Mac | `docs/topics.md`: about 11 Hz to a reliable subscriber on an idle M4, under 4 Hz on a busy one, none best effort (M); subscribe reliable |
+| The bridge converts point clouds with no subscriber | The camera's four entries are `lazy: true`: no Gazebo subscriber until a ROS reader, 138 images in 12 s with one (M) |
+| `rover_description/README.md` says CI cannot catch a stale model | It says CI's `git diff --exit-code` fails on one |
+| Spec section 12 does not say the prototype ran on macOS only | Item 12 |
+| `station.js` still names `/model/rover/cmd_vel` | Its header says `/cmd_vel` through `station/ros_link.py` |
+| The manual's harmless lines miss three warnings | The three, the drive controller's `Can't accept new commands`, and the bridge's occasional `mutex lock failed` on a stop; `docs/topics.md` says the rockers' and the head's efforts are NaN |
+| `rover.launch.py --show-args` offers a dead `controllers` | `rover.launch.py` declares `controllers` and hands it to `ros2_control_node` and the spawner; a test performs the include's arguments |
+| Spec section 12 does not say `run.sh` stays | Item 13 |

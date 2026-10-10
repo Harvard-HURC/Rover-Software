@@ -7,9 +7,13 @@ The simulation's tests, tools and scripts speak body twists. This module turns a
 drivetrain itself made of it before the ros2_control boundary: each wheel at (vx - side x wz x track / 2) / radius
 (side +1 left, -1 right; track 2 x rover.yaml rocker.pivot_y), clamped to the top speed and ramped at sim.yaml's
 wheel_cmd accel, step by step with gz::math::SpeedLimiter's arithmetic as libgz-math7 computes it on osx-arm64 (one
-rounding of previous + acceleration x dt, a fused multiply-add), so that a run drives as it did, to the bit. The ROS
-stack has its own kinematics and ramp in the drive controller (rover_control/config/controllers.yaml), with the same
-numbers (tests/test_wheel_cmd.py).
+rounding of previous + acceleration x dt, a fused multiply-add), so that a run that keeps commanding (Driver, every
+step: the calibration runs) drives as it did, to the bit. Two kinds of run differ from before PR 3: one that stops
+commanding stops harder, because the drivetrain's watchdog now zeroes a stale setpoint at once where it ramped the
+twist down (docs/sim/design-notes.md, Watchdog), and the cost runs' simulate.twist_publisher ramps once per message
+over the sim time of the 10 Hz world statistics, where the drivetrain ramped in every step. The ROS stack has its own
+kinematics and ramp in the drive controller (rover_control/config/controllers.yaml), with the same numbers
+(tests/test_wheel_cmd.py).
 
 Driver feeds a run stepped in this process (gz.sim8.TestFixture); TwistDrive sends each twist as it comes, for a
 caller whose twists are ramped already (the driver station slews its own).

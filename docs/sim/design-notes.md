@@ -60,10 +60,15 @@ every wheel contact grips. Every 1 ms step:
   (A) until the driver team reports its controller's) are the drive
   controller's (`rover_control/config/controllers.yaml`), and `wheel_cmd.py`'s
   for the tests and tools (`sim.yaml` `wheel_cmd: accel`, with
-  gz::math::SpeedLimiter's arithmetic, so every run drives as it did before
-  PR 3). The effective-track multiplier is 1.0 (`wheel_separation_multiplier`):
-  the raw skid-steer response, which the team's driver compensates (the user's
-  choice; Clearpath ships 1.875 for Husky).
+  gz::math::SpeedLimiter's arithmetic, so a run that keeps commanding, as
+  every calibration run does, drives as it did before PR 3, to the bit; a run
+  that stops commanding stops harder after the timeout, Watchdog below, and
+  the cost runs' `simulate.twist_publisher` ramps once per message over the
+  sim time of the 10 Hz world statistics, in steps of up to 0.8 rad/s, where
+  the drivetrain ramped in every step). The effective-track multiplier is 1.0
+  (`wheel_separation_multiplier`): the raw skid-steer response, which the
+  team's driver compensates (the user's choice; Clearpath ships 1.875 for
+  Husky).
 - **Motor** per wheel (`rover_drivetrain.hh`; `rover.yaml` `motor`, `driveline`; the PI's gains
   and the integration substeps: `sim.yaml` `drivetrain`): a DC motor
   (48 V, 0.46 Ω, kt = ke 0.0445; the Husky A200 motor at twice its 24 V, for 3 m/s), gearbox 50 at efficiency 0.8,
@@ -138,7 +143,12 @@ every wheel contact grips. Every 1 ms step:
   once, as a motor controller's watchdog stops its motor, so a commander that
   dies cannot leave the rover driving (`sim.yaml` drivetrain `cmd_timeout`; 0
   holds the last setpoint; tests use the sim clock). The drive controller has
-  its own 0.5 s command timeout in front of it.
+  its own 0.5 s command timeout in front of it. Before PR 3 the drivetrain
+  ramped a stale twist down at a wheel's 8 rad/s² instead, so a run that stops
+  commanding now stops sooner: `test_drivetrain`'s `test_command_timeout`
+  stops at x 0.558 m where it stopped at 0.651 m (M, the PR 3 review; its limit
+  is 0.75 m). On the ros2_control path the watchdog also stops the motors when
+  `/clock` stops (RoverSimSystem's stamps freeze; `test_ros2_control`).
 - **Reset**: `ISystemReset` zeroes the setpoints and clears the motors, dig-in
   and odometry, puts the tyres back at their SDF poses and clears the ruts and
   pits.

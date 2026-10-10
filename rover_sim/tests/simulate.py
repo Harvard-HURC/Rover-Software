@@ -473,7 +473,11 @@ def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
     over the sim time since the last (wheel_cmd.Ramp; the physical drivetrain).
     Sim time comes from the worlds' statistics (10 Hz): /clock, sent every
     step, would add to the cost being measured. Nothing is sent before the
-    first statistics message."""
+    first statistics message. The ramp is therefore coarser than the
+    drivetrain's own before PR 3, which ramped in every step: up to 0.8 rad/s
+    per statistics message (more when the world runs faster than real time),
+    1 ms worth when the statistics have not advanced. The cost runs measure
+    the drivetrain's cost, not where the rover goes."""
     node = Node()
     now = []
 

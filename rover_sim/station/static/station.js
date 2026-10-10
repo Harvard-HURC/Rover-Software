@@ -1,6 +1,7 @@
 // Driver station page. Everything goes through one keyboard focus: the page
 // sends what is held at 20 Hz over the WebSocket (the station turns it into
-// /model/rover/cmd_vel and stops the rover when the page goes quiet), camera
+// /cmd_vel, geometry_msgs/TwistStamped for the drive controller, through
+// station/ros_link.py, and stops the rover when the page goes quiet), camera
 // moves as small deltas, and draws the telemetry the station sends at 10 Hz.
 // Fly and Map are inspection views only a simulation has: there the keyboard
 // flies the fly camera or moves the map, and only a gamepad drives the rover.
