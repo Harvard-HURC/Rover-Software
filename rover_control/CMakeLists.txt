@@ -56,6 +56,9 @@ pluginlib_export_plugin_description_file(hardware_interface rover_hardware_stub.
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS tank_kinematics rover_hardware_stub EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+# The controllers and the launch files: rover.launch.py, and controllers.launch.py, which rover_sim's sim.launch.py
+# includes too (README.md).
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
 include(CTest)
 if(BUILD_TESTING)
@@ -75,6 +78,13 @@ if(BUILD_TESTING)
   target_link_options(rover_control_tests PRIVATE ${used_libraries_only})
   include(GoogleTest)
   gtest_discover_tests(rover_control_tests)
+  # rover.launch.py with the stub (unittest, as rover_description runs its own): this package's install first on
+  # AMENT_PREFIX_PATH, so that ros2 launch and pluginlib find it.
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_rover_launch COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_rover_launch
+           WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/test")
+  set_tests_properties(test_rover_launch PROPERTIES TIMEOUT 180
+    ENVIRONMENT "AMENT_PREFIX_PATH=${CMAKE_INSTALL_PREFIX}:$ENV{AMENT_PREFIX_PATH};PYTHONDONTWRITEBYTECODE=1")
 endif()
 
 ament_export_include_directories(include)

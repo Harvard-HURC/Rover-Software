@@ -2,6 +2,7 @@
 node in this process that publishes /cmd_vel and records what comes back, all in this process's private ROS domain
 and gz partition (simulate.py sets both, and gzenv's Gazebo environment, when it is imported)."""
 import contextlib
+import importlib.util
 import os
 import signal
 import subprocess
@@ -56,13 +57,15 @@ def stop(process, timeout=STOP_TIMEOUT):
 
 
 def spawner(controller="drive_controller", extra_params=(), timeout=180):
-    """The spawner that rover_control's launch/controllers.launch.py runs: joint_state_broadcaster and the drive
-    controller from rover_control's config/controllers.yaml (then extra_params, which override it), the drive
-    controller's topics on /cmd_vel and /odom."""
-    files = [arg for path in (rover_config.CONTROLLERS_YAML, *extra_params) for arg in ("--param-file", str(path))]
-    return ["ros2", "run", "controller_manager", "spawner", "joint_state_broadcaster", controller, *files,
-            "--controller-manager", "/controller_manager", "--controller-manager-timeout", str(timeout),
-            f"--controller-ros-args=-r /{controller}/cmd_vel:=/cmd_vel -r /{controller}/odom:=/odom"]
+    """The spawner that rover_control's launch/controllers.launch.py runs (its spawner_arguments), with rover_control's
+    config/controllers.yaml and then extra_params, which override it."""
+    spec = importlib.util.spec_from_file_location("controllers_launch",
+                                                  rover_config.CONTROL_DIR / "launch" / "controllers.launch.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    arguments = module.spawner_arguments(controller, str(rover_config.CONTROLLERS_YAML), str(timeout))
+    arguments[4:4] = [arg for path in extra_params for arg in ("--param-file", str(path))]  # after controllers.yaml
+    return ["ros2", "run", "controller_manager", "spawner", *arguments]
 
 
 def shutdown():
