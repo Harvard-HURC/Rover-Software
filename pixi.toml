@@ -8,7 +8,7 @@ version = "0.1.0"
 # Run from this folder, the workspace's src/. The colcon tasks run in the workspace root above it (cwd ".."), where
 # the README's colcon build runs: build/, install/ and log/ land there.
 [tasks]
-# Every package (on Windows without rover_sim, see the target below), after the simulation's patched media.
+# Every package (on Windows without the tests, see the target below), after the simulation's patched media.
 build = { cmd = "colcon build", cwd = "..", depends-on = ["sim-media"] }
 # The C++ tests: rover_control's (GoogleTest, rover_state, viz.py) and rover_sim's three plugin test programs.
 colcon-test = { cmd = "colcon test --packages-select rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
@@ -42,9 +42,9 @@ sim-realism = { cmd = "python rover_sim/tools/realism_report.py", depends-on = [
 sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "rover_sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 
 [target.win-64.tasks]
-# Windows builds the rover's packages without their tests; the simulation and the tests run on macOS and Linux
-# (on Windows in WSL2, README, Platforms).
-build = { cmd = "colcon build --packages-skip rover_sim --cmake-args -DBUILD_TESTING=OFF", cwd = ".." }
+# Windows builds the rover's packages without their tests (rover_sim configures to nothing there); the simulation
+# and the tests run on macOS and Linux (on Windows in WSL2, README, Platforms).
+build = { cmd = "colcon build --cmake-args -DBUILD_TESTING=OFF", cwd = ".." }
 
 [target.osx-arm64.activation.env]
 GZ_TRANSPORT_LOCALHOST_ONLY="1"

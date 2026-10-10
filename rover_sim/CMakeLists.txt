@@ -17,6 +17,16 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+
+# On Windows the simulation runs in WSL2 (README, Platforms): a native build
+# configures this package to nothing, so the README's `colcon build` builds the
+# rover's other packages there.
+if(WIN32)
+  message(STATUS "rover_sim: nothing to build on Windows (the simulation runs in WSL2)")
+  ament_package()
+  return()
+endif()
+
 find_package(gz-sim8 REQUIRED)
 find_package(gz-plugin2 REQUIRED COMPONENTS register)
 find_package(gz-rendering8 REQUIRED)

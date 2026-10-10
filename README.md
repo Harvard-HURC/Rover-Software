@@ -18,7 +18,7 @@ To build and source our custom packages for testing, follow these steps:
 3. Source the appropriate setup file from the `install` folder (ex: on bash, run `source install/local_setup.bash`)
 You should now be able to use launch files, executables, and assets installed by any of our packages in your current shell.
 
-From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in the workspace root), and the tasks below build what they need first.
+From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in the workspace root; on Windows without the tests), and the tasks below build what they need first.
 
 ### Simulation
 The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows it runs in WSL2 (see Platforms). From the `src` folder:
@@ -35,7 +35,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 ### Platforms
 - **macOS (Apple silicon):** everything
 - **Linux (Ubuntu 24.04):** everything; the camera views and the rendering tests need a GPU
-- **Windows:** `pixi run build` builds `rover_description` and `rover_control` natively, and RViz and the ROS 2 tools run in `pixi shell`. The Gazebo simulation runs in WSL2: install Ubuntu 24.04 (`wsl --install -d Ubuntu-24.04`), install pixi inside it, clone this repository into a Linux folder (for example `~/hurc_ws/src`, not under `/mnt/c`, which is slow) and follow the steps above there. WSLg shows Gazebo's window; open the address the driver station prints in a Windows browser
+- **Windows:** `colcon build` (or `pixi run build`) builds `rover_description` and `rover_control` natively (`rover_sim` builds nothing there), and RViz and the ROS 2 tools run in `pixi shell`. The Gazebo simulation runs in WSL2: install Ubuntu 24.04 (`wsl --install -d Ubuntu-24.04`), install pixi inside it, clone this repository into a Linux folder (for example `~/hurc_ws/src`, not under `/mnt/c`, which is slow) and follow the steps above there. WSLg shows Gazebo's window; open the address the driver station prints in a Windows browser
 
 ## Project Structure
 Most of our work is structured into folders called "packages". Whenever you create a new package, please add a description of it here:
