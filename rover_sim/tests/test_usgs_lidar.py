@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """tools/usgs_lidar.py without the network: the grids of 2026-10-06 against rasters.json and the provenance, the
 route area's gridding, coverage, fill and feathering on small arrays, the EHdr header, the LAZ reader, and both
-recipes end to end on made-up tiles with GDAL's tools."""
+recipes end to end on made-up tiles with GDAL's tools, running the GDAL commands of 2026-10-06."""
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -18,6 +19,12 @@ from urc import dem  # noqa: E402
 MANIFEST = {e["path"]: e for e in fetch_data.load_manifest()["rasters"]}
 DEM_DIR = SIM_DIR / "data" / "dem"
 NAN = np.nan
+NODATA = "-999999"
+# PROJ 9.8.1's null coordinate operations offline (projinfo), which the warps name (gdalwarp -ct).
+UTM_TO_LONLAT = ("+proj=pipeline +step +inv +proj=utm +zone=12 +ellps=GRS80 +step +proj=unitconvert +xy_in=rad "
+                 "+xy_out=deg +step +proj=axisswap +order=2,1")
+LONLAT_TO_UTM = ("+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad "
+                 "+step +proj=utm +zone=12 +ellps=GRS80")
 
 
 def plane(x, y):
@@ -68,6 +75,17 @@ def fill_raster(path, value=1500.0):
     transform = (lon0, step, 0.0, lat1, 0.0, -step)
     fetch_data.write_geotiff(path, np.full((1, rows, cols), value, np.float32), fetch_data.geotags(transform))
     return path
+
+
+def recorded(recipe, *args, **kwargs):
+    """(what recipe returns, the GDAL commands it ran), each path in a command as its file name."""
+    ran, gdal = [], L.gdal
+
+    def record(*command):
+        ran.append([a.name if isinstance(a, Path) else str(a) for a in command])
+        gdal(*command)
+    with mock.patch.object(L, "gdal", record):
+        return recipe(*args, **kwargs), ran
 
 
 def target_at(x, y, cols, rows):
@@ -207,7 +225,11 @@ class RouteSteps(unittest.TestCase):
 
 
 class Recipes(unittest.TestCase):
-    """Both recipes end to end on made-up tiles, with GDAL's tools and laspy."""
+    """Both recipes end to end on made-up tiles, with GDAL's tools and laspy. A planar fixture cannot show a change
+    in the last bit, so the GDAL commands are pinned too: the DEM warps' compound source CRS EPSG:6341+5703 (M,
+    2026-10-10: with the 2D EPSG:6341, 1,879 of OPR tile 12SWH1752's 108,424 interior pixels differ by one float32
+    step), the named operations (-ct), the resampling, the no-data value and the creation options give
+    rasters.json's files byte for byte."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -227,7 +249,7 @@ class Recipes(unittest.TestCase):
                  "source_tiles_2020_lpc": [laz_tile(self.dir / "lpc.laz", grid, holes=[(10, 10)])]}
         fill_raster(self.dir / "data" / L.ROUTE_FILL)
         target = target_at(518002.0, 4253998.0, 36, 80)
-        made = L.route_area(files, self.dir / "data", self.dir / "work", grid=grid, target=target)
+        made, ran = recorded(L.route_area, files, self.dir / "data", self.dir / "work", grid=grid, target=target)
         self.assertEqual(sorted(made), ["dem/route_area_lidar_0p5m.tif", "dem/route_area_lidar_0p5m_source.tif"])
         (z,), transform = dem.read_raster(made["dem/route_area_lidar_0p5m.tif"])
         (src,), map_transform = dem.read_raster(made["dem/route_area_lidar_0p5m_source.tif"])
@@ -243,6 +265,23 @@ class Recipes(unittest.TestCase):
         self.check_gradients(z, slice(0, 15))  # the filled empty cell among them
         self.check_gradients(z, slice(50, 80))
         self.assertTrue(1400.0 < z.min() and z.max() < 1402.6)  # the class-1 returns, 5 m up, are left out
+        utm, size = [*grid.te(), "-tr", "0.5", "0.5"], ["-ts", "36", "80"]
+        self.assertEqual(ran, [
+            ["gdalbuildvrt", "-q", "-overwrite", "opr2018.vrt", "opr.tif"],
+            ["gdalwarp", "-q", "-overwrite", "-te", *utm, "-r", "near", "-dstnodata", NODATA, "opr2018.vrt",
+             "opr2018_utm.tif"],
+            ["gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:4326", "-t_srs", "EPSG:6341", "-ct", LONLAT_TO_UTM,
+             "-te", *utm, "-r", "bilinear", "route_area_3dep.tif", "fill_utm.tif"],
+            ["gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:6341+5703", "-t_srs", "EPSG:4326", "-ct", UTM_TO_LONLAT,
+             "-te", *target.te(), *size, "-r", "bilinear", "-srcnodata", NODATA, "-dstnodata", NODATA, "-ot",
+             "Float32", "route_utm.bil", "route_area_lidar_0p5m_warped.tif"],
+            ["gdal_translate", "-q", "-a_ullr", *target.ullr(), "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
+             "-co", "TILED=NO", "route_area_lidar_0p5m_warped.tif", "route_area_lidar_0p5m.tif"],
+            ["gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:6341", "-t_srs", "EPSG:4326", "-ct", UTM_TO_LONLAT,
+             "-te", *target.te(), *size, "-r", "near", "route_source_utm.bil",
+             "route_area_lidar_0p5m_source_warped.tif"],
+            ["gdal_translate", "-q", "-a_ullr", *target.ullr(), "-co", "COMPRESS=DEFLATE",
+             "route_area_lidar_0p5m_source_warped.tif", "route_area_lidar_0p5m_source.tif"]])
 
     def test_route_area_needs_the_3dep_fill(self):
         with self.assertRaisesRegex(FileNotFoundError, "dem/route_area_3dep.tif is not here"):
@@ -252,12 +291,19 @@ class Recipes(unittest.TestCase):
         tiles = [opr_tile(self.dir / "a.tif", 518000.0, 4253988.0, 24, 72),
                  opr_tile(self.dir / "b.tif", 518012.0, 4253988.0, 24, 72)]
         target = target_at(518002.0, 4253986.0, 36, 40)
-        made = L.mdrs_area({"source_tiles": tiles}, self.dir / "data", self.dir / "work", target=target)
+        made, ran = recorded(L.mdrs_area, {"source_tiles": tiles}, self.dir / "data", self.dir / "work", target=target)
         (z,), transform = dem.read_raster(made["dem/mdrs_area_lidar2018_0p5m.tif"])
         west, north, east, south = map(float, target.ullr())
         self.assertEqual(transform, (west, (east - west) / 36, 0.0, north, 0.0, (south - north) / 40))
         self.assertTrue(np.isfinite(z).all() and z.min() > 1400.0)
         self.check_gradients(z, slice(0, 40))
+        self.assertEqual(ran, [
+            ["gdalbuildvrt", "-q", "-overwrite", "opr2018.vrt", "a.tif", "b.tif"],
+            ["gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:6341+5703", "-t_srs", "EPSG:4326", "-ct", UTM_TO_LONLAT,
+             "-te", *target.te(), "-ts", "36", "40", "-r", "bilinear", "-srcnodata", NODATA, "-dstnodata", NODATA,
+             "-ot", "Float32", "opr2018.vrt", "mdrs_area_lidar2018_0p5m_warped.tif"],
+            ["gdal_translate", "-q", "-a_ullr", *target.ullr(), "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
+             "-co", "TILED=NO", "mdrs_area_lidar2018_0p5m_warped.tif", "mdrs_area_lidar2018_0p5m.tif"]])
 
 
 if __name__ == "__main__":

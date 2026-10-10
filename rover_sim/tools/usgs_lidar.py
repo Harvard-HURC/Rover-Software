@@ -19,9 +19,9 @@ NAD83(2011) -> WGS84 is a null transformation, while the 3DEP and NAIP services 
 the ones that made the files on 2026-10-06, kept as they were (the sigma list, the float64 weights, the EHdr
 pixel-centre origin, Python's float strings for -te and -a_ullr, the compound source CRS EPSG:6341+5703 of the DEM
 warps: GDAL rounds the 2D EPSG:6341 differently in the last bit); with GDAL 3.13.3, PROJ 9.8.1, OpenCV 4.13.0,
-numpy 2.5.3 and laspy 2.7.0 on osx-arm64 they give the files byte for byte (rasters.json's sha256). The warps name
-the null coordinate operations PROJ picks offline (-ct) and run with PROJ_NETWORK=OFF, so neither PROJ's network
-nor a local grid can add a geoid or a datum shift.
+numpy 2.5.3 and laspy 2.7.0 on osx-arm64 (M: an Apple M4, 2026-10-10) they give the files byte for byte
+(rasters.json's sha256). The warps name the null coordinate operations PROJ picks offline (-ct) and run with
+PROJ_NETWORK=OFF, so neither PROJ's network nor a local grid can add a geoid or a datum shift.
 """
 import os
 import shutil
