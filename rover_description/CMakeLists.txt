@@ -10,7 +10,7 @@ find_package(ament_cmake REQUIRED)
 
 # The rover's numbers, its description, the tread tyre and the RViz view
 # (README.md).
-install(DIRECTORY config meshes urdf
+install(DIRECTORY config launch meshes rviz urdf
   DESTINATION share/${PROJECT_NAME}
 )
 

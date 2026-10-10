@@ -1,10 +1,13 @@
 """The rover's description: what xacro makes of urdf/rover.urdf.xacro and config/rover.yaml."""
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 import xml.etree.ElementTree as ET
 
 import xacro
@@ -139,6 +142,35 @@ class Description(unittest.TestCase):
             path = Path(tmp) / 'wheel.glb'
             generator.write_glb(path, generator.wheel_parts(*generator.colors()))
             self.assertEqual(path.read_bytes(), (PACKAGE / 'meshes' / 'wheel.glb').read_bytes())
+
+
+class ViewLaunch(unittest.TestCase):
+
+    def setUp(self):
+        self.view = load_module(PACKAGE / 'launch' / 'view.launch.py', 'view_launch')
+
+    def test_no_display_is_linux_without_x11_or_wayland(self):
+        self.assertTrue(self.view.headless('linux', {}))
+        self.assertFalse(self.view.headless('linux', {'DISPLAY': ':0'}))
+        self.assertFalse(self.view.headless('linux', {'WAYLAND_DISPLAY': 'wayland-0'}))
+        self.assertFalse(self.view.headless('darwin', {}))
+        self.assertEqual(self.view.headless(), self.view.headless(sys.platform, os.environ))
+
+    def test_it_opens_windows_only_where_there_is_a_display(self):
+        from launch.actions import DeclareLaunchArgument
+        from launch_ros.actions import Node
+        share = mock.patch.object(self.view, 'get_package_share_directory',
+                                  lambda name: str(PACKAGE))
+        for no_display, windows in ((False, 'true'), (True, 'false')):
+            with share, mock.patch.object(self.view, 'headless', lambda: no_display):
+                entities = self.view.generate_launch_description().entities
+            defaults = {e.name: e.default_value[0].text for e in entities
+                        if isinstance(e, DeclareLaunchArgument)}
+            self.assertEqual((defaults['gui'], defaults['rviz']), (windows, windows))
+            self.assertEqual(defaults['rover_yaml'], str(ROVER_YAML))
+            self.assertEqual([e.node_executable for e in entities if isinstance(e, Node)],
+                             ['robot_state_publisher', 'joint_state_publisher_gui',
+                              'joint_state_publisher', 'rviz2'])
 
 
 if __name__ == '__main__':
