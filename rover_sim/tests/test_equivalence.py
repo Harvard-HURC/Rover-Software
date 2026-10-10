@@ -5,12 +5,16 @@ models in fixtures/rover_model (written by gen_model.py at import/simulation, 92
 lists them). SdfEquivalence checks the comparison itself; Drives runs the frozen and the generated rover side by
 side in Gazebo. When the rover changes on purpose, refreeze the fixtures from gen_rover.py in the same commit and say
 why (fixtures/rover_model/README.md)."""
+import contextlib
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 
 from sdf_equivalence import differences
+from simulate import simulate
 from worldfiles import SIM_DIR
 
 import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
@@ -35,6 +39,8 @@ VARIANTS = {
     "same_surfaces": V.replace(contact={"default_surface": "manmade"}),
     "unknown_surface": V.replace(contact={"default_surface": "lunar_dust"}),
 }
+WALL_CLOCK = "<cmd_timeout_clock>wall</cmd_timeout_clock>"
+SIM_CLOCK = "<cmd_timeout_clock>sim</cmd_timeout_clock>"
 
 
 def fixture(name):
@@ -119,6 +125,41 @@ class Equivalence(unittest.TestCase):
         as the converter does)."""
         tracked = (SIM_DIR / "models" / "rover" / "model.sdf").read_text()
         self.assertEqual(differences(fixture("default"), tracked), [])
+
+
+@contextlib.contextmanager
+def model_uri(text):
+    """A temporary model directory holding the SDF document `text`, its command timeout on sim time (so runs repeat
+    exactly)."""
+    with tempfile.TemporaryDirectory(prefix="rover_equivalence_") as directory:
+        model = Path(directory) / "rover"
+        model.mkdir()
+        assert text.count(WALL_CLOCK) <= 1
+        (model / "model.sdf").write_text(text.replace(WALL_CLOCK, SIM_CLOCK))
+        (model / "model.config").write_text(sdf.model_config("rover", "A rover to compare.",
+                                                             "sim/tests/test_equivalence.py"))
+        yield model.as_uri()
+
+
+class Drives(unittest.TestCase):
+    """The frozen and the generated rover drive the same 3 s schedule (forward, an arc, a turn in place) on flat
+    ground to the same base_link trace, step for step, and the same rocker angles, bit for bit: the physical rover,
+    the one with tyre compliance and DiffDrive's."""
+    SCHEDULE = [(0.0, 0.0, 0.0), (0.5, 0.5, 0.3), (2.0, 0.0, 1.0)]
+
+    def run_rover(self, text):
+        with model_uri(text) as uri:
+            return simulate(3.0, cmd=self.SCHEDULE, rover_uri=uri, trace_every=1)
+
+    def test_bit_for_bit(self):
+        for name in ("default", "tyre_compliance", "diffdrive"):
+            with self.subTest(name):
+                old = self.run_rover(fixture(name))
+                new = self.run_rover(gen_rover.build_sdf(VARIANTS[name]))
+                self.assertGreater(abs(old.poses["base_link"][0]), 0.3)  # it drove
+                np.testing.assert_array_equal(old.trace, new.trace)
+                self.assertEqual(old.rockers, new.rockers)
+                self.assertEqual(old.poses, new.poses)
 
 
 if __name__ == "__main__":
