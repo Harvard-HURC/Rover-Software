@@ -27,9 +27,11 @@ control-viz = { cmd = "python rover_control/tools/viz.py", depends-on = ["build"
 # The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
 sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
 sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["_workspace", "sim-media"] }
-sim-model = "python rover_sim/gen_model.py"
+# The rover's model (rover_sim.urdf.xacro through xacro and gz sdf), its surfaces, sprite and mesh, and the station's
+# cameras.
+sim-model = "python rover_sim/tools/gen_rover.py"
 sim-relief = { cmd = "python rover_sim/tools/make_relief_swatches.py", inputs = ["rover_sim/tools/make_relief_swatches.py", "rover_sim/urc/dem.py", "rover_sim/urc/landscape.py", "rover_sim/urc/terrain.py", "rover_sim/data/dem/*_0p5m*", "rover_sim/data/research/mdrs_terrain_measurements.json"], outputs = ["rover_sim/data/relief/*.npz"] }
-sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/gen_model.py", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
+sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/rover_config.py", "rover_description/config/rover.yaml", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
 # Orthophoto maps of the worlds for the station's Map view (needs the GPU, so not part of sim-test).
 sim-maps = { cmd = "python rover_sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 sim = { cmd = "bash rover_sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }

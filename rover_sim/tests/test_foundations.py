@@ -23,6 +23,7 @@ from worldfiles import MODELS, SIM_DIR, temp_sdf
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 import gzenv  # noqa: E402
+import rover_config  # noqa: E402
 import viewers  # noqa: E402
 from urc import dem, geo, sdf, terrain, terrains  # noqa: E402
 
@@ -211,11 +212,13 @@ class Catalogue(unittest.TestCase):
 
 
 class Viewers(unittest.TestCase):
-    def test_gen_model_finds_the_viewer_names(self):
-        for name in gen_model.VIEWER_NAMES:
-            self.assertIs(getattr(gen_model, name), getattr(viewers, name), name)
-        with self.assertRaises(AttributeError):
-            gen_model.no_such_name  # noqa: B018
+    def test_the_viewer_names_live_in_viewers(self):
+        """The station's cameras have one home, viewers.py; the rover's names are rover_config's."""
+        for name in ("CHASE_MODEL", "CHASE_IMAGE_TOPIC", "CHASE_CMD_TOPIC", "CHASE_MODE_TOPIC", "CHASE_STATE_TOPIC",
+                     "EYE_MODEL", "EYE_IMAGE_TOPIC", "EYE_LOOK_TOPIC", "EYE_STATE_TOPIC", "ChaseParams", "EyeParams",
+                     "build_chase_sdf", "build_eye_sdf"):
+            self.assertTrue(hasattr(viewers, name), name)
+            self.assertFalse(hasattr(rover_config, name), name)
 
     def test_write_all_writes_the_checked_in_models(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
