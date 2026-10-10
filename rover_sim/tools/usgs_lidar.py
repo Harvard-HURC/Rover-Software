@@ -97,3 +97,91 @@ MDRS_TARGET = Target(-110.8100044091711, 38.38999382716049, -110.76999559082894,
 ROUTE_TARGET = Target(-110.79, 38.43199735449736 - 6207 * LAT_PIXEL, -110.79 + 4536 * LON_PIXEL,
                       38.43199735449736, 4536, 6207)
 ROUTE_GRID = UtmGrid(518000.0, 4254000.0, 0.5, 6000, 8000, 4000)  # the LAZ tiles cover 4252000-4254000 N
+
+
+def ground_returns(path):
+    """(x, y, z) [m] of the class-2 (ground) returns of a LAZ tile."""
+    import laspy  # only the route-area rebuild needs it
+    las = laspy.read(path)
+    g = np.asarray(las.classification) == 2
+    return np.asarray(las.x)[g], np.asarray(las.y)[g], np.asarray(las.z)[g]
+
+
+def cell_means(tiles, grid):
+    """(mean z float32, count uint16) of the points per cell of the grid's first lpc_rows rows; tiles yields (x, y, z)
+    per tile. The float64 sums run over the tiles in their order, as on 2026-10-06; a cell with no point is NaN."""
+    n = grid.lpc_rows * grid.cols
+    s, c = np.zeros(n), np.zeros(n, np.int64)
+    for x, y, z in tiles:
+        col = np.floor((x - grid.x0) / grid.res).astype(np.int64)
+        row = np.floor((grid.y1 - y) / grid.res).astype(np.int64)
+        ok = (col >= 0) & (col < grid.cols) & (row >= 0) & (row < grid.lpc_rows)
+        idx = row[ok] * grid.cols + col[ok]
+        s += np.bincount(idx, weights=z[ok], minlength=n)
+        c += np.bincount(idx, minlength=n)
+    mean = np.where(c > 0, s / np.maximum(c, 1), np.nan).reshape(grid.lpc_rows, grid.cols).astype(np.float32)
+    return mean, c.reshape(grid.lpc_rows, grid.cols).astype(np.uint16)
+
+
+def fill_nan(a):
+    """a with its NaN cells filled by normalized Gaussian convolution of the valid ones, sigma growing over SIGMAS
+    until every cell is filled (a cell farther than the last pass reaches stays NaN)."""
+    a = a.astype(np.float32).copy()
+    m = np.isfinite(a)
+    if m.all():
+        return a
+    out = a.copy()
+    for s in SIGMAS:
+        w = cv2.GaussianBlur(m.astype(np.float32), (0, 0), s)
+        v = cv2.GaussianBlur(np.where(m, a, 0).astype(np.float32), (0, 0), s)
+        f = (~np.isfinite(out)) & (w > 1e-3)
+        out[f] = v[f] / w[f]
+        if np.isfinite(out).all():
+            break
+    return out
+
+
+def coverage(count, block=BLOCK):
+    """Where a survey covers the grid: the block x block cells blocks with any point, closed by one block (3 x 3)."""
+    rows, cols = count.shape
+    blk = count.reshape(rows // block, block, cols // block, block).sum(axis=(1, 3)) > 0
+    blk = cv2.morphologyEx(blk.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    return np.repeat(np.repeat(blk, block, 0), block, 1).astype(bool)
+
+
+def lpc_surface(mean, count, grid):
+    """The 2020 surface on the whole grid: the cell means, filled, inside the coverage; NaN elsewhere."""
+    z20 = np.full((grid.rows, grid.cols), np.nan, np.float32)
+    f = fill_nan(mean)
+    f[~coverage(count)] = np.nan
+    z20[:grid.lpc_rows] = f
+    return z20
+
+
+def blend(o18, z20, dep):
+    """(z float32, source uint8) from the 2018 DEM, the 2020 surface and the 3DEP fill (NaN where each has no data):
+    where both surveys have data the 2020 weight is its distance to its edge over the sum of both distances; cells
+    with neither take the fill (source 4), cells with nothing are NODATA (source 0)."""
+    v18, v20 = np.isfinite(o18), np.isfinite(z20)
+    d18 = cv2.distanceTransform(v18.astype(np.uint8), cv2.DIST_L2, 5)
+    d20 = cv2.distanceTransform(v20.astype(np.uint8), cv2.DIST_L2, 5)
+    w20 = np.where(v20 & v18, d20 / np.maximum(d18 + d20, 1e-6), np.where(v20, 1.0, 0.0))
+    z = np.where(v18 | v20, np.nan_to_num(o18) * (1 - w20) + np.nan_to_num(z20) * w20, np.nan).astype(np.float32)
+    src = np.where(v18 & v20, SOURCE_BLEND, np.where(v20, SOURCE_2020, np.where(v18, SOURCE_2018, 0))).astype(np.uint8)
+    gap = ~np.isfinite(z)
+    z[gap] = dep[gap]
+    src[gap & np.isfinite(dep)] = SOURCE_3DEP
+    z[~np.isfinite(z)] = NODATA
+    return z, src
+
+
+def write_ehdr(bil, array, grid):
+    """array (rows, cols), float32 or uint8, as the EHdr raster bil (.bil) with its .hdr beside it; ULXMAP and
+    ULYMAP are the centre of cell (0, 0)."""
+    floating = array.dtype == np.float32
+    array.astype("<f4" if floating else np.uint8).tofile(bil)
+    lines = ["BYTEORDER I", "LAYOUT BIL", f"NROWS {grid.rows}", f"NCOLS {grid.cols}", "NBANDS 1",
+             f"NBITS {32 if floating else 8}", *(["PIXELTYPE FLOAT"] if floating else []),
+             f"ULXMAP {grid.x0 + grid.res / 2!r}", f"ULYMAP {grid.y1 - grid.res / 2!r}", f"XDIM {grid.res!r}",
+             f"YDIM {grid.res!r}", *([f"NODATA {NODATA}"] if floating else [])]
+    Path(bil).with_suffix(".hdr").write_text("\n".join(lines) + "\n")

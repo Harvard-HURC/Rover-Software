@@ -108,5 +108,103 @@ class Grids(unittest.TestCase):
                 self.assertEqual(L.SHIFT_DEG, (shift["dlon_deg"], shift["dlat_deg"]))
 
 
+class RouteSteps(unittest.TestCase):
+    """The route area's gridding, coverage, fill and feathering on small arrays."""
+
+    def test_cell_means_average_and_count_the_points_of_every_tile(self):
+        grid = L.UtmGrid(100.0, 200.0, 0.5, 4, 4, 2)
+        a = (np.array([100.1, 100.4, 101.2, 99.9, 100.1]), np.array([199.9, 199.6, 199.2, 199.9, 198.9]),
+             np.array([10.0, 12.0, 7.0, 50.0, 60.0]))  # the last two lie west of the grid and south of row 1
+        b = (np.array([100.2]), np.array([199.8]), np.array([14.0]))
+        mean, count = L.cell_means(iter([a, b]), grid)
+        want = np.full((2, 4), NAN, np.float32)
+        want[0, 0], want[1, 2] = 12.0, 7.0
+        np.testing.assert_array_equal(mean, want)
+        np.testing.assert_array_equal(count, [[3, 0, 0, 0], [0, 0, 1, 0]])
+        self.assertEqual((mean.dtype, count.dtype), (np.float32, np.uint16))
+
+    def test_fill_nan_fills_the_holes_and_keeps_the_rest(self):
+        a = np.full((20, 20), 5.0, np.float32)
+        a[5, 5] = a[10:14, 10:14] = NAN
+        filled = L.fill_nan(a)
+        np.testing.assert_allclose(filled, 5.0, atol=1e-5)
+        np.testing.assert_array_equal(filled[np.isfinite(a)], a[np.isfinite(a)])
+        half = np.full((10, 40), NAN, np.float32)
+        half[:, :20] = 3.0  # the far cells need the wide passes
+        np.testing.assert_allclose(L.fill_nan(half), 3.0, atol=1e-5)
+        full = np.arange(12, dtype=np.float32).reshape(3, 4)
+        self.assertIsNot(L.fill_nan(full), full)
+        np.testing.assert_array_equal(L.fill_nan(full), full)
+
+    def test_coverage_keeps_the_surveyed_blocks_and_closes_one_block_holes(self):
+        count = np.ones((40, 40), np.uint16)
+        count[16:24, 16:24] = 0  # the middle block of 5 x 5
+        self.assertTrue(L.coverage(count).all())
+        count = np.zeros((40, 40), np.uint16)
+        count[3, 0:16:8] = 1  # one point in each block of the first two block columns
+        want = np.zeros((40, 40), bool)
+        want[:8, :16] = True
+        np.testing.assert_array_equal(L.coverage(count), want)
+
+    def test_lpc_surface_fills_inside_the_coverage_on_the_north_rows(self):
+        grid = L.UtmGrid(0.0, 0.0, 0.5, 24, 24, 16)
+        mean = np.full((16, 24), NAN, np.float32)
+        mean[:, :8] = 7.0
+        mean[3, 3] = NAN
+        count = np.zeros((16, 24), np.uint16)
+        count[:, :8] = 1
+        count[3, 3] = 0
+        z20 = L.lpc_surface(mean, count, grid)
+        self.assertEqual(z20.shape, (24, 24))
+        np.testing.assert_allclose(z20[:16, :8], 7.0, atol=1e-5)  # the empty cell filled
+        self.assertTrue(np.isnan(z20[:16, 8:]).all() and np.isnan(z20[16:]).all())
+
+    def test_blend_feathers_where_both_surveys_have_data(self):
+        o18 = np.full((3, 12), NAN, np.float32)
+        o18[:, :8] = 100.0
+        z20 = np.full((3, 12), NAN, np.float32)
+        z20[:, 4:] = 101.0
+        z, src = L.blend(o18, z20, np.full((3, 12), 50.0, np.float32))
+        np.testing.assert_allclose(z[1], [100, 100, 100, 100, 100.2, 100.4, 100.6, 100.8, 101, 101, 101, 101],
+                                   atol=1e-5)
+        np.testing.assert_array_equal(src[1], [1, 1, 1, 1, 3, 3, 3, 3, 2, 2, 2, 2])
+        self.assertEqual(z.dtype, np.float32)
+
+    def test_blend_fills_the_gaps_from_3dep_and_marks_the_rest_no_data(self):
+        o18 = np.full((3, 12), NAN, np.float32)
+        o18[:, :4] = 100.0
+        z20 = np.full((3, 12), NAN, np.float32)
+        z20[:, 8:] = 101.0
+        dep = np.full((3, 12), NAN, np.float32)
+        dep[:, 4:6] = 50.0
+        z, src = L.blend(o18, z20, dep)
+        np.testing.assert_array_equal(z[1], [100] * 4 + [50] * 2 + [L.NODATA] * 2 + [101] * 4)
+        np.testing.assert_array_equal(src[1], [1] * 4 + [4] * 2 + [0] * 2 + [2] * 4)
+
+    def test_write_ehdr_writes_the_headers_of_2026_10_06(self):
+        with tempfile.TemporaryDirectory() as d:
+            bil = Path(d) / "z.bil"
+            L.write_ehdr(bil, np.zeros((2, 3), np.float32), L.ROUTE_GRID)
+            self.assertEqual(bil.with_suffix(".hdr").read_text(),
+                             "BYTEORDER I\nLAYOUT BIL\nNROWS 8000\nNCOLS 6000\nNBANDS 1\nNBITS 32\nPIXELTYPE FLOAT\n"
+                             "ULXMAP 518000.25\nULYMAP 4253999.75\nXDIM 0.5\nYDIM 0.5\nNODATA -999999\n")
+            L.write_ehdr(bil, np.array([[1, 2, 3]], np.uint8), L.ROUTE_GRID)
+            self.assertEqual(bil.with_suffix(".hdr").read_text(),
+                             "BYTEORDER I\nLAYOUT BIL\nNROWS 8000\nNCOLS 6000\nNBANDS 1\nNBITS 8\n"
+                             "ULXMAP 518000.25\nULYMAP 4253999.75\nXDIM 0.5\nYDIM 0.5\n")
+            self.assertEqual(bil.read_bytes(), b"\x01\x02\x03")
+
+    def test_ground_returns_reads_the_class_2_points_of_a_laz_tile(self):
+        with tempfile.TemporaryDirectory() as d:
+            grid = L.UtmGrid(518000.0, 4254000.0, 0.5, 2, 2, 1)
+            path = laz_tile(Path(d) / "t.laz", grid)
+            self.assertEqual(path.read_bytes()[:4], b"LASF")
+            x, y, z = L.ground_returns(path)
+        self.assertEqual(len(x), 6)  # 3 ground returns in each of 2 cells; the 2 class-1 returns dropped
+        np.testing.assert_allclose(sorted(x), [518000.15, 518000.25, 518000.35, 518000.65, 518000.75, 518000.85],
+                                   atol=1e-6)
+        np.testing.assert_allclose(z, plane(x, y) + 0.01, atol=1e-6)
+
+
 if __name__ == "__main__":
     unittest.main()
