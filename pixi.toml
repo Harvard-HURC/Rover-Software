@@ -21,7 +21,7 @@ test = { depends-on = ["colcon-test", "sim-test"] }
 # (--all: every raster; --dry-run; --verify).
 fetch-data = "python rover_sim/tools/fetch_data.py"
 # rover_control's interactive view of the swerve kinematics.
-control-viz = { cmd = "python rover_control/tools/viz.py", env = { ROVER_STATE_EXE = "$PIXI_PROJECT_ROOT/../build/rover_control/rover_state" }, depends-on = ["build"] }
+control-viz = { cmd = "python rover_control/tools/viz.py", depends-on = ["build"] }
 # The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
 sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
 sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["_workspace", "sim-media"] }

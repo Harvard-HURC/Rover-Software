@@ -14,9 +14,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import RadioButtons, Slider
 
+# colcon builds rover_state in the workspace's build/rover_control (pixi run build).
 EXE = Path(
     os.environ.get(
-        "ROVER_STATE_EXE", Path(__file__).resolve().parents[1] / "build" / "rover_state"
+        "ROVER_STATE_EXE",
+        Path(__file__).resolve().parents[3] / "build" / "rover_control" / "rover_state",
     )
 )
 
@@ -256,7 +258,7 @@ def main():
         parser.add_argument(f"--{flag}", type=float, default=initial)
     args = parser.parse_args()
     if not EXE.exists():
-        raise SystemExit(f"{EXE} not found - run `pixi run driver-build` first")
+        raise SystemExit(f"{EXE} not found - run `pixi run build` first")
     if args.snapshot:
         plt.switch_backend("Agg")
 
