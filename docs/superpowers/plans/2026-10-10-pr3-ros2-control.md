@@ -35,19 +35,26 @@
 The spec and the task leave these open; each is final for PR 3 and stated in the commit or document that implements it. Section 12 of the spec (Task 21) records the ones that deviate from the spec's text.
 
 1. **The prototype is built from the pieces the PR keeps, on the branch, and gates the rest (Part A).** It adds the setpoint component and the drivetrain's setpoint input beside the twist input, `RoverSimSystem` with its unit test, the ros2_control variant of the simulated rover and `controllers.yaml`, then runs `RoverSimSystem` inside `gz sim -s` on this Mac with the real controllers (`tests/test_ros2_control.py`) and opens Gazebo's GUI as a separate process beside it. The measured facts go into this plan (Task 6, "Prototype results"). Parts B to E start only if gz_ros2_control loads `RoverSimSystem`, the controllers drive the wheels, the step timing is measured, and the readback matches; otherwise the implementer stops and reports (Risks). Linux runs the same test in CI once the user pushes.
-2. **The setpoint component** (`rover_sim/plugins/rover_components.hh`): `WheelSetpoint`, a `Setpoint {velocity [rad/s], time (sim time it was written), ros2_control (written by RoverSimSystem)}` on each wheel joint, and `WheelMotorCurrent` [A]. Both libraries that use them (the `RoverDrivetrain` system plugin and the `rover_sim_system` pluginlib library) register them under the same names; gz-sim's component factory supports one component registered from several libraries (`Factory::Register` sets the type's static id in each library and adds the descriptor once).
-3. **Same-step timing comes from the plugins' order, not from system priorities.** gz-sim 8 runs PreUpdates by priority, then in load order. The ros2_control variant puts the gz_ros2_control plugin just before `RoverDrivetrain` in the model, so the controller manager's `write()` (gz_ros2_control's PreUpdate) hands a setpoint over at the start of step k and the motor model uses it in step k; `tests/test_ros2_control.py` checks it against the drive controller's own stamped output. `RoverDrivetrain` gets no `ISystemConfigurePriority`: that would also move it relative to the tests' TestFixture helper system and shift every ROS-free run by one step.
+2. **The setpoint component** (`rover_sim/plugins/rover_components.hh`): `WheelSetpoint`, a `Setpoint {velocity [rad/s], time (when it was written, on the writer's sim clock), ros2_control (written by RoverSimSystem)}` on each wheel joint, and `WheelMotorCurrent` [A]. Both libraries that use them (the `RoverDrivetrain` system plugin and the `rover_sim_system` pluginlib library) register them under the same names; gz-sim's component factory supports one component registered from several libraries (`Factory::Register` sets the type's static id in each library and adds the descriptor once; the plan critic's probe, 2026-10-10, saw a component RoverSimSystem created read by another system plugin in the same Gazebo server). `time` is the time `write()` is given for RoverSimSystem's setpoints and the drivetrain's sim time at arrival for the ROS-free topic's. ros2_control 4.47 ignores the time gz_ros2_control passes the controller manager: `ResourceManager::read`/`write` hand the hardware the controller manager's clock (`resource_manager.cpp`, `current_time = ...get_clock()->now()`), and `ControllerManager::update` hands the controllers `this->now()`. Under gz_ros2_control that clock is sim time from the bridged `/clock` (the controller manager runs with `use_sim_time`), which the probe measured 1 to 16 ms (mean 4.4 ms) behind the step. The watchdog (Decision 5) works on that stamp: the lag is far below `cmd_timeout`, and if `/clock` stops, the stamps freeze and the motors stop after `cmd_timeout`. That is the case where diff_drive_controller's own `cmd_vel_timeout` cannot work, because its clock is frozen too.
+3. **Same-step timing comes from the plugins' order, not from system priorities.** gz-sim 8 runs PreUpdates by priority, then in load order. The ros2_control variant puts the gz_ros2_control plugin just before `RoverDrivetrain` in the model. gz_ros2_control runs the controller manager's `read()` and `update()` in its PostUpdate of every 10th step: its own count on sim time from 0, 100 Hz on the 1 ms step, so steps 10, 20, 30 and so on. It calls `write()` in every PreUpdate. So a setpoint the controllers compute at the end of step 10k is handed over at the start of step 10k + 1, and the motor model uses it in that same step. `tests/test_ros2_control.py` checks this from the drivetrain's per-step state: every change of a setpoint falls in a step 11, 21, 31 and so on; one step late would be 12, 22, 32. The stamps of the controllers' own messages (`cmd_vel_out`, `/joint_states`) cannot show it. They carry the controller manager's clock (Decision 2), and the probe saw them irregular, 8 to 15 ms apart. The plan critic's probe on this Mac (2026-10-10) ran gz_ros2_control 1.2.19 with this plan's RoverSimSystem and a stand-in for the drivetrain's command path after it in the model, under `gz sim -s`, with the plan's `controllers.yaml`. All 42 setpoint changes fell in steps that are 1 mod 10. `RoverDrivetrain` gets no `ISystemConfigurePriority`: that would also move it relative to the tests' TestFixture helper system and shift every ROS-free run by one step.
 4. **The ROS-free setpoint topic** is `/model/rover/wheel_cmd` (`sim.yaml` `topics.wheel_cmd`), a `gz.msgs.Double_V` with one value per wheel in the drivetrain's `<wheel>` order, fl, rl, fr, rr [rad/s]. The drivetrain copies the newest message into the four components at the start of its next PreUpdate, stamped with the sim time it came at; a message of another length is refused with one error. While a wheel's component says `ros2_control`, the topic is ignored and the drivetrain says so once; both messages go out at Gazebo's error level (`gzerr`), the one `gz sim` prints at its default verbosity (1), so the warning is seen.
 5. **The watchdog stays the drivetrain's** (`sim.yaml` `drivetrain.cmd_timeout`, 0.5 s, and `cmd_timeout_clock`, wall or sim), now per wheel setpoint: a setpoint older than `cmd_timeout` counts as zero, at once (a motor controller's watchdog stops its motor; its own PI and current limit decelerate it). `cmd_timeout: 0` still holds the last setpoint. The drivetrain also keeps the clamp to `<controller><max_speed>` (rover.yaml's top speed), a motor controller's velocity limit.
-6. **Kinematics, `track_multiplier` and the ramp leave the plugin.** For the ROS stack they are the drive controller's (`controllers.yaml`: `wheel_separation`, `wheel_radius`, `wheel_separation_multiplier: 1.0`, `linear.x.max_acceleration: 1.2`, `angular.z.max_acceleration: 3.0`, each a wheel's 8 rad/s² driving straight or turning in place). For the ROS-free helpers they are `rover_sim/wheel_cmd.py` with `sim.yaml` `wheel_cmd.accel: 8.0`: the plugin's formula `(vx - side wz track / 2) / radius` and gz::math::SpeedLimiter's arithmetic (`acc = (target - previous) / dt`, clamped, `previous + acc dt`), step by step, so that a run's setpoints are the doubles the plugin made (Task 10 compares traces bit for bit). `tests/test_wheel_cmd.py` checks that `controllers.yaml`'s ramp and `wheel_cmd.accel` are the same wheel rate. `sim.yaml` loses `drivetrain.track_multiplier` and `drivetrain.accel`; tests that set `drivetrain={"accel": ...}` set `wheel_cmd={"accel": ...}` instead, with the same numbers.
+6. **Kinematics, `track_multiplier` and the ramp leave the plugin.** For the ROS stack they are the drive controller's (`controllers.yaml`: `wheel_separation`, `wheel_radius`, `wheel_separation_multiplier: 1.0`, `linear.x.max_acceleration: 1.2`, `angular.z.max_acceleration: 3.0`, each a wheel's 8 rad/s² driving straight or turning in place). For the ROS-free helpers they are `rover_sim/wheel_cmd.py` with `sim.yaml` `wheel_cmd.accel: 8.0`: the plugin's formula `(vx - side wz track / 2) / radius` and gz::math::SpeedLimiter's arithmetic (`acc = (target - previous) / dt`, clamped, `previous + acc dt`), step by step, so that a run's setpoints are the doubles the plugin made (Task 10 compares traces bit for bit). `previous + acc dt` is rounded once, a fused multiply-add. That is how libgz-math7 computes it on osx-arm64: the conda-forge build compiles `SpeedLimiter::LimitAcceleration` to `fmadd` (the plan critic disassembled it, 2026-10-10). Two roundings differ from it in the step that reaches a target. For example, the drivetrain's ramp from -2.67 rad/s down to 0 left residues of 1e-17, 1e-33 and so on for 19 steps where two roundings land on 0, and that ramp is the spin-stop calibration's. Python 3.12 has no `math.fma`, so `Ramp` adds the exact rational product and rounds once (`fractions.Fraction`; only in steps whose acceleration is not 0, about 0.01 s of a 6 s run). A probe compared it with libgz-math7's own function over four ramps, 4000 steps each, and found no difference. On linux-64, where libgz-math7 rounds twice, the helpers' last bit may differ from the plugin's before PR 3 in such a step. Nothing compares them there. The helpers use the default rover's geometry (`rover_config.ROVER`); no test drives a variant with another track, radius or top speed (a `Driver` takes `rover=` for one). `tests/test_wheel_cmd.py` checks that `controllers.yaml`'s ramp and `wheel_cmd.accel` are the same wheel rate. `sim.yaml` loses `drivetrain.track_multiplier` and `drivetrain.accel`; tests that set `drivetrain={"accel": ...}` set `wheel_cmd={"accel": ...}` instead, with the same numbers.
 7. **The drivetrain's state message keeps its keys.** `"cmd"` was the twist the plugin applied; it is now the twist the setpoints in effect amount to (no-slip: `vx = r (left + right) / 2`, `wz = r (right - left) / track`, each side's mean), so the station's "asked turn" keeps reading `drivetrain.cmd[1]` and now also shows what autonomy's controller asks. The tests that compare `"cmd"` with `assertEqual` (`[0.3, 0.2]`, `[0.5, 0.0]`, `[0.0, 0.0]`) keep passing: the message prints 6 significant digits, and the twist computed back from the setpoints differs from the commanded one only in the 16th.
 8. **The equivalence test keeps the frozen models of `gen_model.py`.** The drivetrain's command interface changed on purpose and nothing physical did, so `test_equivalence.ros2_control_boundary()` applies exactly that change to a frozen model (removes `<topic>`, `<track_multiplier>` and `<controller><accel>` from `RoverDrivetrain`, adds `<setpoint_topic>`) before comparing; a test checks that it changes those four elements and nothing else. The bit-for-bit drive test is unchanged.
-9. **`controllers.yaml`** (`rover_control/config/`) names the controllers `joint_state_broadcaster` and `drive_controller` (type `diff_drive_controller/DiffDriveController`: left FL and RL, right FR and RR). The team's own drive controller replaces it by changing `drive_controller`'s type, or is added beside it and started with `controller:=<name>`. The geometry is written out (0.8 m, 0.15 m, 3 m/s, 7.5 rad/s) and `rover_control`'s `test_controllers_yaml.cpp` checks every number against `rover.yaml`; a YAML file cannot include another, and a launch-time override would tie both launch files to diff_drive_controller's parameter names. `update_rate: 100` (A), the same on the rover and in the simulation. `rover_control/launch/controllers.launch.py` spawns both controllers for both launches, remapping the drive controller's `~/cmd_vel` and `~/odom` to `/cmd_vel` and `/odom`.
+9. **`controllers.yaml`** (`rover_control/config/`) names the controllers `joint_state_broadcaster` and `drive_controller` (type `diff_drive_controller/DiffDriveController`: left FL and RL, right FR and RR). The team's own drive controller replaces it by changing `drive_controller`'s type, or is added beside it and started with `controller:=<name>`. The geometry is written out (0.8 m, 0.15 m, 3 m/s, 7.5 rad/s) and `rover_control`'s `test_controllers_yaml.cpp` checks every number against `rover.yaml`; a YAML file cannot include another, and a launch-time override would tie both launch files to diff_drive_controller's parameter names. `update_rate: 100` (A), the same on the rover and in the simulation. `rover_control/launch/controllers.launch.py` spawns both controllers for both launches, remapping the drive controller's `~/cmd_vel` and `~/odom` to `/cmd_vel` and `/odom`. The parameter names are diff_drive_controller 4.42.1's (`src/diff_drive_controller_parameter.yaml`):
+   - there is no `wheels_per_side`: the count comes from the name lists, and odometry averages each side's wheels;
+   - the controller takes TwistStamped only;
+   - the `has_*_limits` flags are deprecated and default to true, so every limit that is set is in force;
+   - `max_deceleration` must be at most 0, and the `*_reverse` limits default to the forward ones mirrored;
+   - the default `tf_frame_prefix_enable` under the root namespace gives the frames `odom` and `base_link` unprefixed.
+
+   The plan critic's probe ran this `controllers.yaml` unchanged with the spawner arguments of `controllers.launch.py`. Both controllers configured and activated, `/odom` moved, and `node_options_args` carried the remaps. Under ros2_control the setpoints change at the controllers' 100 Hz. A ramp therefore reaches the motors as 10 ms stairs: a wheel's 8 rad/s² comes as 0.08 rad/s every 10 ms, as a real motor controller receives its commands. The controllers also ramp with the period their clock measures, 8 to 15 ms in the probe, 10 ms on average. This is new behaviour of the ROS stack only. The ROS-free helpers still ramp in every 1 ms step, so the calibration runs are unchanged.
 10. **Specific packages instead of the metapackages.** `rover_control` and pixi depend on `controller_manager`, `hardware_interface`, `diff_drive_controller`, `joint_state_broadcaster` and `ros2controlcli`, not on `ros2_control` and `ros2_controllers` (the latter brings every controller); the rover's computer installs what it runs.
 11. **The hardware stub activates.** The spec says it "refuses to activate with a clear message if asked to drive"; activating with zero motion lets `rover.launch.py` start the controllers on the rover's computer, which the acceptance asks for. It reports zero position, velocity and effort, warns at start and on activation that no motors are connected, and logs the wheel commands it would send, at most once a second.
 12. **The worlds keep including `model://rover`; the launch swaps it.** Every ROS-free path (the suite's TestFixture runs, `world_copy`, the referee, the maps, the realism report, the station's tests) loads the worlds as they are, and gz_ros2_control in a model blocks Gazebo's start until `/robot_description` arrives, so the ROS rover cannot be the worlds' `model://rover`. `sim.launch.py` builds the ROS rover per launch (`gen_rover.build_urdf(..., ros2_control=True)`, converted and post-processed by `gen_rover.convert`: PR 2's Decision 1), writes it and a copy of the world whose one rover include points at it into a temporary folder, and runs Gazebo on the copy; the include keeps its pose, which `urc/world.py` writes from the same numbers as the mission sheet's `rover_start` (`rover_test.sdf`, which has no sheet, keeps its origin). robot_state_publisher publishes the same URDF. No spawn service is involved, so the rover is in the world from the first step, as the station's cameras expect.
 13. **`pixi run drive <world>` and the launcher's tiles start the stack through `sim.launch.py`, with the station as its parent.** The station's `start_simulation` runs `ros2 launch rover_sim sim.launch.py world:=<path> gui:=false station:=false` where it ran `gz sim -s -r`, in its own session, and keeps its tested stop handling (Ctrl-C, SIGTERM and SIGHUP stop everything; `ros2 launch` does not handle SIGHUP). `sim.launch.py station:=true` starts the station attached (`--world-name <name> --wait 120`) for `ros2 launch` users. `pixi run sim` (`run.sh`) runs `sim.launch.py gui:=true` and keeps its `--follow`.
-14. **The station publishes `/cmd_vel` through rclpy** (`station/ros_link.py`, `CmdVel`), TwistStamped with a zero stamp: diff_drive_controller stamps a zero-stamped command with its own clock (sim time in the simulation), so its `cmd_vel_timeout` counts from arrival whatever clock the station has; a wall-clock stamp under sim time would never time out. `GzLink` takes its drive output as an argument: the station's `main` gives it `CmdVel`, the default (and the tests) `wheel_cmd.TwistDrive`, which publishes the station's already-slewed twist as unramped wheel setpoints on the ROS-free topic. When nothing subscribes to `/cmd_vel` 10 s after the start, the station says so.
+14. **The station publishes `/cmd_vel` through rclpy** (`station/ros_link.py`, `CmdVel`), TwistStamped with a zero stamp: diff_drive_controller stamps a zero-stamped command with its own clock (sim time in the simulation), so its `cmd_vel_timeout` counts from arrival whatever clock the station has; a wall-clock stamp under sim time would never time out. `CmdVel` starts rclpy with `SignalHandlerOptions.NO`, as the controller spawner does. The station handles Ctrl-C, SIGTERM and SIGHUP itself. rclpy's default handlers shut its context down on SIGINT and SIGTERM before the station's own handler runs. A probe (2026-10-10) showed that the publish that follows then fails: `RCLError: publisher's context is invalid`. That publish is the stop's zero twist (`Station.shutdown`). `CmdVel` sends no command once rclpy is down. The publisher needs no executor or spinning: the station publishes from its asyncio thread, and the unheard-warning timer only counts subscriptions. `GzLink` takes its drive output as an argument: the station's `main` gives it `CmdVel`, the default (and the tests) `wheel_cmd.TwistDrive`, which publishes the station's already-slewed twist as unramped wheel setpoints on the ROS-free topic. When nothing subscribes to `/cmd_vel` 10 s after the start, the station says so.
 15. **The sensor bridge is `bridge.yaml` without `/cmd_vel`, `/odom`, `/joint_states` and `/tf`**, which the controllers and robot_state_publisher now provide; `sim.launch.py` runs it with `use_sim_time`. `/clock` must be bridged: the controller nodes' clock (`use_sim_time`, forced by gz_ros2_control) stamps the zero-stamped commands. The `sim-bridge` pixi task is removed.
 16. **The environment comes from `gzenv.py`, as before.** It appends the pixi environment's `lib` to `GZ_SIM_SYSTEM_PLUGIN_PATH` (gz_ros2_control's system plugin lives there; ros_gz_sim's own launch file adds `LD_LIBRARY_PATH` the same way), puts the workspace's `install/rover_sim` first on `AMENT_PREFIX_PATH` once it exists (pluginlib finds `rover_sim/RoverSimSystem` there without a sourced `install/`), and sets a private ROS domain with `ros_domain=` (`ROS_DOMAIN_ID` and `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`). The tests (through `simulate.py`) and the launcher's worlds take `gzenv.private_ros_domain(pid)`, 50 to 99.
 17. **`sim.launch.py` starts the GUI as a separate process on every platform** (`gz sim -g`; one code path; the team's `gazebo.launch.py` splits only on macOS because there it must), and `sensors:=false` drops the Sensors system for runs without a GPU (the smoke test, CI's Linux runner). The launch runs the simulation from its source tree, as `gzenv.py` and `rover_config.py` do; the installed copy finds the tree through `share/rover_sim/source_dir`, which `CMakeLists.txt` writes, and `rover_sim` now also installs `urdf/` and `config/` (PR 2's Decision 1).
@@ -86,10 +93,10 @@ Unchanged on purpose: the motor, contact, dig-in, visual-cue and odometry code o
 
 ```bash
 T=/private/tmp/claude-502/rover-pr3; mkdir -p $T
-cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && git rev-parse --abbrev-ref HEAD && git log --oneline -2
+cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && git rev-parse --abbrev-ref HEAD && git log --oneline -3
 ```
 
-Expected: no status lines; `pr3/ros2-control`; the plan's commit (`Plan PR 3: ...`) on top of `1cf53cd Plan PR 2: restacked on PR 1's fixes; the lock with the data pull request`.
+Expected: no status lines; `pr3/ros2-control`; the plan's two commits (`Plan PR 3: critic fixes ...` on `Plan PR 3: the ros2_control boundary`) on top of `1cf53cd Plan PR 2: restacked on PR 1's fixes; the lock with the data pull request`.
 
 - [ ] **Step 2: The helper scripts**
 
@@ -443,7 +450,10 @@ namespace rover_sim::components {
 /// A wheel's speed setpoint, and who wrote it when.
 struct Setpoint {
   double velocity = 0.0;                       ///< [rad/s] at the wheel
-  std::chrono::steady_clock::duration time{};  ///< the sim time it was written; the watchdog's age counts from it
+  /// When it was written, on sim time: the time ros2_control gave RoverSimSystem's write() (the controller manager's
+  /// clock, the bridged /clock, a few ms behind the step), or the drivetrain's when a topic message came. The
+  /// watchdog's age counts from it.
+  std::chrono::steady_clock::duration time{};
   bool ros2_control = false;                   ///< written by RoverSimSystem: the setpoint topic is then ignored
 
   bool operator==(const Setpoint& other) const {
@@ -801,7 +811,7 @@ TEST_F(RoverSimSystemTest, MarksTheWheelsAsRos2ControlsAndGivesEveryJointItsStat
   }
 }
 
-TEST_F(RoverSimSystemTest, WriteHandsEachWheelItsCommandStampedWithTheStep) {
+TEST_F(RoverSimSystemTest, WriteHandsEachWheelItsCommandStampedWithTheTimeItIsGiven) {
   Load();
   Command("wheel_fl_joint/velocity", 2.5);
   Command("wheel_rl_joint/velocity", 2.5);
@@ -940,11 +950,13 @@ Write `rover_sim/ros2_control/rover_sim_system.hpp`:
 // RoverSimSystem: the simulated rover's ros2_control hardware (design spec 2026-10-09, section 6.1). gz_ros2_control
 // loads it inside Gazebo (pluginlib: rover_sim/RoverSimSystem, rover_sim_system.xml) for the ros2_control block of
 // rover_sim.urdf.xacro with ros2_control:=true; the controller manager it runs calls write() at the start of every
-// physics step (gz_ros2_control's PreUpdate) and read() and the controllers' update at the end of a step, at the
-// controllers' rate (its PostUpdate).
+// physics step (gz_ros2_control's PreUpdate) and read() and the controllers' update at the end of every 10th step
+// (100 Hz, its PostUpdate).
 // - write(): each wheel's velocity command [rad/s] into its joint's WheelSetpoint (plugins/rover_components.hh),
-//   stamped with the step's sim time; RoverDrivetrain's motor model follows it in the same step (its plugin comes
-//   after gz_ros2_control's in the model; tests/test_ros2_control.py checks it). Not Gazebo's JointVelocityCmd: the
+//   stamped with the time write() is given: ros2_control 4.47 passes the controller manager's clock, sim time from
+//   the bridged /clock, a few ms behind the step (the drivetrain's watchdog counts from it, so the motors stop when
+//   /clock stops). RoverDrivetrain's motor model follows the setpoint in the same step (its plugin comes after
+//   gz_ros2_control's in the model; tests/test_ros2_control.py checks it). Not Gazebo's JointVelocityCmd: the
 //   Physics system would enforce that as a velocity constraint and bypass the motors. A command not yet set (NaN,
 //   until a controller writes one) is 0.
 // - read(): every joint's position and velocity from Gazebo, and each wheel's motor current [A] as its effort
@@ -1130,7 +1142,7 @@ cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run
 cd /Users/alarion239/Desktop/hurc_ws/install/rover_sim && cat share/ament_index/resource_index/gz_ros2_control__pluginlib__plugin/rover_sim; echo; ls lib/librover_sim_system.*
 ```
 
-Expected: no warning, `Summary: 1 package finished`; `100% tests passed, 0 tests failed out of 1`; `share/rover_sim/rover_sim_system.xml`; `lib/librover_sim_system.dylib`. A warning that `on_init` hides an overload means the `using` line is missing; an include error for `gz_ros2_control/gz_system_interface.hpp` means the include directory came out wrong: print `gz_ros2_control_include` with a `message(STATUS ...)` and point it at the folder that holds `gz_ros2_control/gz_system_interface.hpp` (Task 2 printed it), then record the fix in Task 6's results.
+Expected: no warning, `Summary: 1 package finished`; `100% tests passed, 0 tests failed out of 1`; `share/rover_sim/rover_sim_system.xml`; `lib/librover_sim_system.dylib`. The plan critic built this step's four files as written, against an environment locked as Task 2 locks it (gz_ros2_control 1.2.19, hardware_interface 4.47.0), with `-Wall -Wextra -Wpedantic`: no warning, the five test cases pass, and gz_ros2_control loaded the library from an install prefix on `AMENT_PREFIX_PATH` inside `gz sim -s`. A new binary's first run under ctest took 70 s on this Mac while macOS checked it; a second run takes 0.3 s. A warning that `on_init` hides an overload means the `using` line is missing; an include error for `gz_ros2_control/gz_system_interface.hpp` means the include directory came out wrong: print `gz_ros2_control_include` with a `message(STATUS ...)` and point it at the folder that holds `gz_ros2_control/gz_system_interface.hpp` (Task 2 printed it), then record the fix in Task 6's results.
 
 - [ ] **Step 5: Commit**
 
@@ -1140,11 +1152,12 @@ PR 3: rover_sim: RoverSimSystem, the simulated rover's ros2_control hardware
 
 A gz_ros2_control::GazeboSimSystemInterface plugin (pluginlib: rover_sim/RoverSimSystem) for rover_description's
 ros2_control block: write() hands each wheel's velocity command to the drivetrain's motor model through the wheel
-joint's WheelSetpoint, stamped with the step's sim time (not Gazebo's JointVelocityCmd, which the Physics system
-would enforce as a velocity constraint); read() reports every joint's position and velocity and each wheel's motor
-current as its effort. In ros2_control/, not plugins/, whose files CMake builds as Gazebo systems. Its GoogleTest
-runs it against a bare ECM: the interfaces, the wheels marked as ros2_control's, the commands stamped with the step
-(NaN as 0), the state read back, a joint the model lacks refused.
+joint's WheelSetpoint, stamped with the time write() is given (ros2_control 4.47: the controller manager's clock, sim
+time from the bridged /clock) (not Gazebo's JointVelocityCmd, which the Physics system would enforce as a velocity
+constraint); read() reports every joint's position and velocity and each wheel's motor current as its effort. In
+ros2_control/, not plugins/, whose files CMake builds as Gazebo systems. Its GoogleTest runs it against a bare ECM:
+the interfaces, the wheels marked as ros2_control's, the commands stamped with the time given (NaN as 0), the state
+read back, a joint the model lacks refused.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -1812,13 +1825,21 @@ class Probe:
         self.thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.thread.start()
 
-    def drive(self, vx, wz, seconds, rate=20.0):
-        """Publish the command `rate` times a second for `seconds` of wall time."""
+    def sim_time(self):
+        """The latest /odom's stamp [s]: sim time on the controller manager's clock (0 before the first)."""
+        odom = self.messages["/odom"]
+        return odom[-1].header.stamp.sec + odom[-1].header.stamp.nanosec * 1e-9 if odom else 0.0
+
+    def drive_for(self, vx, wz, sim_seconds, timeout=60.0, rate=20.0, publish=True):
+        """Publish the command `rate` times a second until /odom's stamps have advanced `sim_seconds` [s] of sim time,
+        or `timeout` [s] of wall time has passed: a machine that runs the simulation slower than real time (CI's
+        runners) drives as far as a fast one. publish=False only waits (the drive controller's timeout brakes)."""
         msg = TwistStamped()
         msg.twist.linear.x, msg.twist.angular.z = float(vx), float(wz)
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
-            self.cmd.publish(msg)
+        start, end = self.sim_time(), time.monotonic() + timeout
+        while self.sim_time() - start < sim_seconds and time.monotonic() < end:
+            if publish:
+                self.cmd.publish(msg)
             time.sleep(1.0 / rate)
 
     def wait(self, condition, timeout, what, logs=()):
@@ -1850,15 +1871,15 @@ Write `rover_sim/tests/test_ros2_control.py`:
 2026-10-09, section 6.1), as sim.launch.py runs it: `gz sim -s` with the rover built with ros2_control,
 robot_state_publisher, the /clock bridge and rover_control's controllers (joint_state_broadcaster, drive_controller),
 in this process's private ROS domain and gz partition (rosstack, simulate). One run on flat ground in real time,
-with the drivetrain's state every 1 ms step and the drive controller's limited command (cmd_vel_out) after every
-update, both stamped with sim time; the tests read it:
+with the drivetrain's state every 1 ms step (stamped with the step's sim time) and the drive controller's messages
+(stamped with the controller manager's clock: ros2_control 4.47 gives the controllers and the hardware that clock,
+sim time from the bridged /clock, a few ms behind the step); the tests read it:
 - gz_ros2_control loads RoverSimSystem and the controllers drive the wheels: /odom and the wheels move;
 - the setpoint the controller manager writes at the start of a step is the one the motor model uses in that step;
 - the joints' state and the motor currents come back on /joint_states.
 The description of that rover is checked in test_rover_model.Ros2ControlVariant."""
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -1883,16 +1904,11 @@ JOINTS = {f"wheel_{w}_joint" for w in WHEELS} | {"rocker_left_joint", "rocker_ri
 CMD_VEL_OUT = "/drive_controller/cmd_vel_out"
 DRIVE = (0.3, 0.5)  # [m/s], [rad/s]: an arc to the left, every wheel forward, the right ones faster
 SEPARATION, RADIUS = 2 * ROVER.rocker.pivot_y, ROVER.wheel.radius  # controllers.yaml's (rover_control checks them)
+UPDATE_STEPS = 10  # gz_ros2_control updates the controllers every 10th 1 ms step (100 Hz): steps 10, 20, 30 ...
 
 
 def tearDownModule():
     rosstack.shutdown()
-
-
-def wheel_commands(twist):
-    """diff_drive_controller's wheel velocities (left, right) [rad/s] for a twist, in its own arithmetic."""
-    v, w = twist.linear.x, twist.angular.z
-    return (v - w * SEPARATION / 2.0) / RADIUS, (v + w * SEPARATION / 2.0) / RADIUS
 
 
 def ms(stamp):
@@ -1952,9 +1968,8 @@ class RoverSimSystemInGazebo(unittest.TestCase):
 
     @classmethod
     def drive(cls, probe):
-        probe.drive(*DRIVE, seconds=3.0)
-        probe.drive(0.0, 0.0, seconds=1.0)
-        time.sleep(0.5)
+        probe.drive_for(*DRIVE, sim_seconds=3.0)
+        probe.drive_for(0.0, 0.0, sim_seconds=1.5)
 
     @classmethod
     def tearDownClass(cls):
@@ -1962,6 +1977,7 @@ class RoverSimSystemInGazebo(unittest.TestCase):
 
     def test_the_controllers_drive_the_rover(self):
         self.assertIn("RoverSimSystem: 8 joints, 4 wheels driven", self.log)
+        self.assertTrue(self.messages[CMD_VEL_OUT], "no cmd_vel_out: the drive controller never updated")
         odom = self.messages["/odom"]
         self.assertTrue(odom, "no /odom")
         self.assertGreater(odom[-1].pose.pose.position.x, 0.3)
@@ -1969,45 +1985,47 @@ class RoverSimSystemInGazebo(unittest.TestCase):
         joints = self.messages["/joint_states"][-1]
         self.assertEqual(set(joints.name), JOINTS)
         position = dict(zip(joints.name, joints.position))
+        # The arc's wheel commands: left (0.3 - 0.5 x 0.4) / 0.15 = 0.67 rad/s, right 3.33 rad/s, for 3 s of sim time
+        # less the ramps: some 1.9 and 9.6 rad.
         for w in WHEELS:
-            self.assertGreater(position[f"wheel_{w}_joint"], 2.0, w)  # 0.3 m/s for about 3 s: some 6 rad
+            self.assertGreater(position[f"wheel_{w}_joint"], 0.5 if SIDE[w] == 0 else 5.0, w)
+        self.assertGreater(position["wheel_fr_joint"], 3 * position["wheel_fl_joint"])
 
     def test_a_setpoint_written_at_a_step_drives_the_motors_in_that_step(self):
-        """The drive controller computes its wheel commands in the controller manager's update at the end of step u
-        (cmd_vel_out is stamped with it); gz_ros2_control's write() hands them to RoverSimSystem at the start of
-        step u + 1, and the drivetrain's state of step u + 1 shows them as the setpoints: written and used in the
-        same step. Its state of step u still shows the update before (the setpoints hold between the 100 Hz
-        updates). Checked where the ramp changes a side's command by more than 0.01 rad/s from one update to the
-        next, far beyond the state's 6 digits."""
-        sp = {ms(s["t"]): s["wheels"] for s in self.states}
-        updates = sorted((ms(m.header.stamp), wheel_commands(m.twist)) for m in self.messages[CMD_VEL_OUT])
-        checked = 0
-        for (before, old), (stamp, new) in zip(updates, updates[1:]):
-            changed = max(abs(new[k] - old[k]) for k in (0, 1)) > 0.01
-            if not changed or stamp - before != 10 or stamp not in sp or stamp + 1 not in sp:
-                continue  # nothing to see, or a message missing on either side
-            for w in WHEELS:
-                self.assertTrue(close(sp[stamp + 1][w]["sp"], new[SIDE[w]]), (stamp, w, sp[stamp + 1][w], new))
-                self.assertTrue(close(sp[stamp][w]["sp"], old[SIDE[w]]), (stamp, w, sp[stamp][w], old))
-            checked += 1
-        self.assertGreater(checked, 20)
+        """gz_ros2_control runs the controller manager's update in its PostUpdate of every 10th step, counted on sim
+        time from 0 (steps 10, 20, 30 ...), and hands the new wheel commands to RoverSimSystem in its PreUpdate of
+        the next step; the drivetrain, whose plugin comes after gz_ros2_control's, uses them in that same step. So
+        every change of a setpoint in the drivetrain's state (every step) is in a step 11, 21, 31 ...: written and
+        used in the same step (one step later they would be in steps 12, 22, 32 ...). The stamps of cmd_vel_out and
+        /joint_states cannot show it: they are the controller manager's clock, a few ms behind the step."""
+        sp = {ms(s["t"]): tuple(s["wheels"][w]["sp"] for w in WHEELS) for s in self.states}
+        changes = [t for t in sorted(sp) if t - 1 in sp and sp[t] != sp[t - 1]]
+        self.assertGreater(len(changes), 20)  # the ramps up and down: some 50 updates that change a command
+        self.assertEqual(sorted({t % UPDATE_STEPS for t in changes}), [1], changes[:20])
 
     def test_the_joint_state_and_the_motor_currents_come_back(self):
-        """/joint_states (joint_state_broadcaster, stamped with the update's sim time) carries each wheel's motor
-        current as its effort: the drivetrain's current of the same step (read() runs at the end of the step)."""
-        states = {ms(s["t"]): s["wheels"] for s in self.states}
-        checked = drawn = 0
+        """/joint_states (joint_state_broadcaster) carries each wheel's motor current as its effort: the drivetrain's
+        current of an update step (read() runs in gz_ros2_control's PostUpdate of steps 10, 20, 30 ..., after the
+        drivetrain's PreUpdate of that step wrote it). A message's stamp is the controller manager's clock, a few ms
+        behind the step, so the step is found near it: the steps within 50 ms whose four currents all equal the
+        efforts. Where that is one step (the currents change from step to step while the rover drives), it is an
+        update step."""
+        currents = {ms(s["t"]): [s["wheels"][w]["i"] for w in WHEELS] for s in self.states}
+        pinned = drawn = 0
         for message in self.messages["/joint_states"]:
-            stamp = ms(message.header.stamp)
-            if stamp not in states:
-                continue
             effort = dict(zip(message.name, message.effort))
-            for w in WHEELS:
-                current = states[stamp][w]["i"]
-                self.assertTrue(close(effort[f"wheel_{w}_joint"], current), (stamp, w, effort, current))
-                drawn += abs(current) > 1.0
-            checked += 1
-        self.assertGreater(checked, 100)
+            got = [effort[f"wheel_{w}_joint"] for w in WHEELS]
+            stamp = ms(message.header.stamp)
+            if not any(t in currents for t in range(stamp - 50, stamp + 51)):
+                continue  # before the drivetrain's first state, or after its last
+            steps = [t for t in range(stamp - 50, stamp + 51)
+                     if t in currents and all(close(g, c) for g, c in zip(got, currents[t]))]
+            self.assertTrue(steps, (stamp, got))
+            if len(steps) == 1:
+                self.assertEqual(steps[0] % UPDATE_STEPS, 0, (stamp, steps, got))
+                pinned += 1
+            drawn += max(abs(g) for g in got) > 1.0
+        self.assertGreater(pinned, 50)
         self.assertGreater(drawn, 0, "the motors drew current")
 
 
@@ -2027,7 +2045,8 @@ Expected: `Summary: 1 package finished`; then the three tests `... ok`, `Ran 3 t
 - `no update of the drive controller within 180 s` and `gz.log` says `Waiting RM to load and initialize hardware...` without end: the controller manager never got `/robot_description` (check `rsp.log`; the domain is the test process's, `ROS_DOMAIN_ID` 50-99).
 - `gz.log` has `Failed to load system plugin [gz_ros2_control-system]`: `GZ_SIM_SYSTEM_PLUGIN_PATH` lacks the environment's lib (Task 5's gzenv).
 - `The plugin failed to load ... rover_sim/RoverSimSystem`: pluginlib did not find it: `AMENT_PREFIX_PATH` lacks `install/rover_sim` (`pixi run sim-build` installs it).
-- the timing test fails with `sp[stamp + 1]` showing the old command and `sp[stamp + 2]` the new: the drivetrain ran before gz_ros2_control in the step (one step later than designed). The task allows step k + 1; record it, change the test to assert `stamp + 2` and `stamp + 1`, and say so in the results and in `rover_sim_system.hpp`'s comment.
+- the timing test fails with the changes in steps 12, 22, 32 ... (`{2}` instead of `[1]`): the drivetrain ran before gz_ros2_control in the step (one step later than designed). The task allows step k + 1; record it, change the test to assert `[2]`, and say so in the results and in `rover_sim_system.hpp`'s comment. A mix of residues means setpoint changes that no controller update made (the watchdog: look for a stamp far behind the step, a stalled `/clock` bridge).
+- the readback test finds no step whose currents equal a message's efforts: `read()` did not see the drivetrain's `WheelMotorCurrent` (the component registered twice as two types: `GZ_DEBUG_COMPONENT_FACTORY=true` prints the factory's registrations).
 
 - [ ] **Step 4: Gazebo's GUI as a separate process beside the server**
 
@@ -2109,6 +2128,7 @@ kill -INT $SERVER $RSP $BRIDGE; wait 2>/dev/null
 sleep 1; pgrep -f "$D/world.sdf" > /dev/null && echo "server still running" || echo "server stopped"
 grep -E "RoverSimSystem:|Loading controller_manager" "$D/server.log" | head -3
 grep -cE "Configured and activated" "$D/spawner.log"
+grep -c "Failed to create component" "$D/gui.log"
 ```
 
 Run it (a Gazebo window opens on this Mac for about 12 s):
@@ -2118,7 +2138,7 @@ T=/private/tmp/claude-502/rover-pr3
 cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run bash $T/split_check.sh $T 2>&1 | tail -8
 ```
 
-Expected: `spawner exit 0`; `odom x <above 1.0> y <near 0>` (0.5 m/s for 3 s, less the ramp and the slip); `gui running`; `server stopped`; the server's lines `Loading controller_manager` and `RoverSimSystem: 8 joints, 4 wheels driven through RoverDrivetrain's motor model`; `2` (both controllers activated). If `server still running` is printed, stop it yourself (`pkill -INT -f "$T/split/world.sdf"`): only what this step started.
+Expected: `spawner exit 0`; `odom x <above 1.0> y <near 0>` (0.5 m/s for 3 s, less the ramp and the slip); `gui running`; `server stopped`; the server's lines `Loading controller_manager` and `RoverSimSystem: 8 joints, 4 wheels driven through RoverDrivetrain's motor model`; `2` (both controllers activated); then the count of the GUI's `Failed to create component type [...]` lines, probably `8`. The server's full state, which the GUI asks for when it connects, carries the rover's own components, `WheelSetpoint` and `WheelMotorCurrent` on each wheel joint. The plan critic's probe saw both in the reply of `/world/<name>/state`. The GUI has not loaded the library that registers them, so it cannot create them. That is harmless (the GUI draws nothing from them): record the count, and the manual's paragraph on harmless log lines (Task 19) names the line. If `server still running` is printed, stop it yourself (`pkill -INT -f "$T/split/world.sdf"`): only what this step started.
 
 - [ ] **Step 5: Record the results in this plan; the gate**
 
@@ -2130,9 +2150,12 @@ Append to the end of this plan file (`docs/superpowers/plans/2026-10-10-pr3-ros2
 Measured on the Apple M4 (macOS <version>), gz-sim 8.10, gz_ros2_control 1.2.19, ros2_control 4.47.0.
 - `GZ_SIM_SYSTEM_PLUGIN_PATH` after activation: <Task 2's line>; gzenv appends the environment's lib.
 - `test_ros2_control`: <the Ran/OK lines of $T/proto.log>; the controllers active <seconds> after the server started.
-- Timing: a setpoint the controller manager writes at the start of step k drives the motors in step k (<checked>
-  update pairs, every one; or: in step k + 1, with the reason found).
-- Readback: /joint_states' wheel efforts equal the drivetrain's currents of the same step (<checked> messages).
+- Timing: a setpoint the controller manager writes at the start of step k drives the motors in step k: every one of
+  the <count> setpoint changes in the drivetrain's state is in a step 11, 21, 31 ... (the controllers update in the
+  PostUpdate of steps 10, 20, 30 ...); or: in step k + 1, with the reason found.
+- Readback: /joint_states' wheel efforts equal the drivetrain's currents of an update step (<pinned> messages pinned to
+  one step, every one a step 10, 20, 30 ...); the messages' stamps lag the step by <range> ms (the controller
+  manager's clock, the bridged /clock).
 - Server and GUI as separate processes: <split_check.sh's lines>.
 - <anything that differed from this plan: an include path, a log line, a fix, and where it went>.
 ```
@@ -2148,8 +2171,9 @@ PR 3: the prototype: RoverSimSystem inside Gazebo with the rover's controllers
 tests/test_ros2_control.py runs the rover with ros2_control in `gz sim -s` with robot_state_publisher, the /clock
 bridge and rover_control's controllers, in the test process's private ROS domain, and checks that gz_ros2_control
 loads RoverSimSystem and the controllers drive the wheels, that a setpoint the controller manager writes at the start
-of a step drives the motors in that step (against diff_drive_controller's own stamped cmd_vel_out), and that the
-joints' state and the motor currents come back on /joint_states. tests/rosstack.py: the ROS tests' processes and
+of a step drives the motors in that step (every setpoint change in a step after the controllers' update step: 11,
+21, 31 ...; the messages' stamps are the controller manager's clock, a few ms behind), and that the joints' state and
+the motor currents of an update step come back on /joint_states. tests/rosstack.py: the ROS tests' processes and
 probe node. The plan records the prototype's results on this Mac, the server and Gazebo's GUI as separate processes
 among them.
 
@@ -2247,6 +2271,17 @@ class RampSteps(unittest.TestCase):
         ramp = wheel_cmd.Ramp(accel=0.0)
         target = wheel_cmd.setpoints(0.37, 0.11)
         self.assertEqual(ramp.step(0.37, 0.11), tuple(0.0 + ((t - 0.0) / 0.001) * 0.001 for t in target))
+
+    def test_one_rounding_as_libgz_math_computes_it(self):
+        """previous + acceleration x dt is rounded once, as libgz-math7's SpeedLimiter, which ramped the drivetrain's
+        setpoints until PR 3, computes it on osx-arm64 (a fused multiply-add; measured against the library,
+        2026-10-10): a jump from a turn in place back to zero leaves the residue the drivetrain left, where two
+        roundings give 0."""
+        ramp = wheel_cmd.Ramp(accel=0.0)
+        self.assertEqual(ramp.step(0.0, 1.0)[0].hex(), "-0x1.5555555555556p+1")
+        fl, rl, fr, rr = ramp.step(0.0, 0.0)
+        self.assertEqual((fl, rl), (float.fromhex("0x1.20c49ba5e354p-54"),) * 2)
+        self.assertEqual((fr, rr), (-fl, -fl))
 
     def test_reset_starts_from_zero(self):
         ramp = wheel_cmd.Ramp(accel=8.0)
@@ -2395,14 +2430,16 @@ rover_config.WHEEL_CMD_TOPIC, a gz.msgs.Double_V with one value per wheel in WHE
 The simulation's tests, tools and scripts speak body twists. This module turns a twist into the setpoints the
 drivetrain itself made of it before the ros2_control boundary: each wheel at (vx - side x wz x track / 2) / radius
 (side +1 left, -1 right; track 2 x rover.yaml rocker.pivot_y), clamped to the top speed and ramped at sim.yaml's
-wheel_cmd accel, step by step with gz::math::SpeedLimiter's arithmetic, so that a run drives as it did, to the bit.
-The ROS stack has its own kinematics and ramp in the drive controller (rover_control/config/controllers.yaml), with
-the same numbers (tests/test_wheel_cmd.py).
+wheel_cmd accel, step by step with gz::math::SpeedLimiter's arithmetic as libgz-math7 computes it on osx-arm64 (one
+rounding of previous + acceleration x dt, a fused multiply-add), so that a run drives as it did, to the bit. The ROS
+stack has its own kinematics and ramp in the drive controller (rover_control/config/controllers.yaml), with the same
+numbers (tests/test_wheel_cmd.py).
 
 Driver feeds a run stepped in this process (gz.sim8.TestFixture); TwistDrive sends each twist as it comes, for a
 caller whose twists are ramped already (the driver station slews its own).
 """
 import math
+from fractions import Fraction
 
 from rover_config import CMD_VEL_TOPIC, ROVER, SIM, WHEEL_CMD_TOPIC
 
@@ -2418,10 +2455,20 @@ def setpoints(vx, wz, rover=ROVER):
     return tuple((vx - side * wz * track / 2) / radius for side in SIDES)
 
 
+def fused(previous, acceleration, dt):
+    """previous + acceleration x dt rounded once to the nearest double, as libgz-math7's
+    SpeedLimiter::LimitAcceleration computes it on osx-arm64 (compiled to a fused multiply-add, fmadd). Python 3.12
+    has no math.fma: the exact rational sum, rounded once. With acceleration 0 the sum is previous, exactly."""
+    if acceleration == 0.0:
+        return previous + acceleration * dt
+    return float(Fraction(previous) + Fraction(acceleration) * Fraction(dt))
+
+
 class Ramp:
     """Each wheel's setpoint clamped to +-top_speed, then moved towards its target by at most accel [rad/s^2] (accel 0:
     no limit), as gz::math::SpeedLimiter's LimitVelocity and LimitAcceleration did in the drivetrain: the
-    acceleration (target - previous) / dt is clamped, and the new setpoint is previous + acceleration x dt."""
+    acceleration (target - previous) / dt is clamped, and the new setpoint is previous + acceleration x dt, rounded
+    once (fused)."""
 
     def __init__(self, accel=SIM.wheel_cmd.accel, rover=ROVER):
         self.accel, self.top, self.rover = accel, rover.wheel.top_speed, rover
@@ -2433,7 +2480,7 @@ class Ramp:
         values = []
         for target, previous in zip(setpoints(vx, wz, self.rover), self.values):
             target = max(min(target, self.top), -self.top)
-            values.append(previous + max(min((target - previous) / dt, high), low) * dt)
+            values.append(fused(previous, max(min((target - previous) / dt, high), low), dt))
         self.values = tuple(values)
         return self.values
 
@@ -2515,7 +2562,7 @@ class TwistDrive:
 cd /Users/alarion239/Desktop/hurc_ws/src/rover_sim/tests && /Users/alarion239/.pixi/bin/pixi run python -m unittest test_wheel_cmd test_rover_config test_rover_model.TrackedModel 2>&1 | tail -3
 ```
 
-Expected: `Ran 22 tests` (10 + 8 + 4) and `OK`; the tracked model is unchanged (the xacro does not read the new keys yet).
+Expected: `Ran 23 tests` (11 + 8 + 4) and `OK`; the tracked model is unchanged (the xacro does not read the new keys yet).
 
 - [ ] **Step 5: Commit**
 
@@ -2525,7 +2572,8 @@ PR 3: rover_sim: wheel_cmd.py, the wheel setpoints the drivetrain made of a twis
 
 The ROS-free way to drive the simulated rover once the drivetrain takes wheel setpoints (sim.yaml topics.wheel_cmd,
 gz.msgs.Double_V, fl rl fr rr): setpoints() is the drivetrain's skid-steer formula, Ramp its gz::math::SpeedLimiter
-arithmetic at sim.yaml's new wheel_cmd accel (8 rad/s^2), Driver feeds a TestFixture run step by step (publishing on
+arithmetic at sim.yaml's new wheel_cmd accel (8 rad/s^2), with previous + acceleration x dt rounded once as
+libgz-math7 computes it on osx-arm64 (a fused multiply-add), Driver feeds a TestFixture run step by step (publishing on
 a change and on the 20 ms beat, and the twist for a DiffDrive rover), TwistDrive sends an already-ramped twist as it
 comes (the driver station). test_wheel_cmd checks them and that controllers.yaml ramps each wheel at the same rate.
 
@@ -3652,9 +3700,8 @@ replace
 ```python
     @classmethod
     def drive(cls, probe):
-        probe.drive(*DRIVE, seconds=3.0)
-        probe.drive(0.0, 0.0, seconds=1.0)
-        time.sleep(0.5)
+        probe.drive_for(*DRIVE, sim_seconds=3.0)
+        probe.drive_for(0.0, 0.0, sim_seconds=1.5)
 ```
 
 with
@@ -3662,13 +3709,12 @@ with
 ```python
     @classmethod
     def drive(cls, probe):
-        probe.drive(*DRIVE, seconds=1.5)
+        probe.drive_for(*DRIVE, sim_seconds=1.5)
         for _ in range(3):  # the ROS-free setpoint topic, while ros2_control drives the wheels
             cls.wheel_cmd.publish(wheel_cmd.message((5.0,) * 4))
-            probe.drive(*DRIVE, seconds=0.1)
-        probe.drive(*DRIVE, seconds=1.2)
-        probe.drive(0.0, 0.0, seconds=1.0)
-        time.sleep(0.5)
+            probe.drive_for(*DRIVE, sim_seconds=0.1)
+        probe.drive_for(*DRIVE, sim_seconds=1.2)
+        probe.drive_for(0.0, 0.0, sim_seconds=1.5)
 ```
 
 and insert before `if __name__ == "__main__":`:
@@ -4239,7 +4285,7 @@ for k in a.files:
     print(k, same, '' if same else f'first differing row {first}: {a[k][first][:3]} vs {b[k][first][:3]}')"
 ```
 
-Expected: seven lines, each `True`: the drivetrain follows the setpoints wheel_cmd.Driver ramps exactly as it ramped its twist (Decision 6), one step later as before. If a physical run differs (`model_rover`, `spin_stop`, `spin_stop_no_ramp`, `arc_sand`, `follow`, `sand_dig_spin`) while `diffdrive` is `True`, the drivetrain no longer runs before the tests' helper system in a step, or the ramp's arithmetic differs: check that the first differing row is where the first command starts to act (row about 20), then compare `wheel_cmd.Ramp` with gz-math 7.7.0's `SpeedLimiter::LimitAcceleration` (`$S/gz-math/src/SpeedLimiter.cc` if the reference clones are still there). Record what was found in the results; the suite's numbers (Step 2) decide.
+Expected: seven lines, each `True`: the drivetrain follows the setpoints wheel_cmd.Driver ramps exactly as it ramped its twist (Decision 6), one step later as before. If a physical run differs (`model_rover`, `spin_stop`, `spin_stop_no_ramp`, `arc_sand`, `follow`, `sand_dig_spin`) while `diffdrive` is `True`, the drivetrain no longer runs before the tests' helper system in a step, or the ramp's arithmetic differs: check that the first differing row is where the first command starts to act (row about 20), then compare `wheel_cmd.Ramp` with gz-math 7.7.0's `SpeedLimiter::LimitAcceleration` (`$S/gz-math/src/SpeedLimiter.cc` if the reference clones are still there). The source does not show how the multiply-add is rounded: the plan critic disassembled the environment's `libgz-math7.dylib` (`llvm-objdump -d`, the symbol `SpeedLimiter17LimitAcceleration`) and found `fmadd`, which `wheel_cmd.fused` reproduces (Decision 6). A first difference in the row where a ramp reaches its target points there. Record what was found in the results; the suite's numbers (Step 2) decide.
 
 - [ ] **Step 2: The full suite and the colcon tests**
 
@@ -4258,7 +4304,7 @@ grep -E "tests passed|tests failed|^Ran |^OK|^FAILED|^exit" $T/suite_b.log
 cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain
 ```
 
-Expected: `... out of 57` (rover_control, unchanged until Part C), `... out of 5` (rover_description), `100% tests passed, 0 tests failed out of 5` (rover_sim: the three plugin tests, `test_rover_components`, `test_rover_sim_system`); `Ran 576 tests` (551, plus 6 `Ros2ControlVariant`, 2 `Environment`, 4 `test_ros2_control`, 10 `test_wheel_cmd`, 2 `Watchdog`, 1 `Equivalence`), `OK (skipped=9, expected failures=2)`; `exit 0`; a clean tree (the suite's `sim-model` wrote the committed model). A timing test that fails under the machine's other load is rerun alone before it counts. Nothing to commit.
+Expected: `... out of 57` (rover_control, unchanged until Part C), `... out of 5` (rover_description), `100% tests passed, 0 tests failed out of 5` (rover_sim: the three plugin tests, `test_rover_components`, `test_rover_sim_system`); `Ran 577 tests` (551, plus 6 `Ros2ControlVariant`, 2 `Environment`, 4 `test_ros2_control`, 11 `test_wheel_cmd`, 2 `Watchdog`, 1 `Equivalence`), `OK (skipped=9, expected failures=2)`; `exit 0`; a clean tree (the suite's `sim-model` wrote the committed model). A timing test that fails under the machine's other load is rerun alone before it counts. Nothing to commit.
 
 ---
 
@@ -5733,10 +5779,15 @@ class WorldCopy(unittest.TestCase):
                                                          controller="drive_controller", sensors="false")
                     actions = module.launch_setup(context)
 
-                def command(action):
-                    return ["".join(s.perform(context) for s in part) for part in action.cmd]
+                def text(substitutions):
+                    return "".join(s.perform(context) for s in substitutions)
 
-                processes = {a.name: command(a) for a in actions
+                def command(action):
+                    return [text(part) for part in action.cmd]
+
+                # An ExecuteProcess's name and each part of its cmd are lists of substitutions (launch normalizes
+                # them), not strings: performed, they are.
+                processes = {text(a.name): command(a) for a in actions
                              if isinstance(a, ExecuteProcess) and not isinstance(a, Node)}
                 expected = {"gz_server"} | ({"gz_gui", "station"} if gui == "true" else set())
                 self.assertEqual(set(processes), expected)
@@ -6330,25 +6381,31 @@ and insert before `    def test_stopped_while_the_world_loads(self):`:
         self.assert_world_stops(copy)
 
     async def drive_session(self, url):
-        """Hold W for 3 s as the page does (its input at 20 Hz): the rover's pose before and after."""
+        """Hold W for 3 s of sim time as the page does (its input at 20 Hz; sim time from the telemetry's stats, so a
+        runner slower than real time drives as far): the rover's pose before and after."""
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(url + "ws") as ws:
-                latest = {}
+                latest, sim = {}, [0.0]
 
                 async def receive():
                     async for msg in ws:
                         data = json.loads(msg.data)
                         if data["t"] == "telemetry" and data.get("pose"):
                             latest.update(data["pose"])
+                        if data["t"] == "telemetry" and (data.get("stats") or {}).get("sim_time") is not None:
+                            sim[0] = data["stats"]["sim_time"]
 
-                async def hold(seconds, keys):
-                    end = time.monotonic() + seconds
-                    while time.monotonic() < end:
+                async def hold(seconds, keys, timeout=60.0):
+                    start, end = sim[0], time.monotonic() + timeout
+                    while sim[0] - start < seconds and time.monotonic() < end:
                         await ws.send_json({"t": "input", "keys": keys, "axes": [0, 0]})
                         await asyncio.sleep(0.05)
                     return dict(latest)
 
                 reader = asyncio.create_task(receive())
+                deadline = time.monotonic() + 30
+                while not (latest and sim[0]) and time.monotonic() < deadline:  # the first pose and sim time
+                    await asyncio.sleep(0.05)
                 before = await hold(1.0, [])
                 await hold(3.0, ["KeyW"])
                 after = await hold(1.0, [])
@@ -6381,23 +6438,30 @@ import threading
 
 import rclpy
 from geometry_msgs.msg import TwistStamped
+from rclpy.signals import SignalHandlerOptions
 
 CMD_VEL_TOPIC = "/cmd_vel"
 UNHEARD = 10.0  # [s] after the start with nothing subscribed to /cmd_vel, the station says so
 
 
 class CmdVel:
-    """twist(vx, wz) on /cmd_vel: the drive output (GzLink's drive) of a station in the ROS stack."""
+    """twist(vx, wz) on /cmd_vel: the drive output (GzLink's drive) of a station in the ROS stack. It needs no executor:
+    the station publishes from its own threads, and nothing here subscribes."""
 
     def __init__(self):
         self._owns_context = not rclpy.ok()
         if self._owns_context:
-            rclpy.init()
+            # No rclpy signal handlers: the station stops on Ctrl-C, SIGTERM and SIGHUP itself and sends a zero twist
+            # on its way out (server.Station.shutdown); rclpy's own handlers would shut its context down first, and
+            # that publish would fail ("publisher's context is invalid").
+            rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         self.node = rclpy.create_node(f"driver_station_{os.getpid()}")
         self._publisher = self.node.create_publisher(TwistStamped, CMD_VEL_TOPIC, 10)
         self._msg = TwistStamped()
 
     def twist(self, vx, wz):
+        if not rclpy.ok():
+            return  # rclpy is down (another owner of the context shut it): nothing can go out
         self._msg.twist.linear.x, self._msg.twist.angular.z = float(vx), float(wz)
         self._publisher.publish(self._msg)
 
@@ -6868,7 +6932,6 @@ import importlib.util
 import re
 import subprocess
 import tempfile
-import time
 import unittest
 ```
 
@@ -6891,9 +6954,11 @@ class SmokeTest(unittest.TestCase):
                 probe.wait(lambda: probe.messages["/odom"] and probe.cmd.get_subscription_count() > 0, 180,
                            "/odom and a subscriber of /cmd_vel", [log])
                 start = probe.messages["/odom"][-1].pose.pose.position.x
-                probe.drive(0.5, 0.0, seconds=5.0)
+                # On sim time (/odom's stamps), so that a runner slower than real time drives as far as this Mac.
+                probe.drive_for(0.5, 0.0, sim_seconds=5.0, timeout=90)
                 driven = probe.messages["/odom"][-1].pose.pose.position.x - start
-                time.sleep(1.5)  # no command: the drive controller's 0.5 s timeout brakes
+                # No command for 2 s of sim time: the drive controller's 0.5 s timeout, then its 0.42 s ramp, brake.
+                probe.drive_for(0.0, 0.0, sim_seconds=2.0, timeout=60, publish=False)
                 coasting = probe.messages["/odom"][-1].twist.twist.linear.x
                 topics = probe.topics()
             finally:
@@ -6902,7 +6967,7 @@ class SmokeTest(unittest.TestCase):
                 text = log.read_text(errors="replace")
         copy = re.search(r"world: (\S+) \(a copy of", text)
         self.assertIsNotNone(copy, text[-3000:])
-        self.assertGreater(driven, 1.0, text[-3000:])  # 0.5 m/s for 5 s, less the ramp and the slip
+        self.assertGreater(driven, 1.5, text[-3000:])  # 0.5 m/s for 5 s of sim time, less the ramp and the slip
         self.assertLess(abs(coasting), 0.05)
         self.assertLessEqual(CONTRACT, topics)
         self.assertNotEqual(subprocess.run(["pgrep", "-f", copy.group(1)], capture_output=True).returncode, 0,
@@ -6960,9 +7025,10 @@ cd /Users/alarion239/Desktop/hurc_ws/src && git add rover_sim/tests/test_sim_lau
 PR 3: the sim.launch.py smoke test, in pixi run test and CI
 
 test_sim_launch.SmokeTest runs sim.launch.py headless on rover_test (gui:=false sensors:=false, no GPU) in the test
-process's private gz partition and ROS domain: /cmd_vel moves /odom by more than a metre in 5 s, the topic contract's
-topics are all there, the drive controller's timeout brakes the rover, and SIGINT stops Gazebo's server too. CI keeps
-ROS 2 discovery on the runner's loopback.
+process's private gz partition and ROS domain: /cmd_vel moves /odom by more than 1.5 m in 5 s of sim time (timed by
+/odom's stamps, so a runner slower than real time is not failed), the topic contract's topics are all there, the drive
+controller's timeout brakes the rover, and SIGINT stops Gazebo's server too. CI keeps ROS 2 discovery on the runner's
+loopback.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -6992,7 +7058,7 @@ comm -23 $T/tests_before.txt $T/tests_after.txt | wc -l; comm -13 $T/tests_befor
 git status --porcelain
 ```
 
-Expected: `100% tests passed, 0 tests failed out of 18` (rover_control), `... out of 5` (rover_description), `... out of 5` (rover_sim); `Ran 589 tests` (Task 10's 576, plus test_sim_launch 9, test_station's RosLink 2, StartsTheStack 1 and the new StationProcess test), `OK (skipped=9, expected failures=2)`, `exit 0`; `0` tests gone and `38` new; a clean tree. Compare with Task 1's baseline lines: every test that passed there passes here.
+Expected: `100% tests passed, 0 tests failed out of 18` (rover_control), `... out of 5` (rover_description), `... out of 5` (rover_sim); `Ran 590 tests` (Task 10's 577, plus test_sim_launch 9, test_station's RosLink 2, StartsTheStack 1 and the new StationProcess test), `OK (skipped=9, expected failures=2)`, `exit 0`; `0` tests gone and `39` new; a clean tree. Compare with Task 1's baseline lines: every test that passed there passes here.
 
 - [ ] **Step 2: The acceptance by hand: /cmd_vel from `ros2 topic pub`, the real rover's launch with the stub**
 
@@ -7049,7 +7115,7 @@ The rover's programs talk to the rover, simulated or real, through these ROS 2 t
 | `/imu` | sensor_msgs/Imu | Gazebo bridge / IMU driver | 100 Hz, frame `base_link` |
 | `/gps/fix` | sensor_msgs/NavSatFix | Gazebo bridge / GNSS driver | 10 Hz, frame `gnss` |
 | `/camera/image`, `/camera/depth`, `/camera/camera_info` | sensor_msgs/Image, CameraInfo | Gazebo bridge / camera driver | The RGB-D camera on the pan-tilt head, 1280×720, 15 Hz, frame `camera`; in the simulation also `/camera/points` (PointCloud2) |
-| `/clock` | rosgraph_msgs/Clock | Gazebo bridge (simulation only) | Sim time: the simulation's nodes run with `use_sim_time` |
+| `/clock` | rosgraph_msgs/Clock | Gazebo bridge (simulation only) | Sim time: the simulation's nodes run with `use_sim_time`, the controllers too (their clock is the controller manager's, which ros2_control also hands the simulated hardware). Without it nothing drives: a zero-stamped command would be stale on arrival, and the drivetrain's watchdog stops the motors when the clock stops |
 | `/ground_truth/odom` | nav_msgs/Odometry | Gazebo bridge (simulation only) | The true pose, `world` → `base_link`, 50 Hz |
 
 Joints: `wheel_fl_joint`, `wheel_rl_joint`, `wheel_fr_joint`, `wheel_rr_joint`, `rocker_left_joint`, `rocker_right_joint`, `camera_pan_joint`, `camera_tilt_joint`. The controllers are `rover_control/config/controllers.yaml`'s, the same on both rovers (`rover_control/README.md`): `drive_controller` (diff_drive_controller, left = FL + RL, right = FR + RR) and `joint_state_broadcaster`.
@@ -7307,6 +7373,16 @@ the controllers in the controller manager gz_ros2_control runs inside
 Gazebo, and the sensor bridge (`bridge.yaml`). The worlds include the ROS-free
 rover (`model://rover`); the launch runs a copy of the world with the rover
 that has ros2_control, at the same pose.
+
+The controllers' clock is the bridged `/clock` (sim time): without the
+bridge nothing drives. Harmless lines in the launch's log:
+`Velocity command timed out. Braking.` once a second while no command comes,
+`Received TwistStamped with zero timestamp` once (the stamp is left zero on
+purpose, `docs/topics.md`), once each `Executor is not available during
+hardware component initialization for 'rover'` and robot_state_publisher's
+KDL warning about the root link's inertia, and from Gazebo's GUI
+`Failed to create component type [...]` for the rover's own components
+(`WheelSetpoint`, `WheelMotorCurrent`), which the GUI does not load.
 ```
 
 replace
@@ -7588,7 +7664,7 @@ PR 3 (`docs/superpowers/plans/2026-10-10-pr3-ros2-control.md`) built section 6 w
 2. **The drive controller's numbers are written out in `rover_control/config/controllers.yaml`** (6), and `rover_control`'s `test_controllers_yaml` checks them against `rover.yaml`. The controllers are named `joint_state_broadcaster` and `drive_controller` (diff_drive_controller); `controller:=<name>` starts another drive controller from the file.
 3. **The hardware stub activates** (6): it reports zero motion and logs the commands it would send, so that the controllers start on the rover's computer; it does not refuse to activate.
 4. **The ramp** (6.1): the drive controller ramps vx and wz (1.2 m/s², 3 rad/s²), each a wheel's 8 rad/s² driving straight or turning in place. The simulation's ROS-free helpers (`rover_sim/wheel_cmd.py`) turn their twists into wheel setpoints with the drivetrain's former formula and ramp (`sim.yaml` `wheel_cmd.accel`), so the calibration runs are bit for bit what they were. The drivetrain keeps the top-speed clamp and its watchdog, which zeroes a stale setpoint at once.
-5. **Timing**: the controller manager's `write()` (gz_ros2_control's PreUpdate) runs before the drivetrain's PreUpdate in every step because its plugin comes first in the model, so a setpoint written at the start of step k drives the motors in step k (`rover_sim/tests/test_ros2_control.py`; the plan's Prototype results).
+5. **Timing**: the controller manager's `write()` (gz_ros2_control's PreUpdate) runs before the drivetrain's PreUpdate in every step because its plugin comes first in the model, so a setpoint written at the start of step k drives the motors in step k (`rover_sim/tests/test_ros2_control.py`, from the steps in which the setpoints change; the plan's Prototype results). ros2_control 4.47 hands the hardware and the controllers the controller manager's clock, not the step's time: sim time from the bridged `/clock`, a few ms behind the step. RoverSimSystem stamps the setpoints with it, so the drivetrain's watchdog also stops the motors when `/clock` stops, the one case diff_drive_controller's own timeout misses because its clock stops with it. Without the `/clock` bridge nothing drives.
 6. **The ROS-free setpoint topic** (`/model/rover/wheel_cmd`) is ignored while ros2_control drives the wheels, with a message at Gazebo's error level, which `gz sim` shows at its default verbosity.
 7. **`pixi run drive <world>` and the launcher start `sim.launch.py` through the station** (6.3), which stays its parent and keeps its stop handling (`ros2 launch` does not handle SIGHUP); `sim.launch.py station:=true` starts the station attached. The launcher's worlds and the tests take ROS domains of their own (50-99).
 8. **The GUI is a separate process on every platform** (6.3), and `sensors:=false` runs without a GPU (the smoke test).
@@ -7625,7 +7701,7 @@ git branch -vv | grep pr3/ros2-control; git ls-remote --heads origin pr3/ros2-co
 cd /Users/alarion239/Desktop/Rover && git status --porcelain | wc -l
 ```
 
-Expected: a clean tree; the plan's commit and the commits of Tasks 2 to 9, 11 to 17, 19 and 20 (pixi; the component; RoverSimSystem; the ROS rover; the prototype; wheel_cmd; the helpers; the drivetrain; the kinematics; the stub; the launch files; sim.launch.py; the station; sim and the launcher; the smoke test; the documents; the spec); `pr3/ros2-control` without an upstream; `0` (not on GitHub); the Rover repository untouched (`0`).
+Expected: a clean tree; the plan's two commits and the commits of Tasks 2 to 9, 11 to 17, 19 and 20 (pixi; the component; RoverSimSystem; the ROS rover; the prototype; wheel_cmd; the helpers; the drivetrain; the kinematics; the stub; the launch files; sim.launch.py; the station; sim and the launcher; the smoke test; the documents; the spec); `pr3/ros2-control` without an upstream; `0` (not on GitHub); the Rover repository untouched (`0`).
 
 - [ ] **Step 2: Remove the temporary files**
 
@@ -7638,7 +7714,7 @@ Expected: `0`. No ROS daemon was started (`--no-daemon`, `ros2 topic pub`, rclpy
 
 - [ ] **Step 3: Report to the user**
 
-Report: the commits; the prototype's results (Task 6: RoverSimSystem loaded by gz_ros2_control in `gz sim -s` on macOS, the GUI as a separate process, the step timing, the readback); the traces bit for bit (Task 10); the counts (Task 1's baseline and Task 18's: colcon 18, 5, 5; the suite 589, 9 skipped, 2 expected failures; 38 new tests, none gone); the acceptance by hand (Task 14 and 18: `ros2 topic pub` drives the simulated rover, rover.launch.py starts with the stub and both controllers active, the station drives through the controllers in `test_station`); the decisions that differ from the spec (section 12); what was not checked here: CI on Linux and Windows (the first push), Gazebo's GUI under `pixi run sim` beyond Task 6's separate-process check, the stack on the rover's own computer; the lock: PR 3 changes `pixi.toml` and `pixi.lock` (31 packages) as PR 2 and the data pull request do, and the lock is `merge=binary`, so whichever merges after another merges `pixi.toml` by hand and regenerates the lock with `pixi lock` (never by merging the lock's text), then checks with a lock diff that only the pull requests' packages were added; and the decision that needs the user: the push of `pr3/ros2-control` and its pull request, which builds on PR 2 (`pr2/rover-description`) and should be opened after PR 2 merges, or against `pr2/rover-description` until then.
+Report: the commits; the prototype's results (Task 6: RoverSimSystem loaded by gz_ros2_control in `gz sim -s` on macOS, the GUI as a separate process, the step timing, the readback); the traces bit for bit (Task 10); the counts (Task 1's baseline and Task 18's: colcon 18, 5, 5; the suite 590, 9 skipped, 2 expected failures; 39 new tests, none gone); the acceptance by hand (Task 14 and 18: `ros2 topic pub` drives the simulated rover, rover.launch.py starts with the stub and both controllers active, the station drives through the controllers in `test_station`); the decisions that differ from the spec (section 12); what was not checked here: CI on Linux and Windows (the first push), Gazebo's GUI under `pixi run sim` beyond Task 6's separate-process check, the stack on the rover's own computer; the lock: PR 3 changes `pixi.toml` and `pixi.lock` (31 packages) as PR 2 and the data pull request do, and the lock is `merge=binary`, so whichever merges after another merges `pixi.toml` by hand and regenerates the lock with `pixi lock` (never by merging the lock's text), then checks with a lock diff that only the pull requests' packages were added; and the decision that needs the user: the push of `pr3/ros2-control` and its pull request, which builds on PR 2 (`pr2/rover-description`) and should be opened after PR 2 merges, or against `pr2/rover-description` until then.
 
 ---
 
@@ -7675,5 +7751,27 @@ Report: the commits; the prototype's results (Task 6: RoverSimSystem loaded by g
 | The suite gets slower (the ROS tests start Gazebo and the stack; four station tests start sim.launch.py) | About 3 minutes more (Task 18 measures it); the smoke test is the spec's 30-second class |
 | CI's Linux runner and Windows build differ from this Mac (DDS on the runner, MSVC with hardware_interface's headers) | LOCALHOST discovery; rover_control exports all symbols on MSVC and builds its tests only where BUILD_TESTING is on (not on Windows); the first push shows it, and the user decides the push |
 | robot_state_publisher's KDL warning and diff_drive_controller's "zero timestamp" warning in every launch's log | Both harmless (PR 2's Decision 14; the zero stamp is the design) |
+| More log noise in the simulation's log: diff_drive_controller warns `Velocity command timed out. Braking.` once a second while no command comes (from 0.5 s after its activation), and the hardware component warns once `Executor is not available during hardware component initialization for 'rover'. Skipping node creation!` (gz_ros2_control 1.2.19 does not pass ros2_control 4.47 the executor); Gazebo's GUI says `Failed to create component type [...]` for the rover's own components in the server's state (the probe saw them in `/world/<name>/state`) | Seen or traced in the plan critic's probe and harmless (Task 6 Step 4 counts the GUI's lines); `docs/sim/manual.md`'s troubleshooting names them, so nobody chases them |
+| ros2_control 4.47 gives the hardware and the controllers the controller manager's clock (the bridged `/clock`, 1 to 16 ms behind the step in the probe), not the time gz_ros2_control passes | Measured by the plan critic's probe (Decisions 2 and 3): the timing and readback tests find the steps from the drivetrain's per-step state, not from the messages' stamps; RoverSimSystem's stamps lag the step by those few ms, far below the watchdog's 0.5 s, and freeze with `/clock`, which stops the motors |
+| `test_ros2_control` and the smoke test on a runner that simulates slower than real time | Both drive on sim time (`rosstack.Probe.drive_for`, timed by `/odom`'s stamps) with wall-clock caps; the thresholds leave room for the ramps and the slip |
+| The ROS-free helpers' ramp is not the plugin's to the bit (libgz-math7 fuses the multiply-add on osx-arm64) | `wheel_cmd.fused` rounds once, as `fmadd` does; `test_wheel_cmd.RampSteps.test_one_rounding_as_libgz_math_computes_it` pins a residue measured from the library |
 | The pixi lock conflicts with PR 2's and the data pull request's | `merge=binary`; whichever merges later regenerates with `pixi lock` after merging `pixi.toml` by hand (Task 21's report) |
 | The drive controller's numbers drift from rover.yaml | `test_controllers_yaml` fails and names the number; rover_description's README says to change both |
+
+## The plan critic's checks (2026-10-10)
+
+Checked on this Mac against a scratch environment locked as Task 2 locks it: gz_ros2_control 1.2.19, ros2_control 4.47.0, ros2_controllers 4.42.1 and gz-sim 8.10. The scratch environment has been deleted. Not checked here: the real rover model in Gazebo (Task 6 does that), Gazebo's GUI as a separate process (Task 6 Step 4), and Linux.
+
+- **Task 4:** the four files, as written, build with `-Wall -Wextra -Wpedantic` without a warning, and the five test cases pass.
+- **The prototype, with a stand-in for the drivetrain:**
+  - A stand-in for the drivetrain's command path ran after gz_ros2_control in a four-wheel model under `gz sim -s`, with robot_state_publisher, the `/clock` bridge, and the spawner arguments of `controllers.launch.py` on this plan's `controllers.yaml`.
+  - gz_ros2_control loaded RoverSimSystem from an install prefix on `AMENT_PREFIX_PATH`.
+  - Both controllers configured and activated, and zero-stamped TwistStamped commands moved `/odom`.
+  - The stand-in system plugin read the `WheelSetpoint` that RoverSimSystem created: two libraries register the component, and the ECM sees one type.
+  - All 42 setpoint changes fell in steps that are 1 mod 10, so the setpoints are handed over in the same step (Decision 3).
+- **The clock:** ros2_control 4.47 gives the hardware's `write()` and the controllers the controller manager's clock, which is sim time from the bridged `/clock`. In the probe it ran 1 to 16 ms behind the step, and `cmd_vel_out` stamps were 8 to 15 ms apart (Decision 2). `test_ros2_control`'s timing and readback tests therefore find the steps from the drivetrain's per-step state, not from the messages' stamps.
+- **The ramp:** libgz-math7's `SpeedLimiter::LimitAcceleration` is compiled to `fmadd` on osx-arm64. `wheel_cmd.fused` matched the library over four ramps of 4000 steps each. Two roundings differed from it in 19 steps of the spin-stop ramp (Decision 6).
+- **The station's signals:** with rclpy's default signal handlers, a publish after SIGTERM fails with `RCLError: publisher's context is invalid`. With `SignalHandlerOptions.NO` it goes out (Decision 14).
+- **Task 14's test:** launch's `ExecuteProcess.name` is a list of substitutions, which cannot be a dict key. The test now performs it first.
+- **The GUI:** the server's full state (`/world/<name>/state`) carries `WheelSetpoint` and `WheelMotorCurrent` on the wheel joints. Gazebo's GUI does not load the library that registers them (Task 6 Step 4, Risks).
+- **diff_drive_controller in the log:** it warns `Velocity command timed out. Braking.` once a second while no command comes.
