@@ -185,3 +185,100 @@ def write_ehdr(bil, array, grid):
              f"ULXMAP {grid.x0 + grid.res / 2!r}", f"ULYMAP {grid.y1 - grid.res / 2!r}", f"XDIM {grid.res!r}",
              f"YDIM {grid.res!r}", *([f"NODATA {NODATA}"] if floating else [])]
     Path(bil).with_suffix(".hdr").write_text("\n".join(lines) + "\n")
+
+
+def gdal(*args):
+    """Runs a GDAL command-line tool, offline as far as PROJ goes; raises with its message when it fails."""
+    tool = shutil.which(args[0])
+    if tool is None:
+        raise RuntimeError(f"{args[0]} not found: run fetch-data in the pixi environment (pixi run fetch-data)")
+    result = subprocess.run([tool, *map(str, args[1:])], env={**os.environ, "PROJ_NETWORK": "OFF"},
+                            capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f"{args[0]} failed: {result.stderr.strip() or result.stdout.strip()}")
+
+
+def read_float(path):
+    """The float32 band of a GeoTIFF gdalwarp wrote, no data (below -1000) as NaN."""
+    log = cv2.utils.logging
+    level = log.getLogLevel()
+    log.setLogLevel(log.LOG_LEVEL_ERROR)  # libtiff warns about every GeoTIFF tag it does not know
+    try:
+        a = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    finally:
+        log.setLogLevel(level)
+    if a is None:
+        raise ValueError(f"{path}: OpenCV cannot read it")
+    a = a.astype(np.float32)
+    a[a < -1000] = np.nan
+    return a
+
+
+def warp_dem(src, target, out):
+    """A float32 raster in UTM 12N with NAVD88 heights (src) bilinear onto the target, as a deflate GeoTIFF with the
+    float predictor."""
+    tmp = Path(out).with_name(f"{Path(out).stem}_warped.tif")
+    gdal("gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:6341+5703", "-t_srs", "EPSG:4326", "-ct", UTM_TO_LONLAT,
+         "-te", *target.te(), "-ts", target.cols, target.rows, "-r", "bilinear", "-srcnodata", NODATA,
+         "-dstnodata", NODATA, "-ot", "Float32", src, tmp)
+    gdal("gdal_translate", "-q", "-a_ullr", *target.ullr(), "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
+         "-co", "TILED=NO", tmp, out)
+    tmp.unlink()
+
+
+def warp_map(src, target, out):
+    """A uint8 raster in UTM 12N (src) nearest onto the target, as a deflate GeoTIFF."""
+    tmp = Path(out).with_name(f"{Path(out).stem}_warped.tif")
+    gdal("gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:6341", "-t_srs", "EPSG:4326", "-ct", UTM_TO_LONLAT,
+         "-te", *target.te(), "-ts", target.cols, target.rows, "-r", "near", src, tmp)
+    gdal("gdal_translate", "-q", "-a_ullr", *target.ullr(), "-co", "COMPRESS=DEFLATE", tmp, out)
+    tmp.unlink()
+
+
+def mdrs_area(files, data_dir, work, target=MDRS_TARGET):
+    """{raster: file in work} made from files["source_tiles"], the 2018 OPR tiles."""
+    vrt = Path(work) / "opr2018.vrt"
+    gdal("gdalbuildvrt", "-q", "-overwrite", vrt, *sorted(files["source_tiles"]))
+    out = Path(work) / "mdrs_area_lidar2018_0p5m.tif"
+    warp_dem(vrt, target, out)
+    return {"dem/mdrs_area_lidar2018_0p5m.tif": out}
+
+
+def route_area(files, data_dir, work, grid=ROUTE_GRID, target=ROUTE_TARGET, fill=ROUTE_FILL):
+    """{raster: file in work} made from files["source_tiles_2018_opr"] (the OPR tiles that intersect the grid),
+    files["source_tiles_2020_lpc"] (the LAZ tiles, in their order) and data_dir/fill."""
+    work, fill_path = Path(work), Path(data_dir) / fill
+    if not fill_path.is_file():
+        raise FileNotFoundError(f"{fill} is not here (fetch-data fetches it before the lidar)")
+    vrt = work / "opr2018.vrt"
+    gdal("gdalbuildvrt", "-q", "-overwrite", vrt, *sorted(files["source_tiles_2018_opr"]))
+    gdal("gdalwarp", "-q", "-overwrite", "-te", *grid.te(), "-tr", *grid.tr(), "-r", "near", "-dstnodata", NODATA,
+         vrt, work / "opr2018_utm.tif")
+    gdal("gdalwarp", "-q", "-overwrite", "-s_srs", "EPSG:4326", "-t_srs", "EPSG:6341", "-ct", LONLAT_TO_UTM,
+         "-te", *grid.te(), "-tr", *grid.tr(), "-r", "bilinear", fill_path, work / "fill_utm.tif")
+    mean, count = cell_means((ground_returns(p) for p in files["source_tiles_2020_lpc"]), grid)
+    z20 = lpc_surface(mean, count, grid)
+    z, src = blend(read_float(work / "opr2018_utm.tif"), z20, read_float(work / "fill_utm.tif"))
+    write_ehdr(work / "route_utm.bil", z, grid)
+    write_ehdr(work / "route_source_utm.bil", src, grid)
+    del mean, count, z20, z, src
+    out_dem, out_map = work / "route_area_lidar_0p5m.tif", work / "route_area_lidar_0p5m_source.tif"
+    warp_dem(work / "route_utm.bil", target, out_dem)
+    warp_map(work / "route_source_utm.bil", target, out_map)
+    return {"dem/route_area_lidar_0p5m.tif": out_dem, "dem/route_area_lidar_0p5m_source.tif": out_map}
+
+
+@dataclass(frozen=True)
+class Recipe:
+    inputs: tuple  # the provenance's keys that list the USGS files it reads
+    outputs: tuple  # the rasters it makes, relative to the data directory
+    make: object  # make(files {input: [paths]}, data_dir, work) -> {output: file in work}
+    needs: tuple = ()  # the rasters under the data directory it reads, fetched before it
+
+
+RECIPES = {
+    "mdrs_area": Recipe(("source_tiles",), ("dem/mdrs_area_lidar2018_0p5m.tif",), mdrs_area),
+    "route_area": Recipe(("source_tiles_2018_opr", "source_tiles_2020_lpc"),
+                         ("dem/route_area_lidar_0p5m.tif", "dem/route_area_lidar_0p5m_source.tif"), route_area,
+                         (ROUTE_FILL,)),
+}

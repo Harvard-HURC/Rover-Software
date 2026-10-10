@@ -206,5 +206,59 @@ class RouteSteps(unittest.TestCase):
         np.testing.assert_allclose(z, plane(x, y) + 0.01, atol=1e-6)
 
 
+class Recipes(unittest.TestCase):
+    """Both recipes end to end on made-up tiles, with GDAL's tools and laspy."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        (self.dir / "work").mkdir()
+        (self.dir / "data" / "dem").mkdir(parents=True)
+
+    def check_gradients(self, z, rows):
+        """In `rows` the made-up plane's slopes: 0.04 per m north (rows run south), 0.02 per m east."""
+        np.testing.assert_allclose(np.diff(z[rows], axis=0), -0.04 * L.LAT_PIXEL * 111004.13, atol=1e-3)
+        np.testing.assert_allclose(np.diff(z[rows], axis=1), 0.02 * L.LON_PIXEL * 87347.19, atol=1e-3)
+
+    def test_route_area_makes_the_dem_and_its_source_map(self):
+        grid = L.UtmGrid(518000.0, 4254000.0, 0.5, 48, 96, 48)  # 24 x 48 m; the point cloud covers the north half
+        files = {"source_tiles_2018_opr": [opr_tile(self.dir / "opr.tif", 518000.0, 4253988.0, 48, 72)],
+                 "source_tiles_2020_lpc": [laz_tile(self.dir / "lpc.laz", grid, holes=[(10, 10)])]}
+        fill_raster(self.dir / "data" / L.ROUTE_FILL)
+        target = target_at(518002.0, 4253998.0, 36, 80)
+        made = L.route_area(files, self.dir / "data", self.dir / "work", grid=grid, target=target)
+        self.assertEqual(sorted(made), ["dem/route_area_lidar_0p5m.tif", "dem/route_area_lidar_0p5m_source.tif"])
+        (z,), transform = dem.read_raster(made["dem/route_area_lidar_0p5m.tif"])
+        (src,), map_transform = dem.read_raster(made["dem/route_area_lidar_0p5m_source.tif"])
+        west, north, east, south = map(float, target.ullr())
+        self.assertEqual(transform, (west, (east - west) / 36, 0.0, north, 0.0, (south - north) / 80))
+        self.assertEqual(map_transform, transform)
+        self.assertEqual((z.shape, src.shape), ((80, 36), (80, 36)))
+        # the shift samples 0.62 m south of each pixel: the point cloud alone north of 4253988 N, both surveys
+        # down to 4253976 N, the 2018 DEM alone south of it
+        self.assertTrue((src[:15] == L.SOURCE_2020).all() and (src[23:38] == L.SOURCE_BLEND).all()
+                        and (src[50:] == L.SOURCE_2018).all(), src[:, 0])
+        self.assertEqual(set(np.unique(src)), {L.SOURCE_2018, L.SOURCE_2020, L.SOURCE_BLEND})
+        self.check_gradients(z, slice(0, 15))  # the filled empty cell among them
+        self.check_gradients(z, slice(50, 80))
+        self.assertTrue(1400.0 < z.min() and z.max() < 1402.6)  # the class-1 returns, 5 m up, are left out
+
+    def test_route_area_needs_the_3dep_fill(self):
+        with self.assertRaisesRegex(FileNotFoundError, "dem/route_area_3dep.tif is not here"):
+            L.route_area({}, self.dir / "data", self.dir / "work")
+
+    def test_mdrs_area_warps_the_opr_tiles(self):
+        tiles = [opr_tile(self.dir / "a.tif", 518000.0, 4253988.0, 24, 72),
+                 opr_tile(self.dir / "b.tif", 518012.0, 4253988.0, 24, 72)]
+        target = target_at(518002.0, 4253986.0, 36, 40)
+        made = L.mdrs_area({"source_tiles": tiles}, self.dir / "data", self.dir / "work", target=target)
+        (z,), transform = dem.read_raster(made["dem/mdrs_area_lidar2018_0p5m.tif"])
+        west, north, east, south = map(float, target.ullr())
+        self.assertEqual(transform, (west, (east - west) / 36, 0.0, north, 0.0, (south - north) / 40))
+        self.assertTrue(np.isfinite(z).all() and z.min() > 1400.0)
+        self.check_gradients(z, slice(0, 40))
+
+
 if __name__ == "__main__":
     unittest.main()
