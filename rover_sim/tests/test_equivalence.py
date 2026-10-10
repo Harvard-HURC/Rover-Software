@@ -13,9 +13,28 @@ import numpy as np
 from sdf_equivalence import differences
 from worldfiles import SIM_DIR
 
-from urc import sdf  # noqa: E402  (worldfiles puts sim/ on the path)
+import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
+from rover_config import Variant  # noqa: E402
+from urc import sdf  # noqa: E402
 
 FIXTURES = SIM_DIR / "tests" / "fixtures" / "rover_model"
+V = Variant()
+# The frozen models and the variants of rover.yaml and sim.yaml that are the same rovers (README.md beside them).
+VARIANTS = {
+    "default": V,
+    "diffdrive": V.replace(drivetrain={"mode": "diffdrive"}),
+    "diffdrive_square": V.replace(drivetrain={"mode": "diffdrive"}, diffdrive={"mu_lateral": 1.0}),
+    "diffdrive_dust": V.replace(drivetrain={"mode": "diffdrive"}, dust={"enabled": True}),
+    "dust": V.replace(dust={"enabled": True}),
+    "cues_off": V.replace(tread_tyre=False, dig_sink={"enabled": False}, ruts={"enabled": False}),
+    "tyre_compliance": V.replace(tyre_compliance={"enabled": True}),
+    "test_physical": V.replace(
+        drivetrain={"cmd_timeout_clock": "sim", "accel": 0.0, "state_rate": 1000.0, "cmd_timeout": 0.0},
+        contact={"dig": False, "mu_noise": 0.0, "default_surface": "sand"}, driveline={"backlash": 0.0},
+        motor={"current_limit": 10.0}, ruts={"tracks": {"report": 1.0}}),
+    "same_surfaces": V.replace(contact={"default_surface": "manmade"}),
+    "unknown_surface": V.replace(contact={"default_surface": "lunar_dust"}),
+}
 
 
 def fixture(name):
@@ -83,6 +102,23 @@ class SdfEquivalence(unittest.TestCase):
         def extra(model):
             sdf.sub(model.find("link[@name='base_link']"), "self_collide", True)
         self.assertEqual(len(self.changed(extra)), 1)
+
+
+class Equivalence(unittest.TestCase):
+    """Each generated variant is its frozen model: links' mass, inertia and pose; joints' type, axis, limits,
+    damping and springs; collisions, visuals and materials; sensors; every plugin and parameter, in order."""
+
+    def test_the_generated_rovers_are_the_frozen_ones(self):
+        self.assertEqual(sorted(p.stem for p in FIXTURES.glob("*.sdf")), sorted(VARIANTS))
+        for name, variant in VARIANTS.items():
+            with self.subTest(name):
+                self.assertEqual(differences(fixture(name), gen_rover.build_sdf(variant)), [])
+
+    def test_the_rover_is_the_tracked_model(self):
+        """The tracked model://rover is the default rover (the comparison, not the bytes: gen_rover.py lays it out
+        as the converter does)."""
+        tracked = (SIM_DIR / "models" / "rover" / "model.sdf").read_text()
+        self.assertEqual(differences(fixture("default"), tracked), [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,213 @@
+# The drivetrain's ground surfaces: every urc/terrains.py type's traction under its dig-in preset
+# (terrains.DIG) and its dust factor, keyed by type. Written by tools/gen_rover.py
+# (pixi run sim-model) from the catalogue; do not edit.
+gravel:
+  mu_s: 0.62
+  mu_k: 0.52
+  crr: 0.05
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.005
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.3
+sand:
+  mu_s: 0.52
+  mu_k: 0.52
+  crr: 0.2
+  bulldoze: 0.06
+  slip: 1.0
+  sinkage_m: 0.02
+  dig_rate: 0.05
+  dig_max: 2.0
+  dust: 0.8
+scree:
+  mu_s: 0.46
+  mu_k: 0.4
+  crr: 0.06
+  bulldoze: 0.0
+  slip: 0.4
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.4
+clay:
+  mu_s: 0.45
+  mu_k: 0.45
+  crr: 0.15
+  bulldoze: 0.06
+  slip: 0.5
+  sinkage_m: 0.02
+  dig_rate: 0.05
+  dig_max: 2.0
+  dust: 1.0
+slickrock:
+  mu_s: 1.0
+  mu_k: 0.85
+  crr: 0.015
+  bulldoze: 0.0
+  slip: 0.05
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.1
+regolith:
+  mu_s: 0.62
+  mu_k: 0.52
+  crr: 0.1
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.005
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.4
+pavement:
+  mu_s: 0.75
+  mu_k: 0.62
+  crr: 0.03
+  bulldoze: 0.0
+  slip: 0.1
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.3
+mudstone:
+  mu_s: 0.6
+  mu_k: 0.5
+  crr: 0.1
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.01
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.7
+bentonite:
+  mu_s: 0.6
+  mu_k: 0.5
+  crr: 0.1
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.01
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.7
+caprock:
+  mu_s: 1.0
+  mu_k: 0.85
+  crr: 0.015
+  bulldoze: 0.0
+  slip: 0.05
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.1
+biocrust:
+  mu_s: 0.62
+  mu_k: 0.52
+  crr: 0.12
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.005
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.2
+gypsum:
+  mu_s: 0.72
+  mu_k: 0.6
+  crr: 0.06
+  bulldoze: 0.0
+  slip: 0.1
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.6
+sand_sheet:
+  mu_s: 0.6
+  mu_k: 0.55
+  crr: 0.15
+  bulldoze: 0.03
+  slip: 0.6
+  sinkage_m: 0.015
+  dig_rate: 0.005
+  dig_max: 1.25
+  dust: 0.6
+wash_sand:
+  mu_s: 0.52
+  mu_k: 0.52
+  crr: 0.25
+  bulldoze: 0.1
+  slip: 1.2
+  sinkage_m: 0.03
+  dig_rate: 0.05
+  dig_max: 2.0
+  dust: 0.6
+fan_pavement:
+  mu_s: 0.75
+  mu_k: 0.62
+  crr: 0.03
+  bulldoze: 0.0
+  slip: 0.1
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.3
+clay_crust:
+  mu_s: 0.78
+  mu_k: 0.65
+  crr: 0.08
+  bulldoze: 0.0
+  slip: 0.1
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.5
+badland_slope:
+  mu_s: 0.6
+  mu_k: 0.5
+  crr: 0.1
+  bulldoze: 0.0
+  slip: 0.3
+  sinkage_m: 0.01
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.7
+silt_flat:
+  mu_s: 0.74
+  mu_k: 0.62
+  crr: 0.06
+  bulldoze: 0.0
+  slip: 0.1
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.9
+rock:
+  mu_s: 1.0
+  mu_k: 0.85
+  crr: 0.015
+  bulldoze: 0.0
+  slip: 0.05
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.1
+block_field:
+  mu_s: 0.46
+  mu_k: 0.4
+  crr: 0.06
+  bulldoze: 0.0
+  slip: 0.4
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.4
+manmade:
+  mu_s: 0.8
+  mu_k: 0.7
+  crr: 0.015
+  bulldoze: 0.0
+  slip: 0.05
+  sinkage_m: 0.0
+  dig_rate: 0.0
+  dig_max: 1.0
+  dust: 0.0
