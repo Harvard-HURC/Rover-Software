@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
-a fresh clone, official tiles made into a raster and checked, nothing
-installed that does not match, the rasters it cannot rebuild yet named with
+a fresh clone, official tiles made into a raster with the original's tags
+and checked, nothing installed that does not match, the rasters it cannot rebuild yet named with
 the worlds that need them and how to get them, without failing the run, and
 its exit status in --help."""
 import contextlib
@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from worldfiles import SIM_DIR
 
@@ -28,13 +29,21 @@ MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+# An original's tags (rasters.json's `tags`) as GDAL writes them for EPSG:4326 (mdrs_area_3dep.tif, the NAIP 2024
+# mosaics), with a description.
+ORIGINAL_TAGS = {"ImageDescription": "made-up imagery, bands R,G,B,NIR",
+                 "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0,
+                                     2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+                 "GeoDoubleParams": [298.257223563, 6378137.0], "GeoAsciiParams": "WGS 84|",
+                 "GDAL_METADATA": '<GDALMetadata>\n  <Item name="DataType">Generic</Item>\n</GDALMetadata>\n'}
 
 
-def raster_bytes(bands, transform):
-    """A GeoTIFF of bands (B, H, W) as fetch_data writes it."""
+def raster_bytes(bands, transform, tags=None):
+    """A GeoTIFF of bands (B, H, W) as fetch_data writes it, with the original's tags (rasters.json's `tags`) or,
+    without them, the three GeoKeys dem.read_raster checks."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "r.tif"
-        fetch_data.write_geotiff(path, bands, fetch_data.geotags(transform))
+        fetch_data.write_geotiff(path, bands, fetch_data.raster_tags({"transform": transform, "tags": tags or {}}))
         return path.read_bytes()
 
 
@@ -59,14 +68,16 @@ def marked_alpha(body):
     return body.replace(entry + b"\x00\x00", entry + b"\x02\x00")
 
 
-def case(directory, bands):
+def case(directory, bands, tags=None):
     """A data directory holding the manifest and provenance of one raster,
-    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
-    (data directory, {url: body} of the tiles)."""
+    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles, with
+    the original's tags if given (the tiles have the three GeoKeys
+    dem.read_raster checks). Returns (data directory, {url: body} of the
+    tiles)."""
     data = Path(directory)
     (data / "dem").mkdir()
     count, height, width = bands.shape
-    whole = raster_bytes(bands, TRANSFORM)
+    whole = raster_bytes(bands, TRANSFORM, tags)
     (data / "whole.tif").write_bytes(whole)
     lon0, dlon, _, lat0, _, dlat = TRANSFORM
     bodies, urls = {}, []
@@ -80,7 +91,7 @@ def case(directory, bands):
     entry = {"path": "dem/made_up.tif", "provenance": "dem/made_up.json", "required": True, "official": True,
              "bytes": len(whole), "sha256": fetch_data.file_sha256(data / "whole.tif"),
              "content_sha256": fetch_data.content_sha256(data / "whole.tif"), "shape": list(bands.shape),
-             "dtype": str(bands.dtype), "transform": list(TRANSFORM)}
+             "dtype": str(bands.dtype), "transform": list(TRANSFORM), **({"tags": tags} if tags else {})}
     (data / "whole.tif").unlink()
     (data / fetch_data.MANIFEST).write_text(json.dumps({"rasters": [entry]}))
     return data, bodies
@@ -157,6 +168,46 @@ class Manifest(unittest.TestCase):
             with self.subTest(e["path"]):
                 self.assertTrue(fetch_data.matches(e, fetch_data.DATA_DIR / e["path"]))
 
+    def test_an_official_raster_lists_its_georeferencing(self):
+        """The tags fetch-data writes into an official raster (`tags`): a GeoKey directory with the GeoKeys
+        dem.read_raster checks, whose other keys find their values in the double and ASCII parameters, and WGS 84's
+        ellipsoid where they give one."""
+        params = {dem.GEO_DOUBLE_PARAMS: "GeoDoubleParams", dem.GEO_ASCII_PARAMS: "GeoAsciiParams"}
+        for e in MANIFEST["rasters"]:
+            if not e["official"]:
+                continue
+            with self.subTest(e["path"]):
+                tags = e["tags"]
+                self.assertLessEqual(set(tags), set(fetch_data.TAGS))
+                keys = tags["GeoKeyDirectory"]
+                self.assertEqual(len(keys), 4 + 4 * keys[3])
+                values = {}
+                for key, location, count, offset in (keys[i:i + 4] for i in range(4, len(keys), 4)):
+                    if location == 0:
+                        values[key] = offset
+                    else:
+                        self.assertLessEqual(offset + count, len(tags[params[location]]), key)
+                        values[key] = tags[params[location]][offset:offset + count]
+                for key, (value, _) in dem.GEOKEYS.items():
+                    self.assertEqual(values[key], value, key)
+                for key, value in ((2057, 6378137.0), (2059, 298.257223563)):  # semi-major axis, inverse flattening
+                    if key in values:
+                        self.assertEqual(values[key], [value], key)
+
+    def test_the_official_rasters_here_have_the_originals_tags(self):
+        """An official raster here, the original or fetched, has the manifest's tags and the pixel scale and
+        tiepoint of its transform: with the original files this checks the manifest, with fetched ones fetch-data."""
+        here = [e for e in MANIFEST["rasters"] if e["official"] and (fetch_data.DATA_DIR / e["path"]).exists()]
+        if not here:
+            self.skipTest("no rasters here (pixi run fetch-data)")
+        for e in here:
+            with self.subTest(e["path"]):
+                path = fetch_data.DATA_DIR / e["path"]
+                self.assertEqual(fetch_data.tags_of(path), e["tags"])
+                with Image.open(path) as img:
+                    for tag in (dem.MODEL_PIXEL_SCALE, dem.MODEL_TIEPOINT):
+                        self.assertEqual(img.tag_v2[tag], fetch_data.geotags(e["transform"])[tag][0], tag)
+
 
 class DryRun(unittest.TestCase):
     def test_a_fresh_clone_says_what_it_would_fetch_and_touches_nothing(self):
@@ -199,6 +250,19 @@ class Fetch(unittest.TestCase):
                 self.assertEqual(transform, TRANSFORM)
                 self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json", "made_up.tif"])
                 self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
+
+    def test_the_raster_gets_the_originals_tags_not_the_tiles(self):
+        """The servers' tiles carry their own GeoTIFF tags (USDA's NAIP 2024 tiles ESRI's, where the original
+        mosaics have GDAL's): the raster gets the original's (`tags`), and a file with its pixels but other tags is
+        not the original."""
+        data, bodies = case(self.tmp.name, naip_bands(), tags=ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server(bodies)),
+                         (0, ["dem/made_up.tif: fetched from its official source, content verified"]))
+        made_up = data / "dem" / "made_up.tif"
+        self.assertEqual(fetch_data.tags_of(made_up), ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
+        made_up.write_bytes(raster_bytes(naip_bands(), TRANSFORM))  # the same pixels, the three GeoKeys only
+        self.assertEqual(run(data, Server({}), "--verify"), (1, ["dem/made_up.tif: DIFFERS"]))
 
     def test_other_pixels_from_the_source_fail_and_install_nothing(self):
         data, bodies = case(self.tmp.name, dem_band())

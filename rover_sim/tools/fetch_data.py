@@ -7,15 +7,17 @@ urc.dem.read_raster reads) and the tracked .json that says where it came
 from. A missing raster is fetched from its official source when it is one or
 more ImageServer exportImage requests (`official`; its .json lists them as
 url, urls or requests): each tile is placed on the raster's grid by its own
-georeferencing, the mosaic is written as a deflate GeoTIFF and kept only if
-its content matches. The others fetch-data cannot rebuild yet (the 0.5 m
-lidar DEMs and their source map, made by processing that is not in the
-repository; the NAIP 2021 route mosaic, whose .json gives only a URL
-template): for each one missing it names the worlds that need it (`worlds`)
-and what is planned (`rebuild`), and a teammate's clone lends it
-(tools/link_data.sh <that clone>). There is no other copy to fetch from;
-without such a raster sim-worlds skips the worlds that need it, and sim,
-drive and the tests' skips say why (world_missing).
+georeferencing, the mosaic is written as a deflate GeoTIFF with the original
+file's georeferencing and metadata (its geotransform and `tags`) and kept
+only if its content matches, so it is the original but for its encoding. The
+others fetch-data cannot rebuild yet (the 0.5 m lidar DEMs and their source
+map, made by processing that is not in the repository; the NAIP 2021 route
+mosaic, whose .json gives only a URL template): for each one missing it
+names the worlds that need it (`worlds`) and what is planned (`rebuild`),
+and a teammate's clone lends it (tools/link_data.sh <that clone>). There is
+no other copy to fetch from; without such a raster sim-worlds skips the
+worlds that need it, and sim, drive and the tests' skips say why
+(world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
@@ -49,6 +51,14 @@ MANIFEST = "rasters.json"  # in the data directory
 TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+# The TIFF tags of an original raster beyond its pixels' layout and encoding and the pixel scale and tiepoint its
+# geotransform gives (geotags), by the names rasters.json's `tags` gives them, with their TIFF types: GeoTIFF's
+# GeoKey directory and its double and ASCII parameters, GDAL's metadata and an image description.
+TAGS = {"ImageDescription": (270, TiffTags.ASCII),
+        "GeoKeyDirectory": (dem.GEO_KEY_DIRECTORY, TiffTags.SHORT),
+        "GeoDoubleParams": (dem.GEO_DOUBLE_PARAMS, TiffTags.DOUBLE),
+        "GeoAsciiParams": (dem.GEO_ASCII_PARAMS, TiffTags.ASCII),
+        "GDAL_METADATA": (dem.GDAL_METADATA, TiffTags.ASCII)}
 
 
 def load_manifest(data_dir=DATA_DIR):
@@ -109,15 +119,24 @@ def content_sha256(path):
     return h.hexdigest()
 
 
+def tags_of(path):
+    """The tags of the TIFF at path that rasters.json's `tags` lists (TAGS), as JSON gives them."""
+    with Image.open(path) as img:
+        found = {name: img.tag_v2[tag] for name, (tag, _) in TAGS.items() if tag in img.tag_v2}
+    return {name: list(value) if isinstance(value, tuple) else value for name, value in found.items()}
+
+
 def matches(entry, path):
     """Whether the raster at path is entry's: the same file, or (fetched from
-    its official source, so encoded anew) the same content."""
+    its official source, so encoded anew) the same content and tags."""
     if file_sha256(path) == entry["sha256"]:
         return True
     try:
-        return content_sha256(path) == entry["content_sha256"]
+        if content_sha256(path) != entry["content_sha256"]:
+            return False
     except Exception:  # not a raster dem.read_raster accepts
         return False
+    return "tags" not in entry or tags_of(path) == entry["tags"]
 
 
 def download(url):
@@ -147,6 +166,17 @@ def geotags(transform):
     return {dem.MODEL_PIXEL_SCALE: ((dlon, -dlat, 0.0), TiffTags.DOUBLE),
             dem.MODEL_TIEPOINT: ((0.0, 0.0, 0.0, lon0, lat0, 0.0), TiffTags.DOUBLE),
             dem.GEO_KEY_DIRECTORY: ((1, 1, 0, len(dem.GEOKEYS), *keys), TiffTags.SHORT)}
+
+
+def raster_tags(entry):
+    """The tags {tag: (value, type)} of the raster entry describes: the pixel scale and tiepoint of its transform,
+    and the original file's GeoKeys, their parameters and its metadata (`tags`). Without `tags` (a test's made-up
+    raster) the GeoKeys are the three dem.read_raster checks."""
+    tags = geotags(entry["transform"])
+    for name, value in entry.get("tags", {}).items():
+        tag, kind = TAGS[name]
+        tags[tag] = (tuple(value) if isinstance(value, list) else value, kind)
+    return tags
 
 
 def clear_alpha(path):
@@ -210,7 +240,7 @@ def mosaic(entry, provenance, get, out_path):
         covered[row:row + h, col:col + w] = True
     if not covered.all():
         raise ValueError(f"the requests leave {np.count_nonzero(~covered)} pixels uncovered")
-    write_geotiff(out_path, out, geotags(entry["transform"]))
+    write_geotiff(out_path, out, raster_tags(entry))
 
 
 def fetch(entry, data_dir, get=download, log=print):
