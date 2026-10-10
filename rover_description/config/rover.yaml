@@ -108,16 +108,17 @@ led:                                # the status LED on the back (URC 2027 rule 
   xyz: [-0.41, 0.0, 0.47]           # [m] (A)
   size: [0.02, 0.16, 0.06]          # [m] (A)
 
-# Parts drawn without mass or collision of their own (their mass is the chassis'), and the colours (RGBA, 0-1).
+# Parts drawn without mass or collision of their own (their mass is the chassis'), and the colours (RGBA, 0-1). All
+# are drawing choices (A); lengths and positions in m.
 looks:
   mast_radius: 0.015                # [m] the GNSS and camera masts
   camera_mast_gap: 0.01             # [m] the camera mast's top below the pan bearing
-  antenna: {radius: 0.06, length: 0.02}
-  turntable: {radius: 0.03, length: 0.02}
-  yoke: {size: [0.03, 0.008], y: 0.07, extra_height: 0.02}   # the tilt yoke's arms: pan_height + extra_height tall
-  yoke_base: {size: [0.03, 0.148, 0.008], z: 0.01}
+  antenna: {radius: 0.06, length: 0.02}                      # [m] the GNSS antenna's disc
+  turntable: {radius: 0.03, length: 0.02}                    # [m] the pan bearing's turntable
+  yoke: {size: [0.03, 0.008], y: 0.07, extra_height: 0.02}   # [m] the tilt yoke's arms: pan_height + extra_height tall
+  yoke_base: {size: [0.03, 0.148, 0.008], z: 0.01}           # [m] the plate joining the arms
   camera_box: [0.04, 0.12, 0.04]    # [m] the camera's housing, also the box its link's inertia is computed for
-  lens: {radius: 0.014, length: 0.012, xyz: [0.024, 0.03, 0.0]}
+  lens: {radius: 0.014, length: 0.012, xyz: [0.024, 0.03, 0.0]}   # [m] xyz from the housing's centre
   colors:
     chassis: [0.85, 0.55, 0.15, 1.0]     # ochre; also the tread tyre's marked spoke
     frame: [0.35, 0.35, 0.38, 1.0]       # rockers, masts and the head
