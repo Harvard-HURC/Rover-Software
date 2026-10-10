@@ -2,10 +2,12 @@
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
 a fresh clone, official tiles made into a raster and checked, nothing
-installed that does not match, the rasters it cannot rebuild yet named with
-the worlds that need them and how to get them, without failing the run, and
-its exit status in --help."""
+installed that does not match, the lidar rebuilt by a recipe from pinned
+USGS files and kept within its stats' tolerance, the rasters it cannot
+rebuild named with the worlds that need them and how to get them, without
+failing the run, and its exit status in --help."""
 import contextlib
+import dataclasses
 import hashlib
 import http.client
 import io
@@ -24,6 +26,7 @@ from worldfiles import SIM_DIR
 
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import fetch_data  # noqa: E402
+import usgs_lidar  # noqa: E402
 from urc import dem, farfield  # noqa: E402
 from urc.missions import COURSES, MISSIONS, autonomy  # noqa: E402
 
@@ -98,6 +101,42 @@ def add_unofficial(data, name, worlds, required=True):
 
 def sha256(body):
     return hashlib.sha256(body).hexdigest()
+
+
+LIDAR_URL = "https://example.test/lpc/lidar.laz"
+
+
+def add_lidar(data, offset):
+    """Adds to the manifest in data two rasters that a made-up recipe of tools/usgs_lidar.py, "made_up", makes from
+    one USGS file: dem/lidar.tif (required) and dem/lidar_map.tif (not required), with their stats. Returns ({url:
+    body} of the file, the recipe, the list of its runs); the DEM it makes is the file's plus offset["m"]."""
+    body = raster_bytes(dem_band(32, 32) + 7.0, TRANSFORM)
+    runs = []
+
+    def make(files, data_dir, work):
+        runs.append(files)
+        bands, transform = dem.read_raster(files["lidar_tiles"][0])
+        made = {"dem/lidar.tif": work / "lidar.tif", "dem/lidar_map.tif": work / "lidar_map.tif"}
+        fetch_data.write_geotiff(made["dem/lidar.tif"], bands + offset["m"], fetch_data.geotags(transform))
+        fetch_data.write_geotiff(made["dem/lidar_map.tif"], np.full_like(bands, 2.0), fetch_data.geotags(transform))
+        return made
+
+    (data / "dem" / "lidar.json").write_text(json.dumps({
+        "recipe": "made_up", "lidar_tiles": [{"url": LIDAR_URL, "size_bytes": len(body), "sha256": sha256(body)}]}))
+    manifest = json.loads((data / fetch_data.MANIFEST).read_text())
+    for name, bands, required in (("lidar", dem_band(32, 32) + 7.0, True),
+                                  ("lidar_map", np.full((1, 32, 32), 2.0), False)):
+        whole = raster_bytes(bands, TRANSFORM)
+        (data / "whole.tif").write_bytes(whole)
+        manifest["rasters"].append({
+            "path": f"dem/{name}.tif", "provenance": "dem/lidar.json", "required": required, "official": True,
+            "bytes": len(whole), "sha256": sha256(whole),
+            "content_sha256": fetch_data.content_sha256(data / "whole.tif"),
+            "shape": [1, 32, 32], "dtype": "float32", "transform": list(TRANSFORM),
+            "stats": fetch_data.stats(dem.read_raster(data / "whole.tif")[0])})
+        (data / "whole.tif").unlink()
+    (data / fetch_data.MANIFEST).write_text(json.dumps(manifest))
+    return {LIDAR_URL: body}, usgs_lidar.Recipe(("lidar_tiles",), ("dem/lidar.tif", "dem/lidar_map.tif"), make), runs
 
 
 def run(data, server, *flags, err=None):
@@ -382,6 +421,99 @@ class Sources(unittest.TestCase):
                 mock.patch.object(fetch_data.time, "sleep"):
             self.assertEqual(fetch_data.download("https://example.test/a.laz"), b"first")
         self.assertEqual(responses, [])
+
+
+class Lidar(unittest.TestCase):
+    """A raster whose provenance names a recipe of tools/usgs_lidar.py: rebuilt from the USGS files listed there and
+    kept when its content matches or, not bit-identical, its stats are within the tolerance."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        (Path(self.tmp.name) / "data").mkdir()
+        self.data, bodies = case(Path(self.tmp.name) / "data", dem_band())
+        self.offset = {"m": 0.0}
+        lidar_bodies, recipe, self.runs = add_lidar(self.data, self.offset)
+        self.bodies = {**bodies, **lidar_bodies}
+        self.temp = Path(self.tmp.name) / "temp"  # where the run's temporary directories go
+        self.temp.mkdir()
+        for patcher in (mock.patch.dict(usgs_lidar.RECIPES, {"made_up": recipe}),
+                        mock.patch.object(tempfile, "tempdir", str(self.temp))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def files(self):
+        return sorted(p.name for p in (self.data / "dem").iterdir())
+
+    def test_a_recipe_makes_its_rasters_in_one_run_and_they_are_verified(self):
+        code, lines = run(self.data, Server(self.bodies), "--all")
+        self.assertEqual((code, lines), (0, ["dem/made_up.tif: fetched from its official source, content verified",
+                                             "  lidar.laz: downloaded, 0.0 MB",
+                                             "dem/lidar.tif: rebuilt from the USGS lidar, content verified",
+                                             "dem/lidar_map.tif: rebuilt from the USGS lidar, content verified"]))
+        self.assertEqual(len(self.runs), 1)
+        self.assertEqual(self.files(), ["lidar.json", "lidar.tif", "lidar_map.tif", "made_up.json", "made_up.tif"])
+        self.assertEqual(list(self.temp.iterdir()), [])  # the downloads and the work directory are gone
+        self.assertEqual(run(self.data, Server({}), "--all", "--verify"),
+                         (0, ["dem/made_up.tif: verified", "dem/lidar.tif: verified", "dem/lidar_map.tif: verified"]))
+
+    def test_the_default_run_makes_only_the_required_raster(self):
+        code, lines = run(self.data, Server(self.bodies))
+        self.assertEqual((code, lines[-1]), (0, "dem/lidar.tif: rebuilt from the USGS lidar, content verified"))
+        self.assertNotIn("lidar_map.tif", self.files())
+
+    def test_the_dry_run_says_what_it_would_download(self):
+        server = Server(self.bodies)
+        self.assertEqual(run(self.data, server, "--dry-run", "--all"),
+                         (0, ["dem/made_up.tif: missing, would fetch from the official source, 4 request(s)",
+                              "dem/lidar.tif: missing, would rebuild it from the USGS lidar, 1 file(s), 0 MB",
+                              "dem/lidar_map.tif: missing, would rebuild it from the USGS lidar, 1 file(s), 0 MB"]))
+        self.assertEqual((server.asked, self.runs), ([], []))
+
+    def test_a_file_that_is_not_the_listed_one_fails_and_installs_nothing(self):
+        bad = b"X" + self.bodies[LIDAR_URL][1:]
+        self.bodies[LIDAR_URL] = bad
+        err = io.StringIO()
+        code, lines = run(self.data, Server(self.bodies), err=err)
+        self.assertEqual((code, lines[1:]), (1, [
+            f"dem/lidar.tif: FAILED, the rebuild from the USGS lidar failed ({LIDAR_URL} is not the file the "
+            f"provenance lists ({len(bad)} bytes, SHA-256 {sha256(bad)[:12]}...))"]))
+        self.assertEqual((self.runs, self.files()), ([], ["lidar.json", "made_up.json", "made_up.tif"]))
+        self.assertIn("1 raster(s) not fetched (FAILED above)", err.getvalue())
+
+    def test_a_rebuild_within_the_tolerance_is_kept_and_says_so(self):
+        self.offset["m"] = 0.0002  # what another platform's rounding might give
+        code, lines = run(self.data, Server(self.bodies))
+        how = "content within 0.001 of rasters.json's stats, not bit-identical"
+        self.assertEqual((code, lines[-1]), (0, f"dem/lidar.tif: rebuilt from the USGS lidar, {how}"))
+        self.assertEqual(run(self.data, Server({}), "--verify"),
+                         (0, ["dem/made_up.tif: verified", f"dem/lidar.tif: verified, {how}"]))
+
+    def test_a_rebuild_beyond_the_tolerance_fails(self):
+        self.offset["m"] = 0.01  # a wrong tile or step: centimetres
+        code, lines = run(self.data, Server(self.bodies))
+        self.assertEqual((code, lines[-1]), (1, "dem/lidar.tif: FAILED, the rebuild from the USGS lidar gives other "
+                                                "pixels than rasters.json lists"))
+        self.assertNotIn("lidar.tif", self.files())
+
+    def test_sources_keeps_the_downloads_for_the_next_run(self):
+        sources = Path(self.tmp.name) / "sources"
+        self.assertEqual(run(self.data, Server(self.bodies), "--sources", str(sources))[0], 0)
+        self.assertEqual(sorted(p.name for p in sources.iterdir()), ["lidar.laz"])
+        (self.data / "dem" / "lidar.tif").unlink()
+        server = Server({})
+        self.assertEqual(run(self.data, server, "--sources", str(sources)),
+                         (0, ["dem/made_up.tif: present",
+                              "dem/lidar.tif: rebuilt from the USGS lidar, content verified"]))
+        self.assertEqual(server.asked, [])
+
+    def test_a_raster_the_recipe_reads_that_is_not_here_fails_before_any_download(self):
+        usgs_lidar.RECIPES["made_up"] = dataclasses.replace(usgs_lidar.RECIPES["made_up"], needs=("dem/fill.tif",))
+        server = Server(self.bodies)
+        code, lines = run(self.data, server)
+        self.assertEqual((code, lines[-1]), (1, "dem/lidar.tif: FAILED, the rebuild from the USGS lidar failed "
+                                                "(dem/fill.tif is not here (fetch-data fetches it first))"))
+        self.assertNotIn(LIDAR_URL, server.asked)
 
 
 class Help(unittest.TestCase):
