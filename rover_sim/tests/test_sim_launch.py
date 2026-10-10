@@ -3,6 +3,8 @@
 the world's copy with the rover swapped for the one with ros2_control, the sensor bridge's topics, and (SmokeTest) a
 run of it headless."""
 import importlib.util
+import re
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -133,6 +135,42 @@ class SensorBridge(unittest.TestCase):
         self.assertLessEqual({"/imu", "/gps/fix", "/camera/image", "/camera/depth", "/camera/camera_info", "/clock",
                               "/ground_truth/odom"}, names)
         self.assertEqual(names & {"/cmd_vel", "/odom", "/joint_states", "/tf"}, set())
+
+
+class SmokeTest(unittest.TestCase):
+    """sim.launch.py headless on rover_test (gui:=false sensors:=false: no GPU needed, as on CI's Linux runner), in this
+    process's private gz partition and ROS domain (design spec 2026-10-09, 8: the smoke test): a /cmd_vel command moves
+    /odom, the topic contract's topics are there, the drive controller's timeout brakes the rover, and SIGINT stops it
+    all."""
+
+    def test_cmd_vel_moves_odom(self):
+        with tempfile.TemporaryDirectory(prefix="rover_smoke_") as tmp:
+            log = Path(tmp) / "launch.log"
+            launch = rosstack.start(["ros2", "launch", SIM_LAUNCH, "world:=rover_test", "gui:=false", "sensors:=false"],
+                                    log)
+            probe = rosstack.Probe()
+            try:
+                probe.wait(lambda: probe.messages["/odom"] and probe.cmd.get_subscription_count() > 0, 180,
+                           "/odom and a subscriber of /cmd_vel", [log])
+                start = probe.messages["/odom"][-1].pose.pose.position.x
+                # On sim time (/odom's stamps), so that a runner slower than real time drives as far as this Mac.
+                probe.drive_for(0.5, 0.0, sim_seconds=5.0, timeout=90)
+                driven = probe.messages["/odom"][-1].pose.pose.position.x - start
+                # No command for 2 s of sim time: the drive controller's 0.5 s timeout, then its 0.42 s ramp, brake.
+                probe.drive_for(0.0, 0.0, sim_seconds=2.0, timeout=60, publish=False)
+                coasting = probe.messages["/odom"][-1].twist.twist.linear.x
+                topics = probe.topics()
+            finally:
+                probe.close()
+                rosstack.stop(launch)
+                text = log.read_text(errors="replace")
+        copy = re.search(r"world: (\S+) \(a copy of", text)
+        self.assertIsNotNone(copy, text[-3000:])
+        self.assertGreater(driven, 1.5, text[-3000:])  # 0.5 m/s for 5 s of sim time, less the ramp and the slip
+        self.assertLess(abs(coasting), 0.05)
+        self.assertLessEqual(CONTRACT, topics)
+        self.assertNotEqual(subprocess.run(["pgrep", "-f", copy.group(1)], capture_output=True).returncode, 0,
+                            "Gazebo's server still runs")
 
 
 if __name__ == "__main__":

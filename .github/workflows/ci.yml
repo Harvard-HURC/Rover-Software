@@ -30,6 +30,8 @@ jobs:
     timeout-minutes: 150
     env:
       GZ_IP: 127.0.0.1
+      # ROS 2 discovery stays on the runner's loopback; each test process also takes a ROS domain of its own.
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
       # tests/gpu.py: 0 skips the rendering tests (the Ubuntu runner has no GPU, whatever device nodes its virtual
       # machine shows); empty lets gpu.py decide (every Mac renders).
       ROVER_RENDERING: ${{ matrix.rendering }}
@@ -73,6 +75,8 @@ jobs:
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
           key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+      # The colcon tests (rover.launch.py on the hardware stub among them) and the simulation's suite, which runs
+      # RoverSimSystem inside Gazebo with the controllers and sim.launch.py headless (the smoke test): no GPU needed.
       - run: pixi run test
       # The tests regenerate tracked files (sim-model writes the rover's and the cameras' models, the wheel mesh and
       # the dust sprite): a generated file committed stale, or a test that changes a tracked file, fails here.
