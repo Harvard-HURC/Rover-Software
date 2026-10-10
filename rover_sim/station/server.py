@@ -18,7 +18,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-import gen_model
+import rover_config
 import viewers
 from urc import rules
 from urc import sheet as sheets
@@ -262,11 +262,11 @@ class Station:
             left, right = joints["rocker_left_joint"][0], joints["rocker_right_joint"][0]
             # The differential keeps left + right at zero (plugins/rocker_differential.cpp).
             rockers = {"left": left, "right": right, "error": left + right}
-        wheels = {w: joints[f"wheel_{w}_joint"][1] * drive.ROVER.wheel_radius
+        wheels = {w: joints[f"wheel_{w}_joint"][1] * drive.ROVER.wheel.radius
                   for w in ("fl", "fr", "rl", "rr") if f"wheel_{w}_joint" in joints} or None
         head = None
-        if gen_model.PAN_JOINT in joints and gen_model.TILT_JOINT in joints:
-            head = {"pan": joints[gen_model.PAN_JOINT][0], "tilt": joints[gen_model.TILT_JOINT][0]}
+        if rover_config.PAN_JOINT in joints and rover_config.TILT_JOINT in joints:
+            head = {"pan": joints[rover_config.PAN_JOINT][0], "tilt": joints[rover_config.TILT_JOINT][0]}
         return {
             "t": "telemetry", "stats": s.get("stats"), "pose": s.get("pose"),
             "rockers": rockers, "wheels": wheels, "head": head, "gnss": s.get("gnss"), "led": s.get("led"),
@@ -292,13 +292,13 @@ class Station:
         info = {
             "world": self.world,
             "map": minimap.map_info(self.sheet),
-            "rover": {"pivot_z": r.pivot_z, "wheel_dx": r.wheel_dx, "wheel_dz": r.wheel_dz,
-                      "wheel_radius": r.wheel_radius, "chassis_size": r.chassis_size, "chassis_z": r.chassis_z,
-                      "rocker_limit": r.rocker_limit},
-            "hfov": {"eye": gen_model.EyeParams().hfov, "chase": gen_model.ChaseParams().hfov,
-                     "rgb": r.camera_hfov, "depth": r.camera_hfov, "fly": FLY.hfov},
+            "rover": {"pivot_z": r.rocker.pivot_z, "wheel_dx": r.wheel.dx, "wheel_dz": r.wheel.dz,
+                      "wheel_radius": r.wheel.radius, "chassis_size": r.chassis.size, "chassis_z": r.chassis.z,
+                      "rocker_limit": r.rocker.limit},
+            "hfov": {"eye": viewers.EyeParams().hfov, "chase": viewers.ChaseParams().hfov,
+                     "rgb": r.camera.hfov, "depth": r.camera.hfov, "fly": FLY.hfov},
             "fly": {"aspect": FLY.size[0] / FLY.size[1], "fast": FLY.fast, "speed_scales": FLY.speed_scales},
-            "drivetrain": {"current_limit": r.drive.current_limit},
+            "drivetrain": {"current_limit": r.motor.current_limit},
             "presets": drive.PRESETS, "max": [drive.MAX_LINEAR, drive.MAX_ANGULAR], "deadman": drive.DEADMAN,
         }
         if info["map"] is not None:

@@ -15,13 +15,13 @@
 //   The rule reads a wheel's spin through the controller's 5 ms speed filter (OnContact says why).
 // - rolling resistance and bulldozing as hub forces, scaled by each wheel's dig-in state (D5, D21).
 // - the dust emitters behind the rear wheels, if the model has them (<dust>), get a rate from speed, slip and
-//   the ground (D15). gen_model.py writes them only with DriveParams.dust, off by default (user decision
+//   the ground (D15). The model has them only with sim.yaml's dust on, off by default (user decision
 //   2026-10-07: depth and point clouds see any visible particle); without <dust> nothing is advertised or sent.
 // - no-slip odometry (gz::math::DiffDriveOdometry) and tf as DiffDrive publishes them, and the drivetrain's
 //   state as JSON (spec 9.3).
-// - the dig-in made visible (<dig_sink>, DriveParams.dig_sink): each wheel's visuals, never its collision, drawn
+// - the dig-in made visible (<dig_sink>, sim.yaml dig_sink): each wheel's visuals, never its collision, drawn
 //   (D - 1) x the ground's static sinkage lower (ShowSink). Physics never reads a visual's pose.
-// - the ruts and pits behind the wheels, if the plugin has <tracks> (gen_model.DriveParams.ruts, on by default):
+// - the ruts and pits behind the wheels, if the plugin has <tracks> (sim.yaml ruts, on by default):
 //   rover_tracks.hh and rover_tracks_render.hh, fed at the end of the step from each wheel's state; visual only,
 //   they read the state and write no component.
 //
@@ -29,7 +29,7 @@
 // collision map for the terrain model's other shapes); a plane is ground of the default surface; any other
 // model grips with the mu its SDF <surface> sets (as mu_s = mu_k, crr 0.015, slip 0.05, spec 5.6) or as the
 // object surface. Without a ground map the default and object surfaces come from this plugin's <surface>
-// rows (gen_model.py writes them from the catalogue, sim/urc/terrains.py).
+// rows (tools/gen_rover.py writes them from the catalogue, sim/urc/terrains.py, into config/surfaces.yaml).
 //
 // Wheel loads come from each wheel joint's transmitted wrench (gate G8: within 2.6 % of contact loads, and
 // cheaper): the contact force is minus the joint force, the wheel's weight and the hub force; its part along
@@ -46,7 +46,7 @@
 // wheels' ContactSensorData would give the same for +11 % CPU time per step (measured on rover_test and
 // Delivery).
 //
-// SDF: see gen_model.py (_add_drivetrain), which writes every element; units SI.
+// SDF: see urdf/rover_sim.urdf.xacro, which writes every element from rover.yaml and config/sim.yaml; units SI.
 
 #include <gz/msgs/odometry.pb.h>
 #include <gz/msgs/particle_emitter.pb.h>
@@ -287,7 +287,7 @@ class RoverDrivetrain : public gz::sim::System,
         ecm.CreateComponent(collision, gz::sim::components::EnableContactSurfaceCustomization(true));
       }
     }
-    // The emitters to drive, if any (none by default: DriveParams.dust); a wheel without one raises no dust.
+    // The emitters to drive, if any (none by default: sim.yaml dust); a wheel without one raises no dust.
     for (auto e = sdf->FindElement("dust"); e; e = e->GetNextElement("dust")) {
       const auto link = e->Get<std::string>("wheel", "").first;
       for (auto& w : wheels_) {
