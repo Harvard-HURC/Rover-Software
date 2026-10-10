@@ -34,6 +34,7 @@ from worldfiles import SENSORS, SIM_DIR, WORLDS, temp_sdf
 
 import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
 import viewers  # noqa: E402
+import wheel_cmd  # noqa: E402
 from rover_config import ROVER, SIM  # noqa: E402
 from station import drive, minimap, server, video  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
@@ -44,7 +45,6 @@ from gz.msgs10.image_pb2 import Image  # noqa: E402
 from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
 from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
-from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.vector3d_pb2 import Vector3d  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
@@ -1111,11 +1111,9 @@ class ChaseCameraFlight(unittest.TestCase):
         extra = (f"<include><uri>model://{viewers.CHASE_MODEL}</uri><name>{viewers.CHASE_MODEL}</name>"
                  "<pose>-5 0 2 0 0 0</pose></include>")
         node = Node()
-        twist_pub = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+        driver = wheel_cmd.Driver(node)
         cmd_pub = node.advertise(viewers.CHASE_CMD_TOPIC, Vector3d)
         mode_pub = node.advertise(viewers.CHASE_MODE_TOPIC, StringMsg)
-        twist = Twist()
-        twist.linear.x, twist.angular.z = 0.6, 0.35
         zoom = math.log(1.5)
         # (sim time [s], action): commands go out once (cmd deltas add up); the
         # one at 5 s is not finite and must be dropped.
@@ -1134,8 +1132,10 @@ class ChaseCameraFlight(unittest.TestCase):
                 world = World(world_entity(ecm))
                 models["rover"] = Model(world.model_by_name(ecm, "rover"))
                 models["camera"] = Model(world.model_by_name(ecm, viewers.CHASE_MODEL))
-            if info.iterations % 20 == 0:
-                twist_pub.publish(twist)
+            beat = info.iterations % 20 == 0
+            if beat:
+                driver.command(0.6, 0.35)
+            driver.step(force=beat)
             t = info.iterations / 1000
             for when, action in plan:
                 if abs(t - when) < 5e-4:

@@ -38,13 +38,13 @@ from gz.msgs10.particle_emitter_pb2 import ParticleEmitter  # noqa: E402
 from gz.msgs10.pose_v_pb2 import Pose_V  # noqa: E402
 from gz.msgs10.serialized_map_pb2 import SerializedStepMap  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
-from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.world_control_pb2 import WorldControl  # noqa: E402
 from gz.sim8 import TestFixture  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 from urc import meshes, terrain, terrains  # noqa: E402
 
 import rover_config  # noqa: E402
+import wheel_cmd  # noqa: E402
 from rover_config import ROVER, SIM  # noqa: E402
 
 A, C = ROVER.wheel.dx, ROVER.rocker.pivot_y  # half wheelbase, half track [m]
@@ -110,11 +110,12 @@ def drive(seconds, cmd, ground="regolith", params=None, solver=None, hf=FLAT, ra
           gravity=(0.0, 0.0, -9.8), rows=ROWS):
     """Run the physical rover on terrain hf with ground map `raster` (default: `ground` everywhere)."""
     raster = everywhere(ground, hf.n) if raster is None else raster
+    params = params or physical(contact={"dig": False})
     with ground_world(hf, raster, rows, rover, lift=lift, ground_options=OPTIONS, terrain_extra=terrain_extra,
-                      extra=extra, params=params or physical(contact={"dig": False}), solver=solver,
-                      gravity=gravity) as world:
+                      extra=extra, params=params, solver=solver, gravity=gravity) as world:
         s = simulate(seconds, world=world, cmd=cmd, trace_every=trace_every, publish_until=publish_until,
-                     subscribe=[(rover_config.DRIVETRAIN_TOPIC, StringMsg), *subscribe])
+                     subscribe=[(rover_config.DRIVETRAIN_TOPIC, StringMsg), *subscribe],
+                     accel=params.sim.wheel_cmd.accel)
     return Run(s, [json.loads(m.data) for m in s.messages[rover_config.DRIVETRAIN_TOPIC]])
 
 
@@ -799,12 +800,17 @@ class Interfaces(unittest.TestCase):
                           params=physical(contact={"dig": False}, drivetrain={"cmd_timeout": 0.0})) as world:
             fixture = TestFixture(world)
             node = Node()
-            publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
-            twist = Twist()
-            twist.linear.x = 0.5
+            driver = wheel_cmd.Driver(node)
             commanding = [True]
-            fixture.on_pre_update(lambda info, ecm: commanding[0] and info.iterations % 20 == 0
-                                  and publisher.publish(twist))
+
+            def drive(info, ecm):
+                if commanding[0]:
+                    beat = info.iterations % 20 == 0
+                    if beat:
+                        driver.command(0.5, 0.0)
+                    driver.step(force=beat)
+
+            fixture.on_pre_update(drive)
             fixture.finalize()
             before, after = [], []
             node.subscribe(Odometry, rover_config.ODOM_TOPIC, before.append)

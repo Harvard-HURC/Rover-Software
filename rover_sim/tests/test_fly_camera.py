@@ -29,7 +29,7 @@ import gpu
 from simulate import world_sdf
 from worldfiles import SIM_DIR, gz_check, temp_sdf
 
-import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+import wheel_cmd  # noqa: E402  (worldfiles puts sim/ on the path)
 import viewers  # noqa: E402
 from urc import meshes  # noqa: E402
 from urc import terrain as terrains  # noqa: E402
@@ -133,11 +133,13 @@ def heightmap_model(path, size, height, texture=None):
 
 # --- Flights in this process ------------------------------------------------------------------
 
-def fly(world, seconds, events=(), holds=(), track=(), sleeps=(), fixture_runs=None):
+def fly(world, seconds, events=(), holds=(), track=(), sleeps=(), fixture_runs=None, drive=()):
     """Run `world` (SDF text) for `seconds` of sim time in this process, then
     fixture_runs(fixture) if given. events: (t, topic, message) published
     once at sim time t; holds: (t0, t1, topic, message) published every 20 ms
-    from t0 until before t1; neither after a world reset. track: other models
+    from t0 until before t1; drive: (t0, t1, vx, wz), the rover's twist from t0
+    until before t1, as wheel_cmd.Driver's setpoints; none of them after a
+    world reset. track: other models
     whose canonical link's position to record. sleeps: (t, s) wall-clock
     pauses at sim time t. Returns
     {"t": [s], "camera": steps x 6 (x, y, z, roll, pitch, yaw), name: steps x 3,
@@ -147,6 +149,7 @@ def fly(world, seconds, events=(), holds=(), track=(), sleeps=(), fixture_runs=N
     for _, topic, message in [*events, *[(t0, topic, m) for t0, _, topic, m in holds]]:
         if topic not in publishers:
             publishers[topic] = node.advertise(topic, type(message))
+    driver = wheel_cmd.Driver(node)
     states = []
     node.subscribe(StringMsg, viewers.FLY_STATE_TOPIC, lambda m: states.append(json.loads(m.data)))
     links = {}
@@ -166,10 +169,16 @@ def fly(world, seconds, events=(), holds=(), track=(), sleeps=(), fixture_runs=N
         for when, topic, message in events:
             if abs(t - when) < 5e-4:
                 publishers[topic].publish(message)
-        if info.iterations % 20 == 0:
+        beat = info.iterations % 20 == 0
+        if beat:
             for t0, t1, topic, message in holds:
                 if t0 - 5e-4 < t < t1 - 5e-4:
                     publishers[topic].publish(message)
+        for t0, t1, vx, wz in drive:
+            if t0 - 5e-4 < t < t1 - 5e-4:
+                if beat:
+                    driver.command(vx, wz)
+                driver.step(force=beat)
         for when, pause in sleeps:
             if abs(t - when) < 5e-4:
                 time.sleep(pause)
@@ -367,7 +376,7 @@ class Flight(unittest.TestCase):
         world = world_sdf(render_map.fly_model(FLY, (-6, 0, 3, 0, 0.4, 0)))
         r = fly(world, 9.0, events=[(1.0, viewers.FLY_MODE_TOPIC, text("follow")),
                                     (6.0, viewers.FLY_MODE_TOPIC, text("free"))],
-                holds=[(0.0, 9.0, rover_config.CMD_VEL_TOPIC, twist(0.6))], track=["rover"])
+                drive=[(0.0, 9.0, 0.6, 0.0)], track=["rover"])
 
         def offset(t):
             return np.array(at(r, t)[:3]) - at(r, t, "rover")

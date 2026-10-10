@@ -26,7 +26,7 @@ from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_v
 from worldfiles import skip_if_missing, world_copy
 from worldfiles import terrain as world_terrain
 
-import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+import wheel_cmd  # noqa: E402  (worldfiles puts sim/ on the path)
 from rover_config import ROVER  # noqa: E402
 from urc import appearance, dem, features, geo, landscape, lighting, meshes, terrain, terrains, textures  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
@@ -36,7 +36,6 @@ from urc import world as world_module  # noqa: E402
 from urc.world import COLLIDING, MAX_SINKAGE, ROCK_BURY, SLAB_BURY, Layer, WorldBuilder, add_relief, site  # noqa: E402
 
 import gz.math7  # noqa: E402,F401  (lets gz.sim8 return Pose3d values)
-from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.sim8 import Link, Model, TestFixture, World, world_entity  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 
@@ -1031,17 +1030,17 @@ def wheel_poses(world, seconds, speed):
     rows of sim time and each wheel link's world pose (x, y, z, qw, qx, qy, qz),
     every 10 ms."""
     node = Node()
-    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
-    twist = Twist()
+    driver = wheel_cmd.Driver(node)
     rows, links = [], {}
 
     def pre(info, ecm):
         if not links:
             rover = Model(World(world_entity(ecm)).model_by_name(ecm, "rover"))
             links.update({name: Link(rover.link_by_name(ecm, name)) for name in WHEEL_LINKS})
-        if info.iterations % 20 == 0:
-            twist.linear.x = speed if info.iterations >= 1000 else 0.0
-            publisher.publish(twist)
+        beat = info.iterations % 20 == 0
+        if beat:
+            driver.command(speed if info.iterations >= 1000 else 0.0, 0.0)
+        driver.step(force=beat)
 
     def post(info, ecm):
         if info.iterations % 10 == 0:

@@ -39,6 +39,7 @@ import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
 import gzenv  # noqa: E402
 import rover_config  # noqa: E402
 import viewers  # noqa: E402
+import wheel_cmd  # noqa: E402
 from rover_config import ROVER, Variant  # noqa: E402
 from urc import appearance as A  # noqa: E402
 from urc import dem, farfield, geo, lighting, meshes, props, sdf, terrain, terrains  # noqa: E402
@@ -256,7 +257,6 @@ def _drive_main(cfg_path):
     from gz.msgs10.boolean_pb2 import Boolean
     from gz.msgs10.image_pb2 import Image
     from gz.msgs10.stringmsg_pb2 import StringMsg
-    from gz.msgs10.twist_pb2 import Twist
     from gz.msgs10.world_control_pb2 import WorldControl
     from gz.sim8 import Link, Model, TestFixture, World, world_entity
     from gz.transport13 import Node
@@ -277,20 +277,24 @@ def _drive_main(cfg_path):
         node.subscribe(Image, topic, lambda msg, t=topic: on_image(msg, t))
     states = []
     node.subscribe(StringMsg, rover_config.DRIVETRAIN_TOPIC, lambda m: states.append((phase[0], m.data)))
-    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
-    twist, handles, trace = Twist(), {}, []
+    driver = wheel_cmd.Driver(node)
+    handles, trace, driven = {}, [], [0]  # driven: the phase the driver last drove in
 
     def pre_update(info, ecm):
         if not handles:
             handles["base"] = Link(Model(World(world_entity(ecm)).model_by_name(ecm, "rover")).link_by_name(
                 ecm, "base_link"))
-        if info.iterations % 20 == 0:
+        if driven[0] != phase[0]:  # the world was reset: the ramp starts from zero again, as the drivetrain's did
+            driven[0] = phase[0]
+            driver.reset()
+        beat = info.iterations % 20 == 0
+        if beat:
             vx = wz = 0.0
             for start, v, w in cfg["schedule"]:
                 if info.iterations / 1000 >= start:
                     vx, wz = v, w
-            twist.linear.x, twist.angular.z = vx, wz
-            publisher.publish(twist)
+            driver.command(vx, wz)
+        driver.step(force=beat)
 
     def post_update(info, ecm):
         if info.iterations % 10 == 0:
@@ -340,7 +344,6 @@ def _render_main(cfg_path):
     import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
     from gz.msgs10.image_pb2 import Image
     from gz.msgs10.stringmsg_pb2 import StringMsg
-    from gz.msgs10.twist_pb2 import Twist
     from gz.sim8 import TestFixture
     from gz.transport13 import Node
     out = Path(cfg["out"])
@@ -353,14 +356,15 @@ def _render_main(cfg_path):
     commands = cfg.get("commands")
     driving = [bool(commands)]
     if commands:
-        publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
-        twist = Twist()
+        driver = wheel_cmd.Driver(node)
 
         def pre_update(info, ecm):
             k, due = divmod(info.iterations, COMMAND_STEPS)
-            if driving[0] and not due and k < len(commands):
-                twist.linear.x, twist.angular.z = commands[k]
-                publisher.publish(twist)
+            if not driving[0] or k >= len(commands):
+                return
+            if not due:
+                driver.command(*commands[k])
+            driver.step(force=not due)
 
         fixture.on_pre_update(pre_update)
     fixture.finalize()
