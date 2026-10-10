@@ -26,6 +26,7 @@ from urc.missions import COURSES, MISSIONS  # noqa: E402
 
 MODELS_DIR = SIM_DIR / "models"
 WORLDS_DIR = SIM_DIR / "worlds"
+DATA_DIR = SIM_DIR / "data"  # the terrain rasters, git-ignored (pixi run fetch-data)
 URI = re.compile(r"model://([\w.-]+)((?:/[\w.-]+)*)")
 LOCK = ".gen_worlds.lock"  # in the models directory
 
@@ -90,7 +91,13 @@ def main():
         media = Media(MODELS_DIR)
         for key in args.worlds or sorted(worlds):
             start = time.time()
-            world, sheet = worlds[key].build(MODELS_DIR, WORLDS_DIR, media)
+            try:
+                world, sheet = worlds[key].build(MODELS_DIR, WORLDS_DIR, media)
+            except FileNotFoundError as e:  # a raster that was never fetched: say how to get it
+                if e.filename is None or not Path(e.filename).is_relative_to(DATA_DIR):
+                    raise
+                sys.exit(f"{key}: {Path(e.filename).relative_to(SIM_DIR.parent)} is missing; pixi run fetch-data "
+                         "fetches the terrain rasters (README, Simulation)")
             print(f"wrote {world.relative_to(SIM_DIR.parent)} and {sheet.name} ({time.time() - start:.1f} s)")
     for path in prune(MODELS_DIR, WORLDS_DIR):
         print(f"removed {path.relative_to(SIM_DIR.parent)} (unused)")

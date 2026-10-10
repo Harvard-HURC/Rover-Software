@@ -15,6 +15,8 @@ pixi run launcher               # every world as a tile
 pixi run test                   # the C++ tests and the simulation's suite
 ```
 
+Every world needs the rasters, the test ground too (the tasks generate all worlds). If fetch-data cannot get one (`route_area_lidar_0p5m.tif` comes only from the team's release `data-2026-10-06`), link them from a clone that has them: `rover_sim/tools/link_data.sh <that clone>`.
+
 ### Layout
 | Path | What it is |
 |---|---|

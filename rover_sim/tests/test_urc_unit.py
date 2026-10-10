@@ -7,6 +7,7 @@ import threading
 import unittest
 import zlib
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -381,6 +382,34 @@ class Prune(unittest.TestCase):
         self.assertFalse(pruner.is_alive())
         self.assertEqual(removed, [])
         self.assertTrue(self.file(uri).is_file())
+
+
+class MissingRaster(unittest.TestCase):
+    """The terrain rasters are git-ignored: when a world's raster is not here,
+    gen_worlds says that pixi run fetch-data fetches it; any other missing
+    file is raised as it is."""
+
+    def run_main(self, missing):
+        class World:
+            def build(self, models_dir, worlds_dir, media):
+                raise FileNotFoundError(2, "No such file or directory", str(missing))
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.multiple(gen_worlds, MODELS_DIR=Path(tmp.name) / "models",
+                                 WORLDS_DIR=Path(tmp.name) / "worlds", MISSIONS={"made_up": World()}, COURSES={}), \
+                mock.patch.object(sys, "argv", ["gen_worlds.py"]):
+            gen_worlds.main()
+
+    def test_a_missing_raster_names_fetch_data(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main(gen_worlds.DATA_DIR / "dem" / "made_up.tif")
+        self.assertEqual(caught.exception.code, "made_up: rover_sim/data/dem/made_up.tif is missing; pixi run "
+                                                "fetch-data fetches the terrain rasters (README, Simulation)")
+
+    def test_another_missing_file_is_raised(self):
+        with self.assertRaises(FileNotFoundError):
+            self.run_main(Path(tempfile.gettempdir()) / "made_up.tif")
 
 
 if __name__ == "__main__":

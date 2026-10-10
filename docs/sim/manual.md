@@ -89,7 +89,7 @@ the GUI stops both.
 | `tools/realism_report.py` | The realism report (`pixi run sim-realism`) |
 | `tools/make_relief_swatches.py`, `tools/terrain_targets.py` | Lidar relief swatches and the roughness targets (`data/relief`, `data/research/terrain_targets.json`) |
 | `tools/fetch_data.py`, `data/rasters.json` | `pixi run fetch-data`: fetches the git-ignored rasters (their official sources, else the team's copy) and checks them against the manifest |
-| `tools/fetch_dem.py`, `tools/link_data.sh` | Fetches a USGS 3DEP DEM for a new area; links the git-ignored rasters into a git worktree |
+| `tools/fetch_dem.py`, `tools/link_data.sh` | Fetches a USGS 3DEP DEM for a new area; links the git-ignored rasters from another clone or a git worktree's main checkout |
 | `data/dem/`, `data/imagery/`, `data/soils/`, `data/relief/` | DEMs, imagery, the soil map, relief swatches; each `.tif` is git-ignored, its `.json` (tracked) says where it came from |
 | `data/research/` | The research files the code reads or writes: the roughness targets, the lidar windows' measurements, the realism report and its contact sheet; the rest of the research is in `docs/research/` |
 | `tests/` | `test_*.py` (see Performance for their run times); helpers `simulate.py` (headless runs, ground worlds, the pure-pursuit driver, CPU time per step) and `worldfiles.py` (sheets, terrain, world copies) |
@@ -1109,8 +1109,10 @@ spin.
   `route_area_naip2024.tif`, `far_dem_3dep_60km.tif`, ...): the rasters are
   git-ignored. `pixi run fetch-data` fetches the missing ones and checks
   them against `data/rasters.json` (each raster's `.json` says where it came
-  from). In a git worktree, link the main checkout's instead:
-  `rover_sim/tools/link_data.sh <main checkout>`.
+  from). `route_area_lidar_0p5m.tif` has no official source, only the team's
+  copy (the release `data-2026-10-06`); when fetch-data cannot get a raster,
+  or in a git worktree, link them from a clone that has them (by default the
+  worktree's main checkout): `rover_sim/tools/link_data.sh [that clone]`.
 - **The referee prints "waiting for the simulation":** start or unpause the
   world; the referee needs `/model/rover/ground_truth`.
 - **The station exits with "another driver station is attached to …":** use

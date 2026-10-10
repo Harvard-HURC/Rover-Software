@@ -210,6 +210,10 @@ def main(argv=None, get=download):
                 print(f"{entry['path']}: missing, would fetch from the team's copy")
         elif not fetch(entry, args.data, manifest["mirror"], get):
             failed += 1
+    if failed and not args.verify:
+        sys.stdout.flush()  # the hint after the lines above, also in a log
+        print(f"fetch-data: {failed} raster(s) not fetched; a clone that has them can link them here: "
+              "rover_sim/tools/link_data.sh <that clone> (README, Simulation)", file=sys.stderr)
     return 1 if failed else 0
 
 

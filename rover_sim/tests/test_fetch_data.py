@@ -75,10 +75,11 @@ def case(directory, bands):
     return data, bodies
 
 
-def run(data, server, *flags):
-    """fetch_data.main on data with the fake network: (exit code, printed lines)."""
+def run(data, server, *flags, err=None):
+    """fetch_data.main on data with the fake network: (exit code, printed lines); err (a StringIO) gets what it
+    says on stderr."""
     out = io.StringIO()
-    with contextlib.redirect_stdout(out):
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err if err is not None else io.StringIO()):
         code = fetch_data.main([*flags, "--data", str(data)], get=server)
     return code, out.getvalue().splitlines()
 
@@ -166,10 +167,13 @@ class Fetch(unittest.TestCase):
         data, bodies = case(self.tmp.name, naip_bands())
         bodies = {url: body for url, body in bodies.items() if "row=0&col=0" not in url}
         bodies[MIRROR + "made_up.tif"] = b"not the raster"
-        code, lines = run(data, Server(bodies))
+        err = io.StringIO()
+        code, lines = run(data, Server(bodies), err=err)
         self.assertEqual(code, 1)
         self.assertTrue(lines[-1].startswith("dem/made_up.tif: FAILED"), lines)
         self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
+        self.assertIn("1 raster(s) not fetched; a clone that has them can link them here: "
+                      "rover_sim/tools/link_data.sh <that clone>", err.getvalue())
 
     def test_a_raster_here_is_not_fetched_and_verify_catches_a_wrong_one(self):
         data, bodies = case(self.tmp.name, dem_band())

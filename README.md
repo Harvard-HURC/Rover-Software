@@ -22,7 +22,7 @@ From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in t
 
 ### Simulation
 The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows it runs in WSL2 (see Platforms). From the `src` folder:
-1. `pixi run fetch-data` downloads the terrain rasters the simulation reads, once (about 130 MB of USGS elevation and lidar data and USDA NAIP imagery; git ignores them)
+1. `pixi run fetch-data` downloads the terrain rasters the simulation reads, once (about 130 MB of USGS elevation and lidar data and USDA NAIP imagery; git ignores them). The tasks below generate every world, so they need all of them, also for the test ground. `route_area_lidar_0p5m.tif` has no official source: it comes from the team's copy, this repository's release `data-2026-10-06`. If fetch-data cannot get a raster (that release may not be published yet), link them from a clone that has them: `rover_sim/tools/link_data.sh <that clone>`
 2. `pixi run sim` builds the simulation's plugins, generates the rover and the worlds and opens Gazebo on the test ground (`pixi run sim urc_autonomy` opens a URC mission world)
 3. `pixi run drive urc_autonomy` drives the rover from the browser; `pixi run launcher` shows every world as a tile that starts it with its driver station
 
