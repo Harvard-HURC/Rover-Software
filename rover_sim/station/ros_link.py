@@ -16,7 +16,8 @@ UNHEARD = 10.0  # [s] after the start with nothing subscribed to /cmd_vel, the s
 
 class CmdVel:
     """twist(vx, wz) on /cmd_vel: the drive output (GzLink's drive) of a station in the ROS stack. It needs no executor:
-    the station publishes from its own threads, and nothing here subscribes."""
+    the station publishes from its own threads, and nothing here subscribes. After close() nothing uses the node: a
+    lock keeps the unheard-warning's timer and the station's threads from it while it is destroyed."""
 
     def __init__(self):
         self._owns_context = not rclpy.ok()
@@ -28,31 +29,50 @@ class CmdVel:
         self.node = rclpy.create_node(f"driver_station_{os.getpid()}")
         self._publisher = self.node.create_publisher(TwistStamped, CMD_VEL_TOPIC, 10)
         self._msg = TwistStamped()
+        self._lock = threading.RLock()
+        self._closed = False
+        self._timers = []
 
     def twist(self, vx, wz):
-        if not rclpy.ok():
-            return  # rclpy is down (another owner of the context shut it): nothing can go out
-        self._msg.twist.linear.x, self._msg.twist.angular.z = float(vx), float(wz)
-        self._publisher.publish(self._msg)
+        with self._lock:
+            if self._closed or not rclpy.ok():
+                return  # closed, or rclpy is down (another owner of the context shut it): nothing can go out
+            self._msg.twist.linear.x, self._msg.twist.angular.z = float(vx), float(wz)
+            self._publisher.publish(self._msg)
 
     def subscribers(self):
-        """How many subscriptions to /cmd_vel the ROS graph has (the drive controller's, once it is up)."""
-        return self._publisher.get_subscription_count()
+        """How many subscriptions to /cmd_vel the ROS graph has (the drive controller's, once it is up); 0 once
+        closed."""
+        with self._lock:
+            return 0 if self._closed else self._publisher.get_subscription_count()
 
     def warn_if_unheard(self, after=UNHEARD, out=print):
         """After `after` seconds say so, through out(line), if nothing subscribes to /cmd_vel: no drive controller,
-        as in a world started without sim.launch.py. Returns the timer (a daemon thread)."""
+        as in a world started without sim.launch.py. Not once closed: close() cancels it (a station stopped before
+        then may still be waiting for its world to stop). Returns the timer (a daemon thread)."""
         def check():
-            if self.subscribers() == 0:
+            with self._lock:
+                if self._closed:
+                    return
+                unheard = self.subscribers() == 0
+            if unheard:
                 out(f"nothing subscribes to {CMD_VEL_TOPIC} after {after:.0f} s: the drive controller is not up (it "
                     "comes with sim.launch.py: pixi run sim, pixi run drive <world>), so the rover will not move")
 
         timer = threading.Timer(after, check)
         timer.daemon = True
+        with self._lock:
+            self._timers.append(timer)
         timer.start()
         return timer
 
     def close(self):
-        self.node.destroy_node()
-        if self._owns_context and rclpy.ok():
-            rclpy.shutdown()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            for timer in self._timers:
+                timer.cancel()
+            self.node.destroy_node()
+            if self._owns_context and rclpy.ok():
+                rclpy.shutdown()

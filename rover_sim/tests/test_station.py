@@ -1450,6 +1450,24 @@ class RosLink(unittest.TestCase):
             cmd_vel.warn_if_unheard(after=0.05, out=lines.append).join(5)
         self.assertIn("nothing subscribes to /cmd_vel", lines[0])
 
+    def test_the_warning_does_not_outlive_close(self):
+        """A station stopped within the warning's 10 s, still waiting for the world it started to stop, closes its
+        /cmd_vel first: the timer neither says anything nor touches the destroyed node (InvalidHandle, seen in the
+        launcher's log), and a twist after close() sends nothing."""
+        failures = []
+        saved = threading.excepthook
+        threading.excepthook = lambda args: failures.append(args.exc_value)
+        self.addCleanup(setattr, threading, "excepthook", saved)
+        cmd_vel = ros_link.CmdVel()
+        lines = []
+        timer = cmd_vel.warn_if_unheard(after=0.2, out=lines.append)
+        cmd_vel.close()
+        timer.join(2)
+        time.sleep(0.3)
+        cmd_vel.twist(0.5, 0.0)
+        cmd_vel.close()  # twice is harmless
+        self.assertEqual((failures, lines, cmd_vel.subscribers()), ([], [], 0))
+
 
 class StartsTheStack(unittest.TestCase):
     def test_a_world_starts_with_sim_launch_in_its_own_session(self):
