@@ -22,7 +22,7 @@ From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in t
 
 ### Simulation
 The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows it runs in WSL2 (see Platforms). From the `src` folder:
-1. `pixi run fetch-data` downloads the terrain rasters the simulation reads, once (about 130 MB of USGS elevation and lidar data and USDA NAIP imagery; git ignores them). The tasks below generate every world, so they need all of them, also for the test ground. `route_area_lidar_0p5m.tif` has no official source: it comes from the team's copy, this repository's release `data-2026-10-06`. If fetch-data cannot get a raster (that release may not be published yet), link them from a clone that has them: `rover_sim/tools/link_data.sh <that clone>`
+1. `pixi run fetch-data` downloads the terrain rasters the simulation reads from their official sources, once (about 90 MB of USGS elevation data and USDA NAIP imagery; git ignores them). The tasks below generate every world, so they need these, also for the test ground. fetch-data cannot rebuild the Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`, 41 MB) yet: a script that rebuilds it from USGS's public lidar is planned. Until then, link it from a teammate's clone that has it: `rover_sim/tools/link_data.sh <that clone>` (it links every raster that clone has, also when fetch-data cannot reach a source), or copy the file into `rover_sim/data/dem/` (`pixi run fetch-data --verify` checks it). Without it the tasks generate every world but `urc_autonomy` (`pixi run sim urc_autonomy` and `pixi run drive urc_autonomy` say what is missing), and the tests that need it skip and say why
 2. `pixi run sim` builds the simulation's plugins, generates the rover and the worlds and opens Gazebo on the test ground (`pixi run sim urc_autonomy` opens a URC mission world)
 3. `pixi run drive urc_autonomy` drives the rover from the browser; `pixi run launcher` shows every world as a tile that starts it with its driver station
 
@@ -30,7 +30,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ### Tests
 - `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`. CI has only the rasters fetch-data can fetch, so the Autonomy world's tests skip there until its lidar DEM can be rebuilt
 
 ### Platforms
 - **macOS (Apple silicon):** everything

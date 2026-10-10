@@ -15,7 +15,7 @@ pixi run launcher               # every world as a tile
 pixi run test                   # the C++ tests and the simulation's suite
 ```
 
-Every world needs the rasters, the test ground too (the tasks generate all worlds). If fetch-data cannot get one (`route_area_lidar_0p5m.tif` comes only from the team's release `data-2026-10-06`), link them from a clone that has them: `rover_sim/tools/link_data.sh <that clone>`.
+Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). fetch-data cannot rebuild the Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) from official sources yet; a script that rebuilds it from USGS lidar is planned. Until then, link it from a teammate's clone that has it: `rover_sim/tools/link_data.sh <that clone>` (it links every raster that clone has, also when fetch-data cannot reach a source), or copy the file into `rover_sim/data/dem/` (`pixi run fetch-data --verify` checks it). Without it `sim-worlds` skips `urc_autonomy` (`pixi run sim urc_autonomy` and `pixi run drive urc_autonomy` say what is missing) and the tests that need it skip, saying why.
 
 ### Layout
 | Path | What it is |

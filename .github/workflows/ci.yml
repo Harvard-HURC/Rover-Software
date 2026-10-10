@@ -61,6 +61,9 @@ jobs:
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
           key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+      # fetch-data gets the rasters it can rebuild from their official sources and fails only if one of those fails; it
+      # cannot rebuild the Autonomy world's 0.5 m lidar DEM yet, so sim-worlds skips that world and the tests that
+      # need it skip, saying why.
       - run: pixi run fetch-data
       - name: Save the terrain rasters
         if: steps.rasters.outputs.cache-hit != 'true'
