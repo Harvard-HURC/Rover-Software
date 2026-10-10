@@ -296,6 +296,37 @@ class CannotRebuild(unittest.TestCase):
         self.assertEqual(fetch_data.shown(autonomy.DEM_PATH), "rover_sim/data/dem/route_area_lidar_0p5m.tif")
 
 
+class Stats(unittest.TestCase):
+    """What a lidar rebuild that is not bit-identical must match: min, max and 16 x 16 block means within 1e-3."""
+
+    def test_the_stats_are_min_max_and_block_means(self):
+        s = fetch_data.stats(np.arange(32 * 48, dtype=np.float32).reshape(1, 32, 48))
+        self.assertEqual((s["min"], s["max"]), (0.0, 1535.0))
+        self.assertEqual(np.shape(s["block_means"]), (1, 16, 16))
+        self.assertEqual(s["block_means"][0][0][0], 25.0)  # rows 0-1, columns 0-2
+        self.assertEqual(s["block_means"][0][15][15], 1510.0)
+
+    def test_within_allows_the_tolerance_and_no_more(self):
+        s = fetch_data.stats(dem_band(32, 32))
+        near, far = json.loads(json.dumps(s)), json.loads(json.dumps(s))
+        near["block_means"][0][3][4] += 0.0009
+        far["block_means"][0][3][4] += 0.0011
+        self.assertTrue(fetch_data.within(near, s))
+        self.assertFalse(fetch_data.within(far, s))
+        self.assertFalse(fetch_data.within(fetch_data.stats(np.concatenate([dem_band(32, 32)] * 2)), s))  # 2 bands
+
+    def test_a_raster_within_the_stats_on_another_grid_does_not_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "r.tif"
+            path.write_bytes(raster_bytes(dem_band(32, 32), TRANSFORM))
+            entry = {"content_sha256": "", "shape": [1, 32, 32], "transform": list(TRANSFORM),
+                     "stats": fetch_data.stats(dem_band(32, 32))}
+            self.assertEqual(fetch_data.verdict(entry, path),
+                             "content within 0.001 of rasters.json's stats, not bit-identical")
+            path.write_bytes(raster_bytes(dem_band(32, 32), (TRANSFORM[0] + STEP, *TRANSFORM[1:])))
+            self.assertIsNone(fetch_data.verdict(entry, path))
+
+
 class Help(unittest.TestCase):
     def test_help_gives_the_exit_status(self):
         out = io.StringIO()

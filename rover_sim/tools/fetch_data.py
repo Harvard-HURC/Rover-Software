@@ -49,6 +49,11 @@ MANIFEST = "rasters.json"  # in the data directory
 TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+STATS_BLOCKS = 16  # blocks per side of a raster's stats
+# How far the stats of a lidar rebuild that is not bit-identical may be from the manifest's: 1 mm for the DEMs, a
+# thousandth of a code for the source map. Rounding differences between platforms (OpenCV's blur, GDAL's bilinear
+# kernel) are a few float32 steps (0.1 mm at 1400 m); a wrong tile, shift or step is centimetres (A).
+TOLERANCE = 1e-3
 
 
 def load_manifest(data_dir=DATA_DIR):
@@ -99,25 +104,68 @@ def file_sha256(path):
     return h.hexdigest()
 
 
-def content_sha256(path):
-    """SHA-256 of what the simulation reads from a raster: dem.read_raster's
-    float32 bands (B, H, W) and geotransform. Any lossless encoding of the same
-    pixels and georeferencing has the same one."""
-    bands, transform = dem.read_raster(path)
+def content_digest(bands, transform):
+    """SHA-256 of a raster's float32 bands (B, H, W) and geotransform, as dem.read_raster returns them."""
     h = hashlib.sha256(np.ascontiguousarray(bands).tobytes())
     h.update(repr(tuple(float(v) for v in transform)).encode())
     return h.hexdigest()
 
 
-def matches(entry, path):
-    """Whether the raster at path is entry's: the same file, or (fetched from
-    its official source, so encoded anew) the same content."""
-    if file_sha256(path) == entry["sha256"]:
-        return True
+def content_sha256(path):
+    """SHA-256 of what the simulation reads from a raster: dem.read_raster's
+    float32 bands (B, H, W) and geotransform. Any lossless encoding of the same
+    pixels and georeferencing has the same one."""
+    return content_digest(*dem.read_raster(path))
+
+
+def stats(bands):
+    """A raster's stats: the min and max of its float32 bands (B, H, W) and the mean of each of STATS_BLOCKS x
+    STATS_BLOCKS blocks per band (rows and columns split as np.array_split splits them), rounded to 1e-6."""
+    def r(v):
+        return round(float(v), 6)
+    return {"min": r(bands.min()), "max": r(bands.max()),
+            "block_means": [[[r(block.mean(dtype=np.float64)) for block in np.array_split(rows, STATS_BLOCKS, axis=1)]
+                             for rows in np.array_split(band, STATS_BLOCKS, axis=0)] for band in bands]}
+
+
+def within(got, want, tolerance=TOLERANCE):
+    """Whether stats `got` are those of `want` within tolerance, number by number."""
+    a = np.array([got["min"], got["max"], *np.ravel(got["block_means"])], float)
+    b = np.array([want["min"], want["max"], *np.ravel(want["block_means"])], float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= tolerance))
+
+
+def verdict(entry, path):
+    """How the raster at path matches entry's content: "content verified" (the same pixels and georeferencing),
+    "content within TOLERANCE ..." (a lidar rebuild that is not bit-identical but has the same shape, the same
+    georeferencing and the manifest's stats within TOLERANCE), or None."""
     try:
-        return content_sha256(path) == entry["content_sha256"]
+        bands, transform = dem.read_raster(path)
     except Exception:  # not a raster dem.read_raster accepts
-        return False
+        return None
+    if content_digest(bands, transform) == entry["content_sha256"]:
+        return "content verified"
+    if ("stats" in entry and list(bands.shape) == entry["shape"] and list(transform) == entry["transform"]
+            and within(stats(bands), entry["stats"])):
+        return f"content within {TOLERANCE} of rasters.json's stats, not bit-identical"
+    return None
+
+
+def matches(entry, path):
+    """Whether the raster at path is entry's: the same file, or (rebuilt from
+    its official source, so encoded anew) the same content, or a lidar rebuild
+    within TOLERANCE of its stats."""
+    return file_sha256(path) == entry["sha256"] or verdict(entry, path) is not None
+
+
+def check(entry, path):
+    """--verify's word for the raster at path: verified (with how, when it is within TOLERANCE), DIFFERS, MISSING."""
+    if not path.exists():
+        return "MISSING"
+    if file_sha256(path) == entry["sha256"]:
+        return "verified"
+    how = verdict(entry, path)
+    return "DIFFERS" if how is None else "verified" if how == "content verified" else f"verified, {how}"
 
 
 def download(url):
@@ -243,9 +291,9 @@ def main(argv=None, get=download):
             print(f"{entry['path']}: missing, {needed_by(entry)}; {cannot_fetch(entry)}")
             missing.append(entry)
         elif args.verify:
-            state = "verified" if path.exists() and matches(entry, path) else "DIFFERS" if path.exists() else "MISSING"
+            state = check(entry, path)
             print(f"{entry['path']}: {state}")
-            failed += state != "verified"
+            failed += not state.startswith("verified")
         elif path.exists():
             print(f"{entry['path']}: present")
         elif args.dry_run:
