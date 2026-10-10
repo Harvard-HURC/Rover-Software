@@ -9,6 +9,11 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- the hardware stub, a ros2_control hardware plugin -->
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
   <depend>yaml-cpp</depend>
   <!-- rover.yaml: the tests' geometry, and the description rover.launch.py publishes -->
   <depend>rover_description</depend>

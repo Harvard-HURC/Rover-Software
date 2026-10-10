@@ -9,7 +9,8 @@
        rover_yaml           the numbers (default config/rover.yaml beside this folder; xacro reads a relative path
                             from this folder, so give another file's absolute path)
        ros2_control         true: add the ros2_control block (ros2_control.xacro)
-       ros2_control_plugin  its hardware interface (default rover_control's real-hardware stub, which PR 3 adds)
+       ros2_control_plugin  its hardware interface (default rover_control/RoverHardwareStub, the real rover's until
+                            its motor controllers are chosen)
      Properties a file that includes this one may set first (xacro:property default): wheel_effort_limit and
      wheel_velocity_limit (the wheel joints' limits; default the motor's peak torque at the wheel and the top speed),
      tread_tyre (the wheels' visual: the tread mesh, or False: a plain cylinder) and wheel_mount (the macro that

@@ -16,8 +16,21 @@ if(MSVC)
 else()
   set(warnings -Wall -Wextra -Wpedantic)
 endif()
+# The ROS packages' exported link lines name their messages' Python extension libraries (*__rosidl_generator_py),
+# whose Python symbols only a process with libpython has. ros2_control_node, which loads the stub, has none, and on
+# macOS a library that is linked is loaded and fails at its first Python symbol. So the linker keeps only the
+# libraries a target uses, as rover_sim's plugins do and as conda-forge builds the ROS packages themselves.
+if(APPLE)
+  set(used_libraries_only "LINKER:-dead_strip_dylibs")
+elseif(NOT MSVC)
+  set(used_libraries_only "LINKER:--as-needed")
+endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(hardware_interface REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # tank_kinematics: the rover's skid-steer kinematics, its geometry from rover_description's rover.yaml
@@ -29,30 +42,43 @@ target_link_libraries(tank_kinematics PUBLIC yaml-cpp::yaml-cpp)
 set_target_properties(tank_kinematics PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(tank_kinematics PRIVATE ${warnings})
 
+# rover_hardware_stub: the real rover's ros2_control hardware until its motor controllers are chosen
+# (pluginlib: rover_control/RoverHardwareStub, rover_hardware_stub.xml).
+add_library(rover_hardware_stub SHARED src/rover_hardware_stub.cpp)
+target_include_directories(rover_hardware_stub PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_link_libraries(rover_hardware_stub PUBLIC hardware_interface::hardware_interface pluginlib::pluginlib
+                      rclcpp::rclcpp rclcpp_lifecycle::rclcpp_lifecycle)
+target_compile_options(rover_hardware_stub PRIVATE ${warnings})
+target_link_options(rover_hardware_stub PRIVATE ${used_libraries_only})
+pluginlib_export_plugin_description_file(hardware_interface rover_hardware_stub.xml)
+
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS tank_kinematics EXPORT export_${PROJECT_NAME}
+install(TARGETS tank_kinematics rover_hardware_stub EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
 include(CTest)
 if(BUILD_TESTING)
-  # GoogleTest: the tank kinematics, and controllers.yaml against rover_description's rover.yaml.
+  # GoogleTest: the tank kinematics, controllers.yaml against rover_description's rover.yaml, the hardware stub.
   find_package(GTest REQUIRED)
   find_package(rover_description REQUIRED)
   add_executable(rover_control_tests
     test/test_tank_kinematics.cpp
     test/test_controllers_yaml.cpp
+    test/test_rover_hardware_stub.cpp
   )
   target_compile_definitions(rover_control_tests PRIVATE
     ROVER_YAML="${rover_description_DIR}/../config/rover.yaml"
     CONTROLLERS_YAML="${CMAKE_CURRENT_SOURCE_DIR}/config/controllers.yaml")
-  target_link_libraries(rover_control_tests PRIVATE tank_kinematics GTest::gtest_main)
+  target_link_libraries(rover_control_tests PRIVATE tank_kinematics rover_hardware_stub GTest::gtest_main)
   target_compile_options(rover_control_tests PRIVATE ${warnings})
+  target_link_options(rover_control_tests PRIVATE ${used_libraries_only})
   include(GoogleTest)
   gtest_discover_tests(rover_control_tests)
 endif()
 
 ament_export_include_directories(include)
-ament_export_libraries(tank_kinematics)
+ament_export_libraries(tank_kinematics rover_hardware_stub)
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(yaml-cpp)
+ament_export_dependencies(hardware_interface pluginlib rclcpp rclcpp_lifecycle yaml-cpp)
 ament_package()
