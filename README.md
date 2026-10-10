@@ -30,7 +30,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ### Tests
 - `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`. The rasters are cached by what makes them (`rasters.json`, each raster's `.json`, `fetch_data.py` and `usgs_lidar.py`), so fetch-data downloads and rebuilds them only when one of those changes; a run whose fetch-data fails saves nothing, so the next run downloads them again
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data`, `pixi run test` (the rendering tests on macOS only) and then `git diff --exit-code`, which fails when the tests left a tracked file changed (they regenerate the tracked rover model, so one committed stale fails); on Windows `pixi run build`. The rasters are cached by what makes them (`rasters.json`, each raster's `.json`, `fetch_data.py` and `usgs_lidar.py`), so fetch-data downloads and rebuilds them only when one of those changes; a run whose fetch-data fails saves nothing, so the next run downloads them again
 
 ### Platforms
 - **macOS (Apple silicon):** everything

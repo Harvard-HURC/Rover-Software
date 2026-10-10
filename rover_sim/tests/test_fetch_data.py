@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
-a fresh clone, official tiles made into a raster and checked, nothing
-installed that does not match, the lidar rebuilt by a recipe from pinned
-USGS files and kept within its stats' tolerance, the rasters it cannot
-rebuild named with the worlds that need them and how to get them, without
-failing the run, and its exit status in --help."""
+a fresh clone, official tiles made into a raster with the original's tags
+and checked, nothing installed that does not match, the lidar rebuilt by a
+recipe from pinned USGS files and kept within its stats' tolerance, the
+rasters it cannot rebuild named with the worlds that need them and how to
+get them, without failing the run, and its exit status in --help."""
 import contextlib
 import dataclasses
 import hashlib
@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+from PIL import Image
 
 from worldfiles import SIM_DIR
 
@@ -35,13 +36,21 @@ MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
 LINK = "link it from a clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+# An original's tags (rasters.json's `tags`) as GDAL writes them for EPSG:4326 (mdrs_area_3dep.tif, the NAIP 2024
+# mosaics), with a description.
+ORIGINAL_TAGS = {"ImageDescription": "made-up imagery, bands R,G,B,NIR",
+                 "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0,
+                                     2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+                 "GeoDoubleParams": [298.257223563, 6378137.0], "GeoAsciiParams": "WGS 84|",
+                 "GDAL_METADATA": '<GDALMetadata>\n  <Item name="DataType">Generic</Item>\n</GDALMetadata>\n'}
 
 
-def raster_bytes(bands, transform):
-    """A GeoTIFF of bands (B, H, W) as fetch_data writes it."""
+def raster_bytes(bands, transform, tags=None):
+    """A GeoTIFF of bands (B, H, W) as fetch_data writes it, with the original's tags (rasters.json's `tags`) or,
+    without them, the three GeoKeys dem.read_raster checks."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "r.tif"
-        fetch_data.write_geotiff(path, bands, fetch_data.geotags(transform))
+        fetch_data.write_geotiff(path, bands, fetch_data.raster_tags({"transform": transform, "tags": tags or {}}))
         return path.read_bytes()
 
 
@@ -67,14 +76,16 @@ def marked_alpha(body):
     return body.replace(entry + b"\x00\x00", entry + b"\x02\x00")
 
 
-def case(directory, bands):
+def case(directory, bands, tags=None):
     """A data directory holding the manifest and provenance of one raster,
-    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
-    (data directory, {url: body} of the tiles)."""
+    dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles, with
+    the original's tags if given (the tiles have the three GeoKeys
+    dem.read_raster checks). Returns (data directory, {url: body} of the
+    tiles)."""
     data = Path(directory)
     (data / "dem").mkdir()
     count, height, width = bands.shape
-    whole = raster_bytes(bands, TRANSFORM)
+    whole = raster_bytes(bands, TRANSFORM, tags)
     (data / "whole.tif").write_bytes(whole)
     lon0, dlon, _, lat0, _, dlat = TRANSFORM
     bodies, urls = {}, []
@@ -88,7 +99,7 @@ def case(directory, bands):
     entry = {"path": "dem/made_up.tif", "provenance": "dem/made_up.json", "required": True, "official": True,
              "bytes": len(whole), "sha256": fetch_data.file_sha256(data / "whole.tif"),
              "content_sha256": fetch_data.content_sha256(data / "whole.tif"), "shape": list(bands.shape),
-             "dtype": str(bands.dtype), "transform": list(TRANSFORM)}
+             "dtype": str(bands.dtype), "transform": list(TRANSFORM), **({"tags": tags} if tags else {})}
     (data / "whole.tif").unlink()
     (data / fetch_data.MANIFEST).write_text(json.dumps({"rasters": [entry]}))
     return data, bodies
@@ -242,6 +253,46 @@ class Manifest(unittest.TestCase):
             with self.subTest(e["path"]):
                 self.assertEqual(fetch_data.stats(dem.read_raster(fetch_data.DATA_DIR / e["path"])[0]), e["stats"])
 
+    def test_an_official_raster_lists_its_georeferencing(self):
+        """The tags fetch-data writes into an official raster (`tags`): a GeoKey directory with the GeoKeys
+        dem.read_raster checks, whose other keys find their values in the double and ASCII parameters, and WGS 84's
+        ellipsoid where they give one."""
+        params = {dem.GEO_DOUBLE_PARAMS: "GeoDoubleParams", dem.GEO_ASCII_PARAMS: "GeoAsciiParams"}
+        for e in MANIFEST["rasters"]:
+            if not e["official"]:
+                continue
+            with self.subTest(e["path"]):
+                tags = e["tags"]
+                self.assertLessEqual(set(tags), set(fetch_data.TAGS))
+                keys = tags["GeoKeyDirectory"]
+                self.assertEqual(len(keys), 4 + 4 * keys[3])
+                values = {}
+                for key, location, count, offset in (keys[i:i + 4] for i in range(4, len(keys), 4)):
+                    if location == 0:
+                        values[key] = offset
+                    else:
+                        self.assertLessEqual(offset + count, len(tags[params[location]]), key)
+                        values[key] = tags[params[location]][offset:offset + count]
+                for key, (value, _) in dem.GEOKEYS.items():
+                    self.assertEqual(values[key], value, key)
+                for key, value in ((2057, 6378137.0), (2059, 298.257223563)):  # semi-major axis, inverse flattening
+                    if key in values:
+                        self.assertEqual(values[key], [value], key)
+
+    def test_the_official_rasters_here_have_the_originals_tags(self):
+        """An official raster here, the original or fetched, has the manifest's tags and the pixel scale and
+        tiepoint of its transform: with the original files this checks the manifest, with fetched ones fetch-data."""
+        here = [e for e in MANIFEST["rasters"] if e["official"] and (fetch_data.DATA_DIR / e["path"]).exists()]
+        if not here:
+            self.skipTest("no rasters here (pixi run fetch-data)")
+        for e in here:
+            with self.subTest(e["path"]):
+                path = fetch_data.DATA_DIR / e["path"]
+                self.assertEqual(fetch_data.tags_of(path), e["tags"])
+                with Image.open(path) as img:
+                    for tag in (dem.MODEL_PIXEL_SCALE, dem.MODEL_TIEPOINT):
+                        self.assertEqual(img.tag_v2[tag], fetch_data.geotags(e["transform"])[tag][0], tag)
+
 
 class DryRun(unittest.TestCase):
     def test_a_fresh_clone_says_what_it_would_fetch_and_touches_nothing(self):
@@ -283,6 +334,19 @@ class Fetch(unittest.TestCase):
                 self.assertEqual(transform, TRANSFORM)
                 self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json", "made_up.tif"])
                 self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
+
+    def test_the_raster_gets_the_originals_tags_not_the_tiles(self):
+        """The servers' tiles carry their own GeoTIFF tags (USDA's NAIP 2024 tiles ESRI's, where the original
+        mosaics have GDAL's): the raster gets the original's (`tags`), and a file with its pixels but other tags is
+        not the original."""
+        data, bodies = case(self.tmp.name, naip_bands(), tags=ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server(bodies)),
+                         (0, ["dem/made_up.tif: fetched from its official source, content verified"]))
+        made_up = data / "dem" / "made_up.tif"
+        self.assertEqual(fetch_data.tags_of(made_up), ORIGINAL_TAGS)
+        self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
+        made_up.write_bytes(raster_bytes(naip_bands(), TRANSFORM))  # the same pixels, the three GeoKeys only
+        self.assertEqual(run(data, Server({}), "--verify"), (1, ["dem/made_up.tif: DIFFERS"]))
 
     def test_other_pixels_from_the_source_fail_and_install_nothing(self):
         data, bodies = case(self.tmp.name, dem_band())
@@ -590,6 +654,25 @@ class Lidar(unittest.TestCase):
         self.assertEqual((code, lines[-1]), (1, "dem/lidar.tif: FAILED, the rebuild from the USGS lidar gives other "
                                                 "pixels than rasters.json lists"))
         self.assertNotIn("lidar.tif", self.files())
+
+    def test_a_rebuild_without_the_originals_tags_fails(self):
+        """GDAL writes a lidar rebuild's tags: one with the right pixels and other tags is not the original, and
+        --verify says DIFFERS of such a raster here, also within the tolerance."""
+        manifest = json.loads((self.data / fetch_data.MANIFEST).read_text())
+        lidar = next(e for e in manifest["rasters"] if e["path"] == "dem/lidar.tif")
+        lidar["tags"] = ORIGINAL_TAGS  # the made-up recipe writes the three GeoKeys only
+        (self.data / fetch_data.MANIFEST).write_text(json.dumps(manifest))
+        code, lines = run(self.data, Server(self.bodies))
+        self.assertEqual((code, lines[-1]), (1, "dem/lidar.tif: FAILED, the rebuild from the USGS lidar gives other "
+                                                "georeferencing or metadata than rasters.json lists (tags)"))
+        self.assertNotIn("lidar.tif", self.files())
+        bands = dem_band(32, 32) + 7.0002  # within the tolerance
+        how = "content within 0.001 of rasters.json's stats, not bit-identical"
+        for tags, state in ((fetch_data.geotags(TRANSFORM), "DIFFERS"),
+                            (fetch_data.raster_tags(lidar), f"verified, {how}")):
+            with self.subTest(state):
+                fetch_data.write_geotiff(self.data / "dem" / "lidar.tif", bands, tags)
+                self.assertEqual(run(self.data, Server({}), "--verify")[1][-1], f"dem/lidar.tif: {state}")
 
     def test_sources_keeps_the_downloads_for_the_next_run(self):
         sources = Path(self.tmp.name) / "sources"

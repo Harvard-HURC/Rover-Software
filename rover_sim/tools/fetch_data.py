@@ -7,16 +7,18 @@ urc.dem.read_raster reads) and the tracked .json that says where it came
 from. A missing raster is rebuilt from its official source (`official`):
 from one or more ImageServer exportImage requests (its .json lists them as
 url, urls or requests), each tile placed on the raster's grid by its own
-georeferencing and the mosaic written as a deflate GeoTIFF; or, for the
-0.5 m lidar DEMs and their source map, by the recipe of tools/usgs_lidar.py
-that its .json names, from the USGS tiles and point clouds listed there,
-each download checked against its size and SHA-256 (--sources DIR keeps
-them for the next run). A raster is kept only if its content matches; a
-lidar rebuild that is not bit-identical (another platform's floating point)
-is kept when its stats (min, max and 16 x 16 block means) are within
-TOLERANCE of the manifest's, and fetch-data says so and names the machine
-(MACHINE). A raster that is not official fetch-data cannot rebuild: for
-each one missing it names the worlds that need it (`worlds`) and what is
+georeferencing and the mosaic written as a deflate GeoTIFF with the original
+file's georeferencing and metadata (its geotransform and `tags`); or, for
+the 0.5 m lidar DEMs and their source map, by the recipe of
+tools/usgs_lidar.py that its .json names, from the USGS tiles and point
+clouds listed there, each download checked against its size and SHA-256
+(--sources DIR keeps them for the next run), GDAL writing the tags. A raster
+is kept only if its content and tags match, so it is the original but for
+its encoding; a lidar rebuild that is not bit-identical (another platform's
+floating point) is kept when its stats (min, max and 16 x 16 block means)
+are within TOLERANCE of the manifest's, and fetch-data says so and names the
+machine (MACHINE). A raster that is not official fetch-data cannot rebuild:
+for each one missing it names the worlds that need it (`worlds`) and what is
 planned (`rebuild`), and a clone that has it lends it (tools/link_data.sh
 <that clone>); without such a raster sim-worlds skips the worlds that need
 it, and sim, drive and the tests' skips say why (world_missing).
@@ -69,6 +71,14 @@ STATS_BLOCKS = 16  # blocks per side of a raster's stats
 # kernel) are a few float32 steps (0.1 mm at 1400 m); a wrong tile, shift or step is centimetres (A).
 TOLERANCE = 1e-3
 MACHINE = f"{platform.system()} {platform.machine()}"  # what fetch-data names when a rebuild is not bit-identical
+# The TIFF tags of an original raster beyond its pixels' layout and encoding and the pixel scale and tiepoint its
+# geotransform gives (geotags), by the names rasters.json's `tags` gives them, with their TIFF types: GeoTIFF's
+# GeoKey directory and its double and ASCII parameters, GDAL's metadata and an image description.
+TAGS = {"ImageDescription": (270, TiffTags.ASCII),
+        "GeoKeyDirectory": (dem.GEO_KEY_DIRECTORY, TiffTags.SHORT),
+        "GeoDoubleParams": (dem.GEO_DOUBLE_PARAMS, TiffTags.DOUBLE),
+        "GeoAsciiParams": (dem.GEO_ASCII_PARAMS, TiffTags.ASCII),
+        "GDAL_METADATA": (dem.GDAL_METADATA, TiffTags.ASCII)}
 
 
 def say(line):
@@ -155,6 +165,18 @@ def within(got, want, tolerance=TOLERANCE):
     return a.shape == b.shape and bool(np.all(np.abs(a - b) <= tolerance))
 
 
+def tags_of(path):
+    """The tags of the TIFF at path that rasters.json's `tags` lists (TAGS), as JSON gives them."""
+    with Image.open(path) as img:
+        found = {name: img.tag_v2[tag] for name, (tag, _) in TAGS.items() if tag in img.tag_v2}
+    return {name: list(value) if isinstance(value, tuple) else value for name, value in found.items()}
+
+
+def tags_match(entry, path):
+    """Whether the TIFF at path has the original's georeferencing and metadata, when entry lists them (`tags`)."""
+    return "tags" not in entry or tags_of(path) == entry["tags"]
+
+
 def verdict(entry, path):
     """How the raster at path matches entry's content: "content verified" (the same pixels and georeferencing),
     "content within TOLERANCE ..." (a lidar rebuild that is not bit-identical but has the same shape, the same
@@ -174,8 +196,10 @@ def verdict(entry, path):
 def matches(entry, path):
     """Whether the raster at path is entry's: the same file, or (rebuilt from
     its official source, so encoded anew) the same content, or a lidar rebuild
-    within TOLERANCE of its stats."""
-    return file_sha256(path) == entry["sha256"] or verdict(entry, path) is not None
+    within TOLERANCE of its stats, with the original's tags."""
+    if file_sha256(path) == entry["sha256"]:
+        return True
+    return verdict(entry, path) is not None and tags_match(entry, path)
 
 
 def check(entry, path):
@@ -185,7 +209,9 @@ def check(entry, path):
     if file_sha256(path) == entry["sha256"]:
         return "verified"
     how = verdict(entry, path)
-    return "DIFFERS" if how is None else "verified" if how == "content verified" else f"verified, {how}"
+    if how is None or not tags_match(entry, path):
+        return "DIFFERS"
+    return "verified" if how == "content verified" else f"verified, {how}"
 
 
 def download(url):
@@ -293,6 +319,17 @@ def geotags(transform):
             dem.GEO_KEY_DIRECTORY: ((1, 1, 0, len(dem.GEOKEYS), *keys), TiffTags.SHORT)}
 
 
+def raster_tags(entry):
+    """The tags {tag: (value, type)} of the raster entry describes: the pixel scale and tiepoint of its transform,
+    and the original file's GeoKeys, their parameters and its metadata (`tags`). Without `tags` (a test's made-up
+    raster) the GeoKeys are the three dem.read_raster checks."""
+    tags = geotags(entry["transform"])
+    for name, value in entry.get("tags", {}).items():
+        tag, kind = TAGS[name]
+        tags[tag] = (tuple(value) if isinstance(value, list) else value, kind)
+    return tags
+
+
 def clear_alpha(path):
     """Marks the fourth band of the 4-band TIFF at path unspecified (ExtraSamples 0) instead of alpha (2): its IFD
     entry (tag 338, SHORT, count 1, little-endian), which must be there once, is patched."""
@@ -354,7 +391,7 @@ def mosaic(entry, provenance, get, out_path):
         covered[row:row + h, col:col + w] = True
     if not covered.all():
         raise ValueError(f"the requests leave {np.count_nonzero(~covered)} pixels uncovered")
-    write_geotiff(out_path, out, geotags(entry["transform"]))
+    write_geotiff(out_path, out, raster_tags(entry))
 
 
 def plan(entry, data_dir):
@@ -392,6 +429,10 @@ def fetch(entry, data_dir, get=download, log=say, rebuilds=None):
             if how is None:
                 log(f"{entry['path']}: FAILED, {source} {'gives' if lidar else 'now returns'} other pixels than "
                     "rasters.json lists")
+                return False
+            if not tags_match(entry, part):  # GDAL's in a lidar rebuild; a mosaic is written with them
+                log(f"{entry['path']}: FAILED, {source} gives other georeferencing or metadata than rasters.json "
+                    "lists (tags)")
                 return False
             os.replace(part, path)
             done = "rebuilt from the USGS lidar" if lidar else "fetched from its official source"

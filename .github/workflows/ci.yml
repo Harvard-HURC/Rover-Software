@@ -81,6 +81,10 @@ jobs:
             src/rover_sim/data/imagery/*.tif
           key: ${{ steps.rasters.outputs.cache-primary-key }}
       - run: pixi run test
+      # The tests regenerate tracked files (sim-model writes the rover's and the cameras' models, the wheel mesh and
+      # the dust sprite): a generated file committed stale, or a test that changes a tracked file, fails here.
+      - name: The tests left every tracked file as committed
+        run: git diff --exit-code
 
   windows:
     name: Windows (rover_description, rover_control)

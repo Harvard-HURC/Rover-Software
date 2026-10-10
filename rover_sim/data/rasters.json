@@ -1,5 +1,5 @@
 {
- "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the official source its provenance gives, the exportImage requests it lists or the recipe of tools/usgs_lidar.py it names with the USGS files that recipe reads; stats (the lidar rebuilds): min, max and 16 x 16 block means per band, which a rebuild that is not bit-identical (another platform's floating point) must match within fetch_data.TOLERANCE; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). A raster that is not official fetch-data cannot rebuild, and there is no other copy to fetch; for each such raster worlds: the generated worlds that read it; rebuild: what is planned (none is listed today).",
+ "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; tags: the original file's other georeferencing and its metadata (GeoTIFF's GeoKeyDirectory, GeoDoubleParams and GeoAsciiParams, GDAL_METADATA, ImageDescription), which a rebuilt raster must have too, so that it is the original but for its encoding (fetch-data writes them with the transform into a mosaic of exportImage requests; GDAL writes them into a lidar rebuild); provenance: the tracked .json that says where it came from; official: rebuilt from the official source its provenance gives, the exportImage requests it lists or the recipe of tools/usgs_lidar.py it names with the USGS files that recipe reads; stats (the lidar rebuilds): min, max and 16 x 16 block means per band, which a rebuild that is not bit-identical (another platform's floating point) must match within fetch_data.TOLERANCE; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). A raster that is not official fetch-data cannot rebuild, and there is no other copy to fetch; for each such raster worlds: the generated worlds that read it; rebuild: what is planned (none is listed today).",
  "rasters": [
   {
    "path": "dem/far_dem_3dep_60km.tif",
@@ -11,7 +11,13 @@
    "content_sha256": "ea0b760e94e43d2e9c8188252ca8c87ae8119fe61b2e976fa1c09c9a8031870a",
    "shape": [1, 1440, 1500],
    "dtype": "float32",
-   "transform": [-111.15, 0.0005, 0.0, 38.7, 0.0, -0.0004999999999999993]
+   "transform": [-111.15, 0.0005, 0.0, 38.7, 0.0, -0.0004999999999999993],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/mdrs_area_3dep.tif",
@@ -23,7 +29,13 @@
    "content_sha256": "063c7bcee906e9c6f8b81b0c356da076b37ed9336f5a148e0e9c7c7b198d341a",
    "shape": [1, 2617, 3490],
    "dtype": "float32",
-   "transform": [-110.8100044091711, 1.1463844797180156e-05, 0.0, 38.419994708994714, 0.0, -1.1463844797179682e-05]
+   "transform": [-110.8100044091711, 1.1463844797180156e-05, 0.0, 38.419994708994714, 0.0, -1.1463844797179682e-05],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"0\">100</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/mdrs_area_lidar2018_0p5m.tif",
@@ -36,6 +48,12 @@
    "shape": [1, 5840, 6980],
    "dtype": "float32",
    "transform": [-110.8100044091711, 5.731922398590078e-06, 0.0, 38.416334263340396, 0.0, -4.510348660943074e-06],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"RepresentationType\" sample=\"0\">ATHEMATIC</Item>\n</GDALMetadata>\n"
+   },
    "stats": {
     "min": 1347.270386,
     "max": 1436.006836,
@@ -71,7 +89,13 @@
    "content_sha256": "c33b2b54f46d7dd8fd0fba0b7002b7842c886522d8a6eefadbd224e4ae8b4278",
    "shape": [1, 2442, 2268],
    "dtype": "float32",
-   "transform": [-110.79, 1.1463844797182741e-05, 0.0, 38.43199735449736, 0.0, -1.1463844797182049e-05]
+   "transform": [-110.79, 1.1463844797182741e-05, 0.0, 38.43199735449736, 0.0, -1.1463844797182049e-05],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "dem/route_area_lidar_0p5m.tif",
@@ -84,6 +108,11 @@
    "shape": [1, 6207, 4536],
    "dtype": "float32",
    "transform": [-110.79, 5.731922398588238e-06, 0.0, 38.43199735449736, 0.0, -4.5103486609427355e-06],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|"
+   },
    "stats": {
     "min": 1341.615356,
     "max": 1430.922974,
@@ -120,6 +149,11 @@
    "shape": [1, 6207, 4536],
    "dtype": "uint8",
    "transform": [-110.79, 5.731922398588238e-06, 0.0, 38.43199735449736, 0.0, -4.5103486609427355e-06],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|"
+   },
    "stats": {
     "min": 1.0,
     "max": 3.0,
@@ -155,7 +189,14 @@
    "content_sha256": "b1dbde60f9ad6946651ad6c9a260bf222c67ef9f9303cc96076dbd35af683201",
    "shape": [4, 5234, 6980],
    "dtype": "uint8",
-   "transform": [-110.8100044091711, 5.73192239859063e-06, 0.0, 38.41999470899472, 0.0, -5.731922398590967e-06]
+   "transform": [-110.8100044091711, 5.73192239859063e-06, 0.0, 38.41999470899472, 0.0, -5.731922398590967e-06],
+   "tags": {
+    "ImageDescription": "USDA NAIP 2024-07-06 m_3811034_se_12_060_20240706, bands R,G,B,NIR",
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"SourceBandIndex\" sample=\"3\">3</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "imagery/naip2021_far_60km.tif",
@@ -167,7 +208,13 @@
    "content_sha256": "3a99825b255a25cd680e406465fc602f269e9c62fdb0232ae87a554ea0b1dabd",
    "shape": [3, 2400, 2500],
    "dtype": "uint8",
-   "transform": [-111.15, 0.0003, 0.0, 38.7, 0.0, -0.00029999999999999954]
+   "transform": [-111.15, 0.0003, 0.0, 38.7, 0.0, -0.00029999999999999954],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 13, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 74, 0, 2050, 0, 1, 6326, 2051, 0, 1, 8901, 2054, 0, 1, 9102, 2055, 34736, 1, 0, 2056, 0, 1, 7030, 2057, 34736, 1, 1, 2059, 34736, 1, 2, 2061, 34736, 1, 3, 3073, 34737, 163, 74],
+    "GeoDoubleParams": [0.017453292519943295, 6378137.0, 298.257223563, 0.0],
+    "GeoAsciiParams": "GCS Name = WGS 84|Datum = WGS_1984|Ellipsoid = WGS 84|Primem = Greenwich||ESRI PE String = GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"DataType\">Generic</Item>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"COLORINTERP\" sample=\"0\" role=\"colorinterp\">Undefined</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"COLORINTERP\" sample=\"1\" role=\"colorinterp\">Undefined</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"COLORINTERP\" sample=\"2\" role=\"colorinterp\">Undefined</Item>\n</GDALMetadata>\n"
+   }
   },
   {
    "path": "imagery/naip2021_route_area.tif",
@@ -179,7 +226,10 @@
    "content_sha256": "ce82e853e252183169d41ef2999d6270406e31336556b200e677430825fdc7c1",
    "shape": [3, 5600, 5200],
    "dtype": "uint8",
-   "transform": [-110.79, 5e-06, 0.0, 38.432, 0.0, -5e-06]
+   "transform": [-110.79, 5e-06, 0.0, 38.432, 0.0, -5e-06],
+   "tags": {
+    "GeoKeyDirectory": [1, 1, 0, 3, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326]
+   }
   },
   {
    "path": "imagery/route_area_naip2024.tif",
@@ -191,7 +241,14 @@
    "content_sha256": "8eef835aaf2a3dfc57913a176bc24c21b6a5f609367c4a0694cc0dcba434215f",
    "shape": [4, 4884, 4536],
    "dtype": "uint8",
-   "transform": [-110.79, 5.731922398589246e-06, 0.0, 38.43199735449737, 0.0, -5.731922398590323e-06]
+   "transform": [-110.79, 5.731922398589246e-06, 0.0, 38.43199735449737, 0.0, -5.731922398590323e-06],
+   "tags": {
+    "ImageDescription": "USDA NAIP 2024-07-06 m_3811034_se_12_060_20240706, bands R,G,B,NIR",
+    "GeoKeyDirectory": [1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0],
+    "GeoDoubleParams": [298.257223563, 6378137.0],
+    "GeoAsciiParams": "WGS 84|",
+    "GDAL_METADATA": "<GDALMetadata>\n  <Item name=\"SourceBandIndex\" sample=\"0\">0</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"0\">249</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"0\">220.94851074018</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"0\">54</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"0\">10.5383148399</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"0\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"1\">1</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"1\">245</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"1\">199.55382696008</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"1\">52</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"1\">13.874298790507</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"1\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"2\">2</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"2\">245</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"2\">177.79395444326</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"2\">64</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"2\">16.361550737759</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"2\">100</Item>\n  <Item name=\"SourceBandIndex\" sample=\"3\">3</Item>\n  <Item name=\"STATISTICS_MAXIMUM\" sample=\"3\">240</Item>\n  <Item name=\"STATISTICS_MEAN\" sample=\"3\">208.58127806739</Item>\n  <Item name=\"STATISTICS_MINIMUM\" sample=\"3\">49</Item>\n  <Item name=\"STATISTICS_STDDEV\" sample=\"3\">10.816683152964</Item>\n  <Item name=\"STATISTICS_VALID_PERCENT\" sample=\"3\">100</Item>\n</GDALMetadata>\n"
+   }
   }
  ]
 }
