@@ -1,0 +1,56 @@
+# The rover's controllers, the same on the real and the simulated rover (design spec 2026-10-09, section 6): the
+# controller manager's settings and the two controllers it runs, joint_state_broadcaster (/joint_states: wheels,
+# rockers, camera head) and drive_controller, which takes /cmd_vel (geometry_msgs/TwistStamped) and publishes /odom
+# and odom -> base_link. launch/controllers.launch.py starts both (another drive controller: controller:=<name>):
+# rover.launch.py on the rover, with its hardware stub until the motor controllers are chosen, and rover_sim's
+# sim.launch.py in the simulation, where gz_ros2_control runs the controller manager inside Gazebo and RoverSimSystem
+# hands the wheel commands to the motor model.
+#
+# drive_controller is diff_drive_controller (skid steer: left = FL + RL, right = FR + RR). To try the team's own,
+# change its type, or add the new controller beside it and start it with controller:=<name>. Its geometry and limits
+# are rover_description/config/rover.yaml's, written out here (a YAML file cannot include another);
+# test/test_controllers_yaml.cpp checks them against rover.yaml, so change both together.
+# Units SI. Sources: (A) assumed, (M) measured or tuned in the simulation, (R) from a reference, as in rover.yaml.
+
+controller_manager:
+  ros__parameters:
+    update_rate: 100                    # [Hz] the controllers' update, on the rover and in the simulation (A)
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    drive_controller:
+      type: diff_drive_controller/DiffDriveController
+
+drive_controller:
+  ros__parameters:
+    left_wheel_names: [wheel_fl_joint, wheel_rl_joint]
+    right_wheel_names: [wheel_fr_joint, wheel_rr_joint]
+    wheel_separation: 0.8               # [m] 2 x rover.yaml rocker.pivot_y
+    wheel_radius: 0.15                  # [m] rover.yaml wheel.radius
+    # The effective-track compensation of skid steer: the controller's kinematics and odometry use 0.8 m x this. 1 is
+    # the raw response (realism design D24, Q10; the user's choice, 2026-10-06): odometry over-reports a turn in
+    # place by 1 / the ground's turn ratio, 2.65 on packed ground.
+    wheel_separation_multiplier: 1.0
+    left_wheel_radius_multiplier: 1.0
+    right_wheel_radius_multiplier: 1.0
+    odom_frame_id: odom
+    base_frame_id: base_link
+    publish_rate: 50.0                  # [Hz] /odom and odom -> base_link
+    enable_odom_tf: true
+    open_loop: false                    # odometry from the wheels' positions
+    position_feedback: true
+    # A command older than this counts as zero, so a commander that died cannot leave the rover driving (user
+    # decision 2026-10-06). The station sends 20 Hz; a zero-stamped command is stamped on arrival (docs/topics.md).
+    cmd_vel_timeout: 0.5                # [s]
+    # The top speed, a wheel at rover.yaml wheel.top_speed, 20 rad/s: 3 m/s straight, 7.5 rad/s turning in place
+    # (user decision 2026-10-07).
+    linear.x.max_velocity: 3.0          # [m/s] top_speed x radius
+    linear.x.min_velocity: -3.0
+    angular.z.max_velocity: 7.5         # [rad/s] top_speed x radius / pivot_y
+    angular.z.min_velocity: -7.5
+    # The ramp: a wheel's speed changes by at most 8 rad/s^2 driving straight or turning in place, 1.2 m/s^2 (A: until
+    # the driver team reports theirs, Q7); the simulation's ROS-free helpers ramp each wheel at the same rate
+    # (rover_sim/config/sim.yaml wheel_cmd accel).
+    linear.x.max_acceleration: 1.2      # [m/s^2] 8 rad/s^2 x radius
+    linear.x.max_deceleration: -1.2
+    angular.z.max_acceleration: 3.0     # [rad/s^2] 8 rad/s^2 x radius / pivot_y
+    angular.z.max_deceleration: -3.0

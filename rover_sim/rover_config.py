@@ -17,6 +17,8 @@ SIM_DIR = Path(__file__).resolve().parent
 DESCRIPTION_DIR = SIM_DIR.parent / "rover_description"  # the package beside this one in the repository
 ROVER_YAML = DESCRIPTION_DIR / "config" / "rover.yaml"
 SIM_YAML = SIM_DIR / "config" / "sim.yaml"
+CONTROL_DIR = SIM_DIR.parent / "rover_control"  # the package beside this one: the controllers the ROS rover runs
+CONTROLLERS_YAML = CONTROL_DIR / "config" / "controllers.yaml"
 
 
 class Tree(Mapping):

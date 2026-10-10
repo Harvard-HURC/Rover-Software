@@ -43,9 +43,11 @@ from rover_config import ROVER, Variant  # noqa: E402
 from urc import sdf, terrain, terrains  # noqa: E402
 
 # Set before Gazebo starts (gzenv): where model://rover and the plugins live,
-# and a private transport partition so tests never talk to a running simulation.
+# and a private transport partition and ROS domain so tests never talk to a
+# running simulation or another ROS 2 graph (the ROS tests start rclpy after this).
 os.environ.update(gzenv.environment(partition=f"rover_sim_test_{os.getpid()}",
-                                    ip=os.environ.get("GZ_IP", "127.0.0.1")))
+                                    ip=os.environ.get("GZ_IP", "127.0.0.1"),
+                                    ros_domain=gzenv.private_ros_domain(os.getpid())))
 
 import gz.math7  # noqa: E402,F401  (lets gz.sim8 return Pose3d values)
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402

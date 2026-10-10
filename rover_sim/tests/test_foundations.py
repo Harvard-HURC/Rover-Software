@@ -38,7 +38,8 @@ class Environment(unittest.TestCase):
     def test_our_models_and_plugins_come_first(self):
         env = gzenv.environment(base=self.BASE)
         self.assertEqual(env["GZ_SIM_RESOURCE_PATH"], os.pathsep.join([str(SIM_DIR / "models"), "/elsewhere/models"]))
-        self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"], str(SIM_DIR.parents[1] / "build" / "rover_sim"))
+        self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"],
+                         os.pathsep.join([str(SIM_DIR.parents[1] / "build" / "rover_sim"), "/env/lib"]))
         self.assertEqual(env["OGRE2_RESOURCE_PATH"], "/env/lib/OGRE-Next")
         self.assertEqual(env["OGRE_RESOURCE_PATH"], "/env/lib/OGRE")
         self.assertEqual(env["PATH"], "/usr/bin")
@@ -60,7 +61,8 @@ class Environment(unittest.TestCase):
         with tempfile.TemporaryDirectory() as build:
             env = gzenv.environment(build, base=dict(self.BASE, OGRE2_RESOURCE_PATH="/mine"))
             self.assertEqual(env["OGRE2_RESOURCE_PATH"], "/mine")
-            self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"], str(Path(build).resolve()))
+            self.assertEqual(env["GZ_SIM_SYSTEM_PLUGIN_PATH"],
+                             os.pathsep.join([str(Path(build).resolve()), "/env/lib"]))
 
     def test_patched_media_only_once_complete(self):
         with tempfile.TemporaryDirectory() as build:
@@ -74,6 +76,26 @@ class Environment(unittest.TestCase):
     def test_partition_and_ip_when_asked(self):
         env = gzenv.environment(base=self.BASE, partition="p", ip="127.0.0.1")
         self.assertEqual((env["GZ_PARTITION"], env["GZ_IP"]), ("p", "127.0.0.1"))
+
+    def test_gz_ros2_control_and_rover_sim_system_are_found(self):
+        """gz_ros2_control's system plugin is in the environment's lib, which Gazebo does not search: last on the
+        plugin path. RoverSimSystem is in the workspace's install/rover_sim, which pluginlib finds through
+        AMENT_PREFIX_PATH: first, once colcon has installed it."""
+        with tempfile.TemporaryDirectory() as install:
+            env = gzenv.environment(base=dict(self.BASE, AMENT_PREFIX_PATH="/env"), install_dir=install)
+            self.assertEqual(env["AMENT_PREFIX_PATH"], os.pathsep.join([str(Path(install).resolve()), "/env"]))
+            twice = gzenv.environment(base=env, install_dir=install)
+            self.assertEqual(twice["AMENT_PREFIX_PATH"], env["AMENT_PREFIX_PATH"])
+            self.assertEqual(twice["GZ_SIM_SYSTEM_PLUGIN_PATH"].split(os.pathsep)[-1], "/env/lib")
+            self.assertEqual(twice["GZ_SIM_SYSTEM_PLUGIN_PATH"].count("/env/lib"), 1)
+        self.assertNotIn("AMENT_PREFIX_PATH", gzenv.environment(base=self.BASE, install_dir="/no/such/install"))
+        self.assertEqual(gzenv.INSTALL_DIR, SIM_DIR.parents[1] / "install" / "rover_sim")
+
+    def test_a_private_ros_domain_when_asked(self):
+        env = gzenv.environment(base=self.BASE, ros_domain=63)
+        self.assertEqual((env["ROS_DOMAIN_ID"], env["ROS_AUTOMATIC_DISCOVERY_RANGE"]), ("63", "LOCALHOST"))
+        self.assertNotIn("ROS_DOMAIN_ID", gzenv.environment(base=self.BASE))
+        self.assertEqual({gzenv.private_ros_domain(seed) for seed in range(1000)}, set(range(50, 100)))
 
     def test_run_sh_gets_the_same_variables(self):
         """sim/run.sh evals what `python sim/gzenv.py` prints."""

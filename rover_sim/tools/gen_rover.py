@@ -6,8 +6,10 @@ post-processed (postprocess), so that the converter's quirks leave no trace; wit
 station's cameras (viewers.py). `pixi run sim-model` runs it.
 
 build_sdf(variant) builds a variant of the rover (rover_config.Variant: some of rover.yaml's or sim.yaml's numbers
-changed) without writing anything; the tests drive such variants. tests/test_equivalence.py checks that the default
-rover and the variants the tests use are the frozen models gen_model.py wrote (tests/fixtures/rover_model).
+changed) without writing anything; the tests drive such variants. build_urdf(variant, ros2_control=True) and convert()
+build the rover with ros2_control that sim.launch.py runs (per launch: its controllers.yaml path is absolute).
+tests/test_equivalence.py checks that the default rover and the variants the tests use are the frozen models
+gen_model.py wrote (tests/fixtures/rover_model).
 """
 import dataclasses
 import functools
@@ -57,26 +59,40 @@ def surfaces_text():
     return SURFACES_HEADER + yaml.safe_dump(surface_rows(), sort_keys=False)
 
 
-def build_urdf(variant=Variant()):
-    """The variant's URDF: rover_sim.urdf.xacro expanded with its numbers."""
+def build_urdf(variant=Variant(), ros2_control=False):
+    """The variant's URDF: rover_sim.urdf.xacro expanded with its numbers. With ros2_control, the rover sim.launch.py
+    runs: rover_description's ros2_control block with the hardware interface rover_sim/RoverSimSystem and the
+    gz_ros2_control system with rover_control's config/controllers.yaml (rover_config.CONTROLLERS_YAML)."""
     import xacro  # here: only building a model needs it
     with tempfile.TemporaryDirectory(prefix="gen_rover_") as tmp:
         rover_yaml, sim_yaml = Path(tmp) / "rover.yaml", Path(tmp) / "sim.yaml"
         rover_yaml.write_text(yaml.safe_dump(variant.rover.plain(), sort_keys=False))
         sim_yaml.write_text(yaml.safe_dump(variant.sim.plain(), sort_keys=False))
-        doc = xacro.process_file(str(XACRO), mappings={
-            "description_dir": str(rover_config.DESCRIPTION_DIR), "rover_yaml": str(rover_yaml),
-            "sim_yaml": str(sim_yaml), "surfaces_yaml": str(SURFACES_YAML)})
+        mappings = {"description_dir": str(rover_config.DESCRIPTION_DIR), "rover_yaml": str(rover_yaml),
+                    "sim_yaml": str(sim_yaml), "surfaces_yaml": str(SURFACES_YAML)}
+        if ros2_control:
+            mappings.update(ros2_control="true", controllers=str(rover_config.CONTROLLERS_YAML))
+        doc = xacro.process_file(str(XACRO), mappings=mappings)
     return doc.toprettyxml(indent="  ")
 
 
-@functools.lru_cache(maxsize=64)
-def build_sdf(variant=Variant()):
-    """The variant's model as an SDF 1.11 document: build_urdf, `gz sdf -p`, postprocess."""
+def _check_mode(variant):
     mode = variant.sim.drivetrain.mode
     if mode not in ("physical", "diffdrive"):
         raise ValueError(f"sim.yaml drivetrain mode {mode!r}: 'physical' or 'diffdrive'")
-    urdf = build_urdf(variant)
+
+
+@functools.lru_cache(maxsize=64)
+def build_sdf(variant=Variant(), ros2_control=False):
+    """The variant's model as an SDF 1.11 document: build_urdf, then convert."""
+    _check_mode(variant)
+    return convert(build_urdf(variant, ros2_control), variant)
+
+
+def convert(urdf, variant=Variant()):
+    """A URDF that build_urdf made of `variant`, as an SDF 1.11 document: `gz sdf -p`, postprocess. sim.launch.py
+    converts the URDF it publishes on /robot_description, so that Gazebo runs that rover, post-processed."""
+    _check_mode(variant)
     with tempfile.TemporaryDirectory(prefix="gen_rover_") as tmp:
         path = Path(tmp) / "rover.urdf"
         path.write_text(urdf)

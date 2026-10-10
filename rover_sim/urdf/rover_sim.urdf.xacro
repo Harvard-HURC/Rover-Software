@@ -4,22 +4,30 @@
      emissive material, the tyres' friction, the rocker differential, the drivetrain and motor model with its ground
      surfaces, the joint state and ground-truth publishers, the camera head's controllers, the visual cues (tyre sink,
      ruts, tread tyre), the opt-in dust and tyre compliance. tools/gen_rover.py expands it, converts it with
-     `gz sdf -p` and writes models/rover/model.sdf (`pixi run sim-model`). gz_ros2_control comes with PR 3.
+     `gz sdf -p` and writes models/rover/model.sdf (`pixi run sim-model`). With ros2_control:=true it is the rover
+     sim.launch.py runs: the description's ros2_control block with the hardware interface RoverSimSystem, and the
+     gz_ros2_control system that runs the controller manager in Gazebo (gen_rover.build_urdf(..., ros2_control=True)).
 
      Arguments:
        description_dir  rover_description's folder (default: the package's, found through the ROS package index)
        rover_yaml       the rover's numbers (default: the description's config/rover.yaml)
        sim_yaml         the simulation's (default config/sim.yaml beside this folder)
        surfaces_yaml    the drivetrain's ground surfaces (default config/surfaces.yaml, written from urc/terrains.py)
-       ros2_control     the description's ros2_control block: false until PR 3 brings gz_ros2_control
+       ros2_control     true: the description's ros2_control block and the gz_ros2_control system (default false:
+                        the ROS-free rover, the worlds' model://rover and the tests')
+       ros2_control_plugin  the block's hardware interface (default rover_sim/RoverSimSystem)
+       controllers      with ros2_control: the controller manager's parameters, rover_control's
+                        config/controllers.yaml (an absolute path)
      xacro reads a relative path from the folder of the file that loads it (rover_yaml: the description's urdf/;
      sim_yaml and surfaces_yaml: this folder), so give other files' absolute paths. -->
 <robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="description_dir" default="$(find rover_description)"/>
   <xacro:arg name="sim_yaml" default="../config/sim.yaml"/>
   <xacro:arg name="surfaces_yaml" default="../config/surfaces.yaml"/>
-  <!-- PR 3 adds gz_ros2_control; until then the simulated rover has no ros2_control block. -->
+  <!-- Declared before the description declares them: the first declaration's default wins. -->
   <xacro:arg name="ros2_control" default="false"/>
+  <xacro:arg name="ros2_control_plugin" default="rover_sim/RoverSimSystem"/>
+  <xacro:arg name="controllers" default=""/>
 
   <xacro:property name="sim" value="${xacro.load_yaml(xacro.arg('sim_yaml'))}"/>
   <xacro:property name="surfaces" value="${xacro.load_yaml(xacro.arg('surfaces_yaml'))}"/>
@@ -270,6 +278,24 @@
       </surface>
     </xacro:if>
   </xacro:macro>
+  <!-- ros2_control (sim.launch.py's rover): gz_ros2_control runs the controller manager inside Gazebo with
+       `controllers`, and the controller manager runs the description's ros2_control block through RoverSimSystem
+       (ros2_control/rover_sim_system.cpp), which hands each wheel's velocity command to the drivetrain's motors.
+       Before the drivetrain's plugin: Gazebo runs the plugins' PreUpdates in this order, so a setpoint the controller
+       manager writes at the start of a step drives the motors in that step (tests/test_ros2_control.py). -->
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:unless value="${physical}">
+      ${xacro.fatal("ros2_control:=true needs sim.yaml drivetrain mode physical (RoverDrivetrain's motors)")}
+    </xacro:unless>
+    <xacro:if value="${xacro.arg('controllers') == ''}">
+      ${xacro.fatal("ros2_control:=true needs controllers:= rover_control's controllers.yaml (absolute)")}
+    </xacro:if>
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(arg controllers)</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
   <xacro:if value="${physical}">
     <gazebo>
       <plugin filename="RoverDrivetrain" name="rover_sim::RoverDrivetrain">

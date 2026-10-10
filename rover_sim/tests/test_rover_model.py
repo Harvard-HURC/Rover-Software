@@ -6,7 +6,9 @@ import dataclasses
 import importlib.util
 import json
 import re
+import shutil
 import struct
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -707,6 +709,63 @@ class EyeCameraModel(unittest.TestCase):
         self.assertEqual(float(sensor.findtext("update_rate")), 20.0)
         self.assertEqual(float(sensor.findtext("camera/horizontal_fov")), e.hfov)
         self.assertEqual(e.hfov, ROVER.camera.hfov)
+
+    def test_gz_accepts_it(self):
+        with temp_sdf(self.sdf) as path:
+            result = gz_check(path)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class Ros2ControlVariant(unittest.TestCase):
+    """build_urdf and build_sdf with ros2_control: the rover sim.launch.py runs (design spec 2026-10-09, 6.1 and 6.3):
+    rover_description's ros2_control block with the hardware interface RoverSimSystem, and the gz_ros2_control
+    system with rover_control's controllers.yaml just before the drivetrain, so that its PreUpdate, where the
+    controller manager writes the setpoints, comes first in each step (tests/test_ros2_control.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.urdf = gen_rover.build_urdf(V, ros2_control=True)
+        cls.sdf = gen_rover.build_sdf(V, ros2_control=True)
+        cls.model = ET.fromstring(cls.sdf).find("model")
+
+    def test_the_block_names_rover_sim_system(self):
+        block = ET.fromstring(self.urdf).find("ros2_control")
+        self.assertEqual(block.findtext("hardware/plugin"), "rover_sim/RoverSimSystem")
+        commanded = [j.get("name") for j in block.findall("joint") if j.find("command_interface") is not None]
+        self.assertEqual(commanded, [f"{wheel}_joint" for wheel in WHEELS])
+        self.assertEqual(len(block.findall("joint")), 8)
+
+    def test_gz_ros2_control_runs_just_before_the_drivetrain(self):
+        plugins = self.model.findall("plugin")
+        names = [p.get("name") for p in plugins]
+        here = names.index("gz_ros2_control::GazeboSimROS2ControlPlugin")
+        self.assertEqual(names[here + 1], "rover_sim::RoverDrivetrain")
+        self.assertEqual(plugins[here].get("filename"), "gz_ros2_control-system")
+        self.assertEqual(plugins[here].findtext("parameters"), str(rover_config.CONTROLLERS_YAML))
+        self.assertTrue(rover_config.CONTROLLERS_YAML.is_file())
+
+    def test_without_it_the_rover_has_neither_and_is_the_same(self):
+        default = ET.fromstring(gen_rover.build_sdf(V)).find("model")
+        self.assertNotIn("gz_ros2_control::GazeboSimROS2ControlPlugin", [p.get("name") for p in default.iter("plugin")])
+        self.assertIsNone(ET.fromstring(gen_rover.build_urdf(V)).find("ros2_control"))
+        ros = copy.deepcopy(self.model)
+        ros.remove(ros.find("plugin[@name='gz_ros2_control::GazeboSimROS2ControlPlugin']"))
+        self.assertEqual(canonical(ros), canonical(default))
+
+    def test_check_urdf_accepts_it(self):
+        if shutil.which("check_urdf") is None:
+            self.skipTest("check_urdf is not installed (liburdfdom-tools)")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rover.urdf"
+            path.write_text(self.urdf)
+            result = subprocess.run(["check_urdf", str(path)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Successfully Parsed XML", result.stdout)
+
+    def test_diffdrive_cannot_have_it(self):
+        with self.assertRaises(Exception) as caught:
+            gen_rover.build_urdf(DIFFDRIVE, ros2_control=True)
+        self.assertIn("drivetrain mode physical", str(caught.exception))
 
     def test_gz_accepts_it(self):
         with temp_sdf(self.sdf) as path:

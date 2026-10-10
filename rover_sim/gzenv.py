@@ -15,8 +15,16 @@ the tools start Gazebo with environment().
 - GZ_RENDERING_RESOURCE_PATH: the patched gz-rendering media in the build
   directory (MEDIA_DIR), only once the tool that makes it has marked it
   complete (MEDIA_COMPLETE); otherwise Gazebo uses its stock media.
+- GZ_SIM_SYSTEM_PLUGIN_PATH, last: the environment's lib, where
+  gz_ros2_control's system plugin is (ros_gz_sim's own launch file adds
+  LD_LIBRARY_PATH the same way); Gazebo does not search it.
+- AMENT_PREFIX_PATH: the workspace's install/rover_sim first, once colcon has
+  installed it (INSTALL_DIR): pluginlib finds RoverSimSystem there, which
+  gz_ros2_control loads, without a shell that sourced install/.
 - GZ_PARTITION, GZ_IP: only when asked (the tests run in a private partition
-  on the loopback interface).
+  on the loopback interface); ROS_DOMAIN_ID and
+  ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST: only when asked (the tests and the
+  launcher's worlds take private_ros_domain()).
 """
 import argparse
 import os
@@ -27,22 +35,40 @@ from pathlib import Path
 SIM_DIR = Path(__file__).resolve().parent
 WORKSPACE = SIM_DIR.parents[1]  # the colcon workspace: this repository is its src/
 BUILD_DIR = WORKSPACE / "build" / "rover_sim"  # where colcon builds this package
+INSTALL_DIR = WORKSPACE / "install" / "rover_sim"  # where colcon installs it: RoverSimSystem, pluginlib's index
 MEDIA_DIR = "gz-rendering-media"  # in the build directory
 MEDIA_COMPLETE = ".complete"  # in MEDIA_DIR, written last by the tool that patches the media
 VARIABLES = ("GZ_SIM_RESOURCE_PATH", "GZ_SIM_SYSTEM_PLUGIN_PATH", "OGRE2_RESOURCE_PATH", "OGRE_RESOURCE_PATH",
-             "GZ_RENDERING_RESOURCE_PATH", "GZ_PARTITION", "GZ_IP")
+             "GZ_RENDERING_RESOURCE_PATH", "AMENT_PREFIX_PATH", "GZ_PARTITION", "GZ_IP", "ROS_DOMAIN_ID",
+             "ROS_AUTOMATIC_DISCOVERY_RANGE")
 
 
-def environment(build_dir=None, *, partition=None, ip=None, base=None):
+def private_ros_domain(seed):
+    """A ROS_DOMAIN_ID for runs that must not meet another ROS 2 graph on this machine (the tests, the launcher's
+    worlds), from `seed` (a process id): 50-99, inside the 0-101 that keeps DDS's ports below the ephemeral ranges of
+    Linux, macOS and Windows."""
+    return 50 + seed % 50
+
+
+def environment(build_dir=None, *, partition=None, ip=None, base=None, ros_domain=None, install_dir=None):
     """A copy of `base` (default os.environ) with the Gazebo variables set.
-    build_dir: where the plugins are built (default BUILD_DIR); partition,
-    ip: GZ_PARTITION and GZ_IP, left as they are when None."""
+    build_dir: where the plugins are built (default BUILD_DIR); install_dir:
+    where colcon installed this package (default INSTALL_DIR); partition, ip:
+    GZ_PARTITION and GZ_IP, ros_domain: ROS_DOMAIN_ID (with LOCALHOST
+    discovery), left as they are when None."""
     env = dict(os.environ if base is None else base)
     build = Path(build_dir).resolve() if build_dir else BUILD_DIR
     for key, first in (("GZ_SIM_RESOURCE_PATH", SIM_DIR / "models"), ("GZ_SIM_SYSTEM_PLUGIN_PATH", build)):
         rest = [p for p in env.get(key, "").split(os.pathsep) if p and p != str(first)]
         env[key] = os.pathsep.join([str(first), *rest])
     prefix = Path(env.get("CONDA_PREFIX") or sys.prefix)
+    plugins = env["GZ_SIM_SYSTEM_PLUGIN_PATH"].split(os.pathsep)
+    if str(prefix / "lib") not in plugins:
+        env["GZ_SIM_SYSTEM_PLUGIN_PATH"] = os.pathsep.join([*plugins, str(prefix / "lib")])
+    install = Path(install_dir).resolve() if install_dir else INSTALL_DIR
+    if install.is_dir():
+        rest = [p for p in env.get("AMENT_PREFIX_PATH", "").split(os.pathsep) if p and p != str(install)]
+        env["AMENT_PREFIX_PATH"] = os.pathsep.join([str(install), *rest])
     env.setdefault("OGRE2_RESOURCE_PATH", str(prefix / "lib" / "OGRE-Next"))
     env.setdefault("OGRE_RESOURCE_PATH", str(prefix / "lib" / "OGRE"))
     media = build / MEDIA_DIR
@@ -52,6 +78,9 @@ def environment(build_dir=None, *, partition=None, ip=None, base=None):
         env["GZ_PARTITION"] = partition
     if ip is not None:
         env["GZ_IP"] = ip
+    if ros_domain is not None:
+        env["ROS_DOMAIN_ID"] = str(ros_domain)
+        env["ROS_AUTOMATIC_DISCOVERY_RANGE"] = "LOCALHOST"
     return env
 
 
