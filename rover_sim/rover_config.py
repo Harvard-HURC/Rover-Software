@@ -110,6 +110,7 @@ class Variant:
 
 # The rover's Gazebo interface (sim.yaml topics; the joint and visual names are the description's).
 CMD_VEL_TOPIC = SIM.topics.cmd_vel
+WHEEL_CMD_TOPIC = SIM.topics.wheel_cmd  # the drivetrain's wheel setpoints: gz.msgs.Double_V, fl rl fr rr (wheel_cmd.py)
 ODOM_TOPIC = SIM.topics.odometry
 TF_TOPIC = SIM.topics.tf
 JOINT_STATE_TOPIC = SIM.topics.joint_states

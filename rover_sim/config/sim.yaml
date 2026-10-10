@@ -35,6 +35,14 @@ drivetrain:
   odom_rate: 50.0                   # [Hz] the no-slip odometry (DiffDrive's too)
   state_rate: 50.0                  # [Hz] the drivetrain state topic
 
+# The ROS-free helpers (wheel_cmd.py: the tests, tools and scripts that speak twists to a rover without ROS) turn a
+# twist into wheel setpoints as the drivetrain did before the ros2_control boundary (PR 3): skid steer with the
+# geometric track, clamped to the top speed, each wheel's setpoint ramped at accel, so every run drives as it did. The
+# ROS stack's drive controller ramps vx and wz at the same wheel rate (rover_control/config/controllers.yaml;
+# tests/test_wheel_cmd.py checks it).
+wheel_cmd:
+  accel: 8.0                        # [rad/s^2] each wheel's setpoint, 1.2 m/s^2 (A: until the driver team's, Q7)
+
 # Gazebo's DiffDrive (drivetrain mode diffdrive). Lateral friction below longitudinal emulates tyre scrub; with equal
 # values the physics engine's box friction stops the rover turning in place.
 diffdrive:
@@ -176,6 +184,7 @@ continuous_stops: 1.0e+16           # [rad]
 # The rover's Gazebo topics; {joint}, {link} and {emitter} are filled in.
 topics:
   cmd_vel: /model/rover/cmd_vel
+  wheel_cmd: /model/rover/wheel_cmd             # the wheels' speed setpoints [rad/s]: gz.msgs.Double_V, fl rl fr rr
   odometry: /model/rover/odometry
   tf: /model/rover/tf
   joint_states: /model/rover/joint_states

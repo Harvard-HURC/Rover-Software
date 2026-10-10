@@ -31,6 +31,7 @@ class Files(unittest.TestCase):
 
     def test_topics_are_the_gazebo_interface(self):
         self.assertEqual(rover_config.CMD_VEL_TOPIC, "/model/rover/cmd_vel")
+        self.assertEqual(rover_config.WHEEL_CMD_TOPIC, "/model/rover/wheel_cmd")
         self.assertEqual(rover_config.HEAD_TOPIC.format(joint=rover_config.PAN_JOINT),
                          "/model/rover/joint/camera_pan_joint/0/cmd_pos")
         self.assertEqual(rover_config.DUST_TOPIC.format(link="rocker_left", emitter="dust_rl"),
