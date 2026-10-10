@@ -14,9 +14,9 @@ numbers in brackets are its sources, section 15; (A) marks an assumption,
 - Traction: what a wheel feels (design 5.6). The drivetrain takes mu as the
   Coulomb limit of the gross tyre force and applies rolling resistance and
   bulldozing as hub forces. Worlds write it to ground.json, and the rover
-  model to its drivetrain's surface rows (gen_model.surface_rows); DIG
-  picks the dig-in preset both are written with (traction()): the one
-  switch between the strong and the mild dig-in.
+  model to its drivetrain's surface rows (gen_rover.surface_rows, through
+  config/surfaces.yaml); DIG picks the dig-in preset both are written with
+  (traction()): the one switch between the strong and the mild dig-in.
 - Appearance: the colour-map palette (design 5.7), detail texture and dust.
 - Relief: micro-relief a synthetic world adds under the type (design 5.4,
   landscape.relief).
@@ -119,8 +119,8 @@ class Appearance:
     """How the ground looks: its colour-map palette, the shared detail
     texture of its surface (None: none; Terra weights detail layers by height
     only, so a world lays the same few over all its ground,
-    WorldBuilder.detail_layers) and the dust its wheels raise when
-    gen_model.DriveParams.dust is on (off by default: no dust)."""
+    WorldBuilder.detail_layers) and the dust its wheels raise when the
+    rover's dust is on (sim.yaml `dust: enabled`, off by default: no dust)."""
     palette: Palette
     detail: str = None  # key of textures.DETAILS
     dust: float = 0.0  # dust factor: scales the emitters' rate behind the wheels (0: none)
