@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from worldfiles import SIM_DIR
+from worldfiles import SIM_DIR, needs_raster
 
 import gen_worlds  # noqa: E402  (worldfiles puts sim/ on the path)
 import gzenv  # noqa: E402
@@ -415,6 +415,7 @@ class TerraLayers(unittest.TestCase):
             self.assertAlmostEqual(3 * t * t - 2 * t ** 3, w, places=12)
 
 
+@needs_raster(LIDAR)
 class Orthophoto(unittest.TestCase):
     """On the real route area: NAIP 2024 and the 0.5 m lidar DEM."""
 

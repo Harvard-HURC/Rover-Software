@@ -9,7 +9,8 @@ import unittest
 import cv2
 import numpy as np
 
-from worldfiles import WORLDS, gz_check, model_root, rock_vertices, sheet, terrain as world_terrain, vec
+from worldfiles import WORLDS, gz_check, model_root, needs_world, rock_vertices, sheet, skip_if_missing, vec
+from worldfiles import terrain as world_terrain
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
 from urc import appearance, dem, lander, landscape, props, realism, routes, rules, sdf, terrain, terrains  # noqa: E402
@@ -70,6 +71,7 @@ def climb_limits(world, x, y):
     return np.vectorize(lambda px, py: climb[ground(px, py)])(x, y)
 
 
+@needs_world("urc_autonomy")
 class Autonomy(unittest.TestCase):
     """The Autonomy world on the real terrain (the USGS 0.5 m lidar DEM of
     the square mile). The rules are checked on the terrain the world ships
@@ -439,15 +441,19 @@ class Astrobiology(unittest.TestCase):
 class Generated(unittest.TestCase):
     def test_every_mission_has_a_world_and_sheet(self):
         for key in MISSIONS:
-            self.assertTrue((WORLDS / f"urc_{key}.sdf").exists(), key)
-            sheet, _ = load(key)
-            self.assertTrue(sheet["tasks"])
-            self.assertIn("rover_start", sheet)
+            with self.subTest(key):
+                skip_if_missing(self, f"urc_{key}")
+                self.assertTrue((WORLDS / f"urc_{key}.sdf").exists(), key)
+                sheet, _ = load(key)
+                self.assertTrue(sheet["tasks"])
+                self.assertIn("rover_start", sheet)
 
     def test_gz_accepts_the_worlds(self):
         for key in MISSIONS:
-            result = gz_check(WORLDS / f"urc_{key}.sdf")
-            self.assertIn("Valid", result.stdout, result.stdout + result.stderr)
+            with self.subTest(key):
+                skip_if_missing(self, f"urc_{key}")
+                result = gz_check(WORLDS / f"urc_{key}.sdf")
+                self.assertIn("Valid", result.stdout, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

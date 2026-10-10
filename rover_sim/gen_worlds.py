@@ -9,6 +9,12 @@ sim/urc/missions/, not the output. Shared textures and meshes
 whatever no world uses any more is removed (prune). Runs may overlap (each
 regenerating its own worlds): they build under a shared lock and prune
 under an exclusive one (lock).
+
+The terrain rasters are git-ignored (pixi run fetch-data). A world whose
+raster fetch-data cannot rebuild yet (tools/fetch_data.py: the Autonomy
+world's 0.5 m lidar DEM) is skipped when it is not here, saying how to get
+it; the run fails if that world was named, or if any other raster is
+missing.
 """
 import argparse
 import contextlib
@@ -21,6 +27,8 @@ from pathlib import Path
 
 SIM_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SIM_DIR))
+sys.path.insert(0, str(SIM_DIR / "tools"))
+import fetch_data  # noqa: E402
 from urc.media import Media  # noqa: E402
 from urc.missions import COURSES, MISSIONS  # noqa: E402
 
@@ -87,20 +95,30 @@ def main():
     worlds = {**MISSIONS, **COURSES}
     parser.add_argument("worlds", nargs="*", choices=[[]] + sorted(worlds), help="default: all")
     args = parser.parse_args()
+    skipped = []
     with lock(MODELS_DIR):
         media = Media(MODELS_DIR)
         for key in args.worlds or sorted(worlds):
             start = time.time()
             try:
                 world, sheet = worlds[key].build(MODELS_DIR, WORLDS_DIR, media)
-            except FileNotFoundError as e:  # a raster that was never fetched: say how to get it
+            except FileNotFoundError as e:  # a raster that is not here: say how to get it
                 if e.filename is None or not Path(e.filename).is_relative_to(DATA_DIR):
                     raise
-                sys.exit(f"{key}: {Path(e.filename).relative_to(SIM_DIR.parent)} is missing; pixi run fetch-data "
-                         "fetches the terrain rasters (README, Simulation)")
+                raster = Path(e.filename)
+                entry = fetch_data.entry_of(raster, DATA_DIR)
+                if entry is None or entry["official"]:
+                    sys.exit(f"{key}: {raster.relative_to(SIM_DIR.parent)} is missing; pixi run fetch-data fetches "
+                             "the terrain rasters (README, Simulation)")
+                print(f"skipped {key}: {raster.relative_to(SIM_DIR.parent)} is missing; "
+                      f"{fetch_data.cannot_fetch(entry)}", file=sys.stderr)
+                skipped.append(key)
+                continue
             print(f"wrote {world.relative_to(SIM_DIR.parent)} and {sheet.name} ({time.time() - start:.1f} s)")
     for path in prune(MODELS_DIR, WORLDS_DIR):
         print(f"removed {path.relative_to(SIM_DIR.parent)} (unused)")
+    if skipped and args.worlds:
+        sys.exit(f"not generated: {', '.join(skipped)} (above)")
 
 
 if __name__ == "__main__":

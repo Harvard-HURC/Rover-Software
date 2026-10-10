@@ -20,7 +20,7 @@ import numpy as np
 
 import gpu
 from simulate import SIM_DIR, follow, simulate, spin_ratio
-from worldfiles import MODELS, WORLDS, model_root, sheet, terrain, vec, world_copy
+from worldfiles import MODELS, WORLDS, model_root, needs_world, sheet, skip_if_missing, terrain, vec, world_copy
 
 import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
 from gz.sim8 import Joint, Model, TestFixture, World, world_entity
@@ -141,6 +141,7 @@ class Worlds(unittest.TestCase):
     def test_rover_rests_on_the_terrain(self):
         for mission in MISSIONS:
             with self.subTest(mission=mission):
+                skip_if_missing(self, f"urc_{mission}")
                 ground = terrain(f"urc_{mission}")
                 with world_copy(f"urc_{mission}") as world:
                     state = simulate(2.0, world=world)
@@ -154,6 +155,7 @@ class Worlds(unittest.TestCase):
                     self.assertAlmostEqual(wz - gen_model.Params().wheel_radius, ground.height(wx, wy), delta=0.06,
                                            msg=f"{mission} {wheel}")
 
+    @needs_world("urc_autonomy")
     def test_gnss_reports_the_sheet_position(self):
         from gz.msgs10.navsat_pb2 import NavSat
         s = sheet("urc_autonomy")
@@ -168,6 +170,7 @@ class Worlds(unittest.TestCase):
         east, north, _ = geo.wgs84_to_enu(origin, lat, lon, start["alt"])
         self.assertLess(math.hypot(east, north), 1.0)  # antenna lever arm 0.25 m + noise
 
+    @needs_world("urc_autonomy")
     def test_rim_boulders_stop_a_straight_climb(self):
         """1.e.xv in the physics: driven straight up the butte's steep north
         face at Post 1 (the soil map's badland slope, climbs 22 deg, and rock
@@ -187,6 +190,7 @@ class Worlds(unittest.TestCase):
         self.assertLess(bz, post["z"] - 3.0)
 
     @gpu.needs_gpu
+    @needs_world("urc_autonomy")
     def test_camera_sees_the_start_post(self):
         """The rover's camera, CAMERA_RANGE in front of one of the start
         post's faces and facing it, decodes ArUco 0 (rendered in a separate
@@ -244,6 +248,7 @@ class Lander(unittest.TestCase):
         self.assertEqual(text, "sol")
 
 
+@needs_world("urc_autonomy")
 class RefereeRun(unittest.TestCase):
     def test_route_target_scored_end_to_end(self):
         """Rover parked by Post 1 with the arrival LED: the referee scores it."""
@@ -355,6 +360,7 @@ class MissionRoutes(unittest.TestCase):
     intended, so no route may need one). Routes the missions do not draw
     are the easiest clear ones between their places (clear_route)."""
 
+    @needs_world("urc_autonomy")
     def test_autonomy_easy_route_to_post1(self):
         """The judges' easy route from the start post to within 3 m of Post 1
         in at most 6 minutes of sim time (design spec 11, A). The route is a
@@ -366,6 +372,7 @@ class MissionRoutes(unittest.TestCase):
         d = drive_route("urc_autonomy", easy, 360.0, speed=1.0, tolerance=3.0, lookahead=4.0)
         self.assertIsNotNone(d.arrived, f"{d.gap(easy[-1]):.1f} m short of Post 1")
 
+    @needs_world("urc_autonomy")
     def test_autonomy_route_to_post2(self):
         """Over the plain and the wash sand from the start post to Post 2."""
         s = sheet("urc_autonomy")
@@ -373,6 +380,7 @@ class MissionRoutes(unittest.TestCase):
         d = drive_route("urc_autonomy", route, 600.0)
         self.assertIsNotNone(d.arrived, f"{d.gap(route[-1]):.1f} m short of Post 2")
 
+    @needs_world("urc_autonomy")
     def test_autonomy_astronaut_walk(self):
         """After the astronaut: the Follow! walk and on to the Stay! point."""
         s = sheet("urc_autonomy")["astronaut"]

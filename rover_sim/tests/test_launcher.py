@@ -12,7 +12,7 @@ import unittest
 from aiohttp.test_utils import AioHTTPTestCase
 from PIL import Image
 
-import worldfiles  # noqa: F401  (puts sim/ on the path)
+import worldfiles  # (also puts sim/ on the path)
 from launcher import __main__ as launcher  # noqa: E402
 
 FAKE_STATION = textwrap.dedent("""\
@@ -29,7 +29,9 @@ class Tiles(unittest.TestCase):
     def test_missions_first_in_rule_order(self):
         tiles = launcher.worlds()
         ids = [tile["id"] for tile in tiles]
-        self.assertEqual(ids[:4], ["urc_astrobiology", "urc_delivery", "urc_equipment_servicing", "urc_autonomy"])
+        missions = ["urc_astrobiology", "urc_delivery", "urc_equipment_servicing", "urc_autonomy"]
+        here = [m for m in missions if worldfiles.world_missing(m) is None]  # gen_worlds skips one without its raster
+        self.assertEqual(ids[:len(here)], here)
         self.assertFalse([i for i in ids if i.startswith("tmp")], "a test's temporary world is not a tile")
         for tile in tiles:
             self.assertTrue((launcher.WORLDS / f"{tile['id']}.sdf").is_file())

@@ -23,7 +23,7 @@ from PIL import Image
 
 from simulate import physical, simulate, world_file
 from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_vertices, sheet, temp_sdf, vec
-from worldfiles import world_copy
+from worldfiles import skip_if_missing, world_copy
 from worldfiles import terrain as world_terrain
 
 import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
@@ -785,6 +785,7 @@ class GeneratedWorlds(unittest.TestCase):
         collision of the terrain model covered."""
         for name in WORLDS_WITH_ZONES:
             with self.subTest(world=name):
+                skip_if_missing(self, name)
                 s = sheet(name)
                 ground = sheets.ground(s, sheets.path(name))
                 self.assertIsNotNone(ground)
@@ -803,6 +804,7 @@ class GeneratedWorlds(unittest.TestCase):
     def test_sheets_list_zones_and_their_traction(self):
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 s = sheet(world)
                 zones = s["terrain_zones"]
                 self.assertTrue(zones)
@@ -822,6 +824,7 @@ class GeneratedWorlds(unittest.TestCase):
         tiles or SDF friction in its terrain model."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 text = (WORLDS / f"{world}.sdf").read_text()
                 model = model_root(re.search(r"<uri>model://(urc_terrain_\w+)</uri>", text).group(1))
                 self.assertFalse([c for c in model.iter("collision") if c.get("name").startswith("zone_")])
@@ -832,6 +835,7 @@ class GeneratedWorlds(unittest.TestCase):
         (design D4, the user's Q2), written to the world and its sheet."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 solver = SOLVERS.get(world, "pgs")
                 root = ET.parse(WORLDS / f"{world}.sdf").getroot()
                 self.assertEqual(root.findtext("world/physics/dart/solver/solver_type"), solver)
@@ -845,6 +849,7 @@ class GeneratedWorlds(unittest.TestCase):
         through one helper (world.site)."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 s = sheet(world)
                 p = s["c2"] if "c2" in s else s["rover_start"]  # at the layout origin, z 0 (a course: its entrance)
                 navd88 = next(dem._site_dem(path).height(p["lat"], p["lon"]) for path in dem.SITE_DEMS
@@ -859,6 +864,7 @@ class GeneratedWorlds(unittest.TestCase):
         baked from their ground (design 5.7, D11-D14)."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 s = sheet(world)
                 root = ET.parse(WORLDS / f"{world}.sdf").getroot()
                 self.assertTrue((WORLDS / s["terrain"]["colour_map"]).is_file())
@@ -880,6 +886,7 @@ class GeneratedWorlds(unittest.TestCase):
         a world, pebbles within their budget."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 s = sheet(world)
                 self.assertLess(sum(s["clutter_triangles"].values()), 3_000_000)
                 self.assertLessEqual(s.get("pebbles", {}).get("count", 0), 1.05 * terrains.PEBBLE_BUDGET)
@@ -917,6 +924,7 @@ class GeneratedWorlds(unittest.TestCase):
         """Shrubs are meshes of the terrain's link, not a model each."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 self.assertNotIn("model://urc_shrub", (WORLDS / f"{world}.sdf").read_text())
                 if sheet(world).get("shrubs"):
                     visuals = model_root(f"urc_terrain_{world.removeprefix('urc_')}").iter("visual")
@@ -933,6 +941,7 @@ class GeneratedWorlds(unittest.TestCase):
         """No colliding rock within 1 m of an object, the rover's start or a URC point."""
         for world in WORLDS_WITH_ZONES:
             with self.subTest(world=world):
+                skip_if_missing(self, world)
                 s = sheet(world)
                 rocks = rock_vertices(world)
                 places = {**s["objects"], "rover_start": s["rover_start"]}

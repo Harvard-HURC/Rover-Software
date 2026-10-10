@@ -17,7 +17,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from worldfiles import SIM_DIR
+from worldfiles import SIM_DIR, needs_raster
 
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import fetch_dem  # noqa: E402
@@ -59,6 +59,7 @@ class GeoTiff(unittest.TestCase):
         for lat, lon, alt in EPQS:  # measured: within 0.05 m
             self.assertAlmostEqual(self.dem.height(lat, lon), alt, delta=0.1, msg=(lat, lon))
 
+    @needs_raster(LIDAR_PATH)
     def test_pixel_centres_match_the_lidar(self):
         """DEM.pixel's pixel-centre convention: the EPQS points lie on flat
         ground, where half a pixel moves the height by centimetres, so on

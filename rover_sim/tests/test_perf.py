@@ -22,7 +22,7 @@ import statistics
 import unittest
 
 from simulate import cpu_time_per_step
-from worldfiles import SENSORS, WORLDS, temp_sdf
+from worldfiles import SENSORS, WORLDS, skip_if_missing, temp_sdf
 
 WORLD_NAMES = ("proving_ground", "urc_autonomy", "urc_astrobiology", "urc_delivery", "urc_equipment_servicing")
 FLOOR = 1.1  # x real time, every world (section 10.3)
@@ -39,6 +39,7 @@ class Budgets(unittest.TestCase):
     def test_every_world(self):
         for name in WORLD_NAMES:
             with self.subTest(world=name):
+                skip_if_missing(self, name)
                 text = SENSORS.sub("", (WORLDS / f"{name}.sdf").read_text())
                 text = re.sub(r"<real_time_factor>[^<]*</real_time_factor>", "<real_time_factor>0</real_time_factor>",
                               text, count=1)

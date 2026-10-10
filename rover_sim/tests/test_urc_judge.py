@@ -40,6 +40,7 @@ class Geometry(unittest.TestCase):
             m.update(k * 0.1, (0.3 * k * 0.1, 0.0, 0, 0))
         self.assertFalse(m.stopped)
 
+    @worldfiles.needs_world("urc_autonomy")
     def test_terrain_matches_the_sheet(self):
         s = sheet("autonomy")
         terrain = worldfiles.terrain("urc_autonomy")
@@ -48,6 +49,7 @@ class Geometry(unittest.TestCase):
             self.assertAlmostEqual(terrain.height(p["x"], p["y"]), p["z"], delta=0.02, msg=key)
 
 
+@worldfiles.needs_world("urc_autonomy")
 class RouteFinding(unittest.TestCase):
     def setUp(self):
         self.sheet = sheet("autonomy")
@@ -69,6 +71,7 @@ class RouteFinding(unittest.TestCase):
         self.assertNotIn("post1", j.scores)
 
 
+@worldfiles.needs_world("urc_autonomy")
 class AstronautAssistance(unittest.TestCase):
     def setUp(self):
         self.sheet = sheet("autonomy")

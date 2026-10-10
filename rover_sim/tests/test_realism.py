@@ -21,7 +21,7 @@ from unittest import mock
 
 import numpy as np
 
-import worldfiles  # noqa: F401  (puts sim/ on the path)
+import worldfiles  # (also puts sim/ on the path)
 from urc import landscape, realism  # noqa: E402
 from urc.missions import autonomy  # noqa: E402
 
@@ -112,6 +112,7 @@ class Clutter(unittest.TestCase):
                     self.assertLessEqual(abs(count - expected), 4 * math.sqrt(expected) + 1,
                                          f"{count} shrubs against {expected:.0f}")
 
+    @worldfiles.needs_world("urc_autonomy")
     def test_autonomy_shrubs_from_naip(self):
         """Autonomy's shrubs are NAIP's (D10): 38 per hectare were found over
         the square (WS-A, M), meshes only where the rover works."""
@@ -133,6 +134,7 @@ class Colour(unittest.TestCase):
                 with self.subTest(world=world, type=key):
                     self.assertLess(de, PALETTE_DELTA_E)
 
+    @worldfiles.needs_world("urc_autonomy")
     def test_autonomy_is_naip(self):
         """Autonomy's colour map is the boosted NAIP 2024 orthophoto: on
         gentle ground (where de-shading leaves it), smoothed over
@@ -143,6 +145,7 @@ class Colour(unittest.TestCase):
         gentle = de[slope < FLAT_DEG]
         self.assertLess(float(np.median(gentle)), NAIP_DELTA_E, np.percentile(gentle, [50, 90]))
 
+    @worldfiles.needs_world("urc_autonomy")
     def test_autonomy_ground_is_the_soil_map(self):
         """Autonomy's ground raster: the soil map by slope on the real
         square (terrain_targets.json's cover of the Autonomy square), the

@@ -1,13 +1,15 @@
 """World and model files as the tests read them, without Gazebo: the
 generated worlds' sheets and terrain (urc/sheet.py), their models and merged
-rocks, copies of a world to run, temporary SDF files and `gz sdf -k`.
-Importing it puts sim/ on the path."""
+rocks, copies of a world to run, temporary SDF files and `gz sdf -k`; and
+the skips of the tests that need a world or a raster that is not here
+(needs_world, needs_raster). Importing it puts sim/ on the path."""
 import contextlib
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -15,12 +17,53 @@ import numpy as np
 
 SIM_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_DIR))
+sys.path.insert(0, str(SIM_DIR / "tools"))
+import fetch_data  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 
 MODELS = SIM_DIR / "models"
 WORLDS = SIM_DIR / "worlds"
 SENSORS = re.compile(r'<plugin filename="gz-sim-sensors-system".*?</plugin>', re.S)
 ROVER_POSE = re.compile(r"(<include>\s*<uri>model://rover</uri>\s*<name>rover</name>\s*<pose>)[^<]*(</pose>)")
+
+
+def world_missing(world):
+    """Why sim/worlds/<world>.sdf (urc_<mission>, proving_ground) is not
+    generated here, or None: a raster it reads that fetch-data cannot rebuild
+    yet is not here (rasters.json's worlds), so gen_worlds skipped it."""
+    for entry in fetch_data.load_manifest()["rasters"]:
+        if world in entry.get("worlds", ()) and not (fetch_data.DATA_DIR / entry["path"]).exists():
+            return f"{world} needs data/{entry['path']}, which is not here: {fetch_data.cannot_fetch(entry)}"
+    return None
+
+
+def raster_missing(path):
+    """Why a test that reads the raster at path (under sim/data) cannot run here, or None."""
+    path = Path(path)
+    if path.exists():
+        return None
+    entry = fetch_data.entry_of(path)
+    how = "pixi run fetch-data" if entry is None or entry["official"] else fetch_data.cannot_fetch(entry)
+    return f"data/{path.relative_to(fetch_data.DATA_DIR)} is not here: {how}"
+
+
+def needs_world(world):
+    """Skips a test or a test class that reads the generated world when it is not here (world_missing)."""
+    why = world_missing(world)
+    return unittest.skipIf(why is not None, why)
+
+
+def skip_if_missing(test, world):
+    """In a loop over worlds (in a subTest): skips the world when it is not here (world_missing)."""
+    why = world_missing(world)
+    if why is not None:
+        test.skipTest(why)
+
+
+def needs_raster(path):
+    """Skips a test or a test class that reads the raster at path when it is not here (raster_missing)."""
+    why = raster_missing(path)
+    return unittest.skipIf(why is not None, why)
 
 
 def sheet(world):

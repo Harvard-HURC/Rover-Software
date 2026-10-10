@@ -11,7 +11,7 @@ from dataclasses import fields
 
 import numpy as np
 
-from worldfiles import SIM_DIR
+from worldfiles import SIM_DIR, needs_raster
 
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import make_relief_swatches  # noqa: E402
@@ -199,7 +199,7 @@ class Swatches(unittest.TestCase):
                     self.assertTrue({"window", "dem", "centre_lat_lon", "size_m"} <= set(source))
                 self.assertEqual(s.rms_cm, make_relief_swatches.rms_table(s.windows))
 
-    @unittest.skipUnless(ROUTE_LIDAR.is_file(), "the lidar DEMs are not here (pixi run fetch-data)")
+    @needs_raster(ROUTE_LIDAR)
     def test_windows_lie_where_the_design_says(self):
         """Window centres (design 5.4's table: lat, lon from windows_def, before the lidar's datum shift)."""
         expected = {"sand_sheet_D": (38.40881, -110.76886), "sand_sheet_C": (38.41261, -110.77836),

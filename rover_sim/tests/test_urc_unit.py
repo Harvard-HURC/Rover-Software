@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the URC scenario generator, sim/urc (no physics; pixi run sim-test)."""
+import contextlib
+import io
 import math
 import sys
 import tempfile
@@ -386,20 +388,37 @@ class Prune(unittest.TestCase):
 
 class MissingRaster(unittest.TestCase):
     """The terrain rasters are git-ignored: when a world's raster is not here,
-    gen_worlds says that pixi run fetch-data fetches it; any other missing
-    file is raised as it is."""
+    gen_worlds says that pixi run fetch-data fetches it; when fetch-data
+    cannot rebuild it yet (rasters.json: not official), it skips that world,
+    says how to get the raster and builds the others, failing only if the
+    world was named; any other missing file is raised as it is."""
 
-    def run_main(self, missing):
+    LIDAR = gen_worlds.DATA_DIR / "dem" / "route_area_lidar_0p5m.tif"  # fetch-data cannot rebuild it yet
+
+    def run_main(self, missing, *names):
+        """gen_worlds.main on temporary directories with two worlds: made_up, whose build finds `missing` missing,
+        and other, which builds. Returns (the worlds built, what it said on stderr)."""
+        built = []
+
         class World:
             def build(self, models_dir, worlds_dir, media):
                 raise FileNotFoundError(2, "No such file or directory", str(missing))
 
+        class Other:
+            def build(self, models_dir, worlds_dir, media):
+                built.append("other")
+                return gen_worlds.SIM_DIR / "worlds" / "other.sdf", Path("other.json")  # as printed; not written
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        err = io.StringIO()
         with mock.patch.multiple(gen_worlds, MODELS_DIR=Path(tmp.name) / "models",
-                                 WORLDS_DIR=Path(tmp.name) / "worlds", MISSIONS={"made_up": World()}, COURSES={}), \
-                mock.patch.object(sys, "argv", ["gen_worlds.py"]):
+                                 WORLDS_DIR=Path(tmp.name) / "worlds", MISSIONS={"made_up": World(), "other": Other()},
+                                 COURSES={}), \
+                mock.patch.object(sys, "argv", ["gen_worlds.py", *names]), contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
             gen_worlds.main()
+        return built, err.getvalue()
 
     def test_a_missing_raster_names_fetch_data(self):
         with self.assertRaises(SystemExit) as caught:
@@ -407,10 +426,22 @@ class MissingRaster(unittest.TestCase):
         self.assertEqual(caught.exception.code, "made_up: rover_sim/data/dem/made_up.tif is missing; pixi run "
                                                 "fetch-data fetches the terrain rasters (README, Simulation)")
 
+    def test_a_raster_fetch_data_cannot_rebuild_skips_its_world(self):
+        built, err = self.run_main(self.LIDAR)
+        self.assertEqual(built, ["other"])
+        self.assertEqual(err, "skipped made_up: rover_sim/data/dem/route_area_lidar_0p5m.tif is missing; fetch-data "
+                              "cannot rebuild it from official sources yet (a script that rebuilds it from the USGS "
+                              "lidar its provenance lists is planned); link it from a teammate's clone: "
+                              "rover_sim/tools/link_data.sh <that clone> (README, Simulation)\n")
+
+    def test_that_world_named_fails_the_run(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main(self.LIDAR, "made_up", "other")
+        self.assertEqual(caught.exception.code, "not generated: made_up (above)")
+
     def test_another_missing_file_is_raised(self):
         with self.assertRaises(FileNotFoundError):
             self.run_main(Path(tempfile.gettempdir()) / "made_up.tif")
-
 
 if __name__ == "__main__":
     unittest.main()
