@@ -57,6 +57,14 @@ class Server:
         return self.bodies[url]
 
 
+def marked_alpha(body):
+    """A 4-band GeoTIFF body as write_geotiff writes it, its fourth band marked alpha (ExtraSamples 2), as USDA's
+    conus_naip ImageServer marks NAIP 2024's near infrared."""
+    entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
+    assert body.count(entry + b"\x00\x00") == 1
+    return body.replace(entry + b"\x00\x00", entry + b"\x02\x00")
+
+
 def case(directory, bands):
     """A data directory holding the manifest and provenance of one raster,
     dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
@@ -275,6 +283,20 @@ class Fetch(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
         self.assertIn("1 raster(s) not fetched (FAILED above); a clone that has them can link them here: "
                       "rover_sim/tools/link_data.sh <that clone>", err.getvalue())
+
+    def test_naip_tiles_marked_alpha_make_the_raster(self):
+        """USDA's NAIP 2024 tiles mark their near infrared alpha, which dem.read_raster refuses; fetch-data clears
+        the mark and the raster's content is verified."""
+        data, bodies = case(self.tmp.name, naip_bands())
+        bodies = {url: marked_alpha(body) for url, body in bodies.items()}
+        tile = data / "tile.tif"
+        tile.write_bytes(next(iter(bodies.values())))
+        with self.assertRaisesRegex(ValueError, "alpha"):
+            dem.read_raster(tile)
+        tile.unlink()
+        self.assertEqual(run(data, Server(bodies)),
+                         (0, ["dem/made_up.tif: fetched from its official source, content verified"]))
+        np.testing.assert_array_equal(dem.read_raster(data / "dem" / "made_up.tif")[0], naip_bands())
 
     def test_nothing_is_installed_when_the_source_fails(self):
         data, bodies = case(self.tmp.name, naip_bands())

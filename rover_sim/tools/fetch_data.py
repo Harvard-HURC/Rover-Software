@@ -282,6 +282,16 @@ def geotags(transform):
             dem.GEO_KEY_DIRECTORY: ((1, 1, 0, len(dem.GEOKEYS), *keys), TiffTags.SHORT)}
 
 
+def clear_alpha(path):
+    """Marks the fourth band of the 4-band TIFF at path unspecified (ExtraSamples 0) instead of alpha (2): its IFD
+    entry (tag 338, SHORT, count 1, little-endian), which must be there once, is patched."""
+    entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
+    data = Path(path).read_bytes()
+    if data.count(entry + b"\x02\x00") != 1:
+        raise RuntimeError(f"{path}: not one alpha mark to clear")
+    Path(path).write_bytes(data.replace(entry + b"\x02\x00", entry + b"\x00\x00"))
+
+
 def write_geotiff(path, bands, tags):
     """bands (B, H, W), one float32 band or three or four uint8 bands (R, G,
     B(, NIR)), as a deflate GeoTIFF with tags {tag: (value, type)}. PIL writes
@@ -299,18 +309,20 @@ def write_geotiff(path, bands, tags):
         info.tagtype[tag] = kind
     img.save(path, format="TIFF", compression="tiff_deflate", tiffinfo=info)
     if count == 4:
-        entry = dem.EXTRA_SAMPLES.to_bytes(2, "little") + b"\x03\x00\x01\x00\x00\x00"
-        data = Path(path).read_bytes()
-        if data.count(entry + b"\x02\x00") != 1:
-            raise RuntimeError(f"{path}: not one alpha mark to clear")
-        Path(path).write_bytes(data.replace(entry + b"\x02\x00", entry + b"\x00\x00"))
+        clear_alpha(path)
 
 
 def read_tile(body):
-    """(bands, geotransform) of a GeoTIFF body."""
+    """(bands, geotransform) of a GeoTIFF body. USDA's conus_naip ImageServer marks the fourth band of its NAIP 2024
+    tiles (R, G, B, NIR) alpha (ExtraSamples 2; M, 2026-10-10), which dem.read_raster refuses: the mark is cleared,
+    as write_geotiff clears it, and the content check against rasters.json decides whether the pixels are right."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "tile.tif"
         path.write_bytes(body)
+        with Image.open(path) as img:
+            alpha = img.tag_v2.get(dem.EXTRA_SAMPLES) == (2,)
+        if alpha:
+            clear_alpha(path)
         return dem.read_raster(path)
 
 
