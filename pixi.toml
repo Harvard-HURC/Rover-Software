@@ -79,3 +79,11 @@ py-opencv = ">=4.13.0,<5"
 pillow = ">=12.3.0,<13"
 matplotlib-base = ">=3.11.2,<4"
 aiohttp = ">=3.14.3,<4"
+# fetch-data's lidar rebuild (tools/usgs_lidar.py): GDAL's command-line tools and PROJ (until now only there through
+# gz-common5) and the LAZ reader. rasters.json's hashes of the lidar DEMs were made with GDAL 3.13.3 and PROJ 9.8.1
+# (R: their provenance); another minor version may round differently, which fetch-data then accepts only within its
+# tolerance, so the minor versions are pinned.
+libgdal-core = ">=3.13.3,<3.14"
+proj = ">=9.8.1,<9.9"
+laspy = ">=2.7.0,<3"
+lazrs-python = ">=0.8.2,<0.9"
