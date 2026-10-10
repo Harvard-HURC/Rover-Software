@@ -23,3 +23,5 @@ import worldfiles, gen_rover, test_equivalence as t
 for name, variant in t.VARIANTS.items():
     (t.FIXTURES / f'{name}.sdf').write_text(gen_rover.build_sdf(variant))"
 ```
+
+The same commit updates what says where the fixtures come from: this README's heading, first paragraph (the generator and the commit) and table, and the docstrings that say gen_model.py wrote them (`tests/test_equivalence.py`, `tests/sdf_equivalence.py`, `tests/test_rover_model.py`, `tools/gen_rover.py`; `git grep gen_model rover_sim/tests rover_sim/tools` finds them).

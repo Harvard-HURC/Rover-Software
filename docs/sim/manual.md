@@ -27,7 +27,7 @@ pixi run drive urc_autonomy     # or drive from the browser: starts the world he
 pixi run launcher               # every world as a tile: a click starts it with its station
 pixi run sim-bridge             # second terminal: ROS 2 <-> Gazebo topics
 pixi run ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}, angular: {z: 0.2}}'
-pixi run test                   # the C++ tests and the simulation's suite (~15 min with the build)
+pixi run test                   # the colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite (~15 min with the build)
 pixi run sim-test               # the simulation's suite only
 pixi run sim-maps               # orthophoto maps for the station's Map view (GPU, ~1 min)
 pixi run sim-perf               # performance budgets (~25 min, wants an otherwise idle machine)

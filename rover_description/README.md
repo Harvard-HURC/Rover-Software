@@ -18,7 +18,7 @@ The description names no simulator. `rover_sim/urdf/rover_sim.urdf.xacro` adds G
 
 ### Change the rover
 1. Edit `config/rover.yaml`; keep the unit and say where the number comes from.
-2. `pixi run sim-model` builds the simulated rover again (`rover_sim/models/rover/model.sdf`); `pixi run sim`, `drive` and `test` do it for you.
+2. `pixi run sim-model` builds the simulated rover again (`rover_sim/models/rover/model.sdf`); `pixi run sim`, `drive` and `test` do it for you. The generated models are tracked: commit what it rewrites with `rover.yaml` (`git status` lists it: `model.sdf`, and the tread mesh's copy or the station's cameras when they change). CI regenerates them before its tests, so it cannot tell a stale one.
 3. `pixi run test`. A changed number fails `rover_sim`'s `test_equivalence`, which holds the rover as it was before this package described it: refreeze its fixtures in the same commit and say why (`rover_sim/tests/fixtures/rover_model/README.md`).
 
 A new frame, joint or shape goes into `urdf/rover.urdf.xacro`, its numbers into `rover.yaml`. Check the result in `pixi shell`: `xacro rover_description/urdf/rover.urdf.xacro > /tmp/rover.urdf && check_urdf /tmp/rover.urdf`. After changing the tread tyre's colours run `python rover_description/meshes/gen_wheel_mesh.py`, then `pixi run sim-model`.

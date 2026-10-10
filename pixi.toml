@@ -16,7 +16,8 @@ build = { cmd = "colcon build", cwd = "..", depends-on = ["_workspace", "sim-med
 # The colcon tests: rover_description's (xacro and check_urdf, the team's linters), rover_control's (GoogleTest,
 # rover_state, viz.py) and rover_sim's three plugin test programs.
 colcon-test = { cmd = "colcon test --packages-select rover_description rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
-# The C++ tests and the simulation's suite. The rendering tests skip where there is no GPU and say why.
+# The colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite. The rendering tests skip
+# where there is no GPU and say why.
 test = { depends-on = ["colcon-test", "sim-test"] }
 # The git-ignored terrain rasters the simulation reads, from their official sources; it names the ones it cannot
 # rebuild yet (the Autonomy world's lidar: link it from a teammate's clone, README) (--all: every raster; --dry-run;

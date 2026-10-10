@@ -51,10 +51,12 @@ every wheel contact grips. Every 1 ms step:
 
 - **Setpoints**: (vx ∓ wz·track·track_multiplier/2)/r per side, through a ramp
   (`gz::math::SpeedLimiter`, 8 rad/s², 1.2 m/s² (A) until the driver team
-  reports its controller's ramp) and clamped to the top speed (`rover.yaml` `wheel: top_speed`).
+  reports its controller's ramp; `sim.yaml` `drivetrain: accel`) and clamped to the top speed
+  (`rover.yaml` `wheel: top_speed`).
   `track_multiplier` is 1.0: the raw skid-steer response, which the team's
   driver compensates (the user's choice; Clearpath ships 1.875 for Husky).
-- **Motor** per wheel (`rover_drivetrain.hh`; `rover.yaml` `motor`, `driveline`): a DC motor
+- **Motor** per wheel (`rover_drivetrain.hh`; `rover.yaml` `motor`, `driveline`; the PI's gains
+  and the integration substeps: `sim.yaml` `drivetrain`): a DC motor
   (48 V, 0.46 Ω, kt = ke 0.0445; the Husky A200 motor at twice its 24 V, for 3 m/s), gearbox 50 at efficiency 0.8,
   current limit 20 A (35.6 N·m at the wheel), driveline 1500 N·m/rad with 1.5°
   backlash, a PI speed controller (kp 4 V/(rad/s), ki 160 V/rad, back-EMF
@@ -113,7 +115,7 @@ every wheel contact grips. Every 1 ms step:
   emitter behind each rear wheel on the rocker links and gives the drivetrain
   their topics; the drivetrain sets their rate from speed, slip, dig factor
   and the ground's dust factor (at most 40 /s, nothing below 0.05 m/s). The
-  emitters ask for a scatter ratio near none (`dust_scatter_ratio`), which
+  emitters ask for a scatter ratio near none (`sim.yaml` `dust: scatter_ratio`), which
   8.2.2 does not apply, so the depth image and point cloud then see the
   dust. Off, the drivetrain sends nothing on the emitter topics. Worlds load
   `gz-sim-particle-emitter-system`, idle without emitters, so the switch
@@ -204,7 +206,7 @@ its marker service).
   down in the world, through a 0.1 s lag (`ShowSink`, `drive::VisualSink`):
   the spec's extra sinkage z_d at true scale, 2 cm on sand and dusty clay at
   D 2.0, 3 cm on wash sand, under 4 mm on the sand sheet, 5 mm crossing sand
-  at its equilibrium D 1.26, nothing where D stays 1 or s is 0 (`dig_sink_max`
+  at its equilibrium D 1.26, nothing where D stays 1 or s is 0 (`dig_sink: max`
   is never reached at gain 1). On soft ground it follows D (healed 1/e per
   0.3 m of travel); on rock (s = 0), and off the ground, its target is 0 and
   the tyre rises through the 0.1 s lag, at its SDF pose within about 0.5 s (a
