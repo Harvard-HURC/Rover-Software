@@ -7,6 +7,8 @@ driving rover in Gazebo and keeping above the ground, the rover eye riding
 on it, the drivetrain readout of a physical rover, and the station as a
 process, flown from a WebSocket client."""
 import asyncio
+import contextlib
+import io
 import json
 import math
 import os
@@ -28,6 +30,7 @@ import numpy as np
 from aiohttp import WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase
 
+import rosstack
 import simulate
 from simulate import world_sdf
 from worldfiles import SENSORS, SIM_DIR, WORLDS, temp_sdf
@@ -51,6 +54,11 @@ from gz.transport13 import Node  # noqa: E402
 
 from station import __main__ as station_main  # noqa: E402
 from station import link as gz_link  # noqa: E402
+from station import ros_link  # noqa: E402
+
+
+def tearDownModule():
+    rosstack.shutdown()
 from test_fly_camera import heightmap_model, write_hill  # noqa: E402
 import render_map  # noqa: E402  (server.py puts sim/tools on the path)
 
@@ -1410,6 +1418,65 @@ class DrivetrainReadout(unittest.TestCase):
         self.assertTrue(0.25 < ratio < 0.5, ratio)
 
 
+class RosLink(unittest.TestCase):
+    """station/ros_link.py, the station's /cmd_vel (docs/topics.md): TwistStamped with a zero stamp, which the drive
+    controller stamps on arrival with its own clock, in this process's private ROS domain."""
+
+    def test_twists_go_out_on_cmd_vel_with_a_zero_stamp(self):
+        from geometry_msgs.msg import TwistStamped
+        probe = rosstack.Probe(topics=[("/cmd_vel", TwistStamped)])  # first: it owns rclpy's context
+        self.addCleanup(probe.close)
+        cmd_vel = ros_link.CmdVel()
+        self.addCleanup(cmd_vel.close)
+        probe.wait(lambda: cmd_vel.subscribers() > 0, 10, "subscriber of the station's /cmd_vel")
+        for _ in range(5):
+            cmd_vel.twist(0.6, 0.8)
+            time.sleep(0.05)
+        probe.wait(lambda: probe.messages["/cmd_vel"], 5, "/cmd_vel message")
+        msg = probe.messages["/cmd_vel"][-1]
+        self.assertEqual((msg.twist.linear.x, msg.twist.angular.z), (0.6, 0.8))
+        self.assertEqual((msg.header.stamp.sec, msg.header.stamp.nanosec), (0, 0))
+
+    def test_it_says_so_when_nothing_listens(self):
+        cmd_vel = ros_link.CmdVel()
+        self.addCleanup(cmd_vel.close)
+        for subscribers, said in ((0, 1), (1, 0)):
+            lines = []
+            with mock.patch.object(cmd_vel, "subscribers", return_value=subscribers):
+                cmd_vel.warn_if_unheard(after=0.05, out=lines.append).join(5)
+            self.assertEqual(len(lines), said)
+        with mock.patch.object(cmd_vel, "subscribers", return_value=0):
+            lines = []
+            cmd_vel.warn_if_unheard(after=0.05, out=lines.append).join(5)
+        self.assertIn("nothing subscribes to /cmd_vel", lines[0])
+
+
+class StartsTheStack(unittest.TestCase):
+    def test_a_world_starts_with_sim_launch_in_its_own_session(self):
+        path = WORLDS / "rover_test.sdf"
+        with mock.patch.object(station_main.subprocess, "Popen") as popen, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            station_main.start_simulation(path)
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0][1:], ["launch", str(SIM_DIR / "launch" / "sim.launch.py"), f"world:={path}",
+                                       "gui:=false", "station:=false"])
+        self.assertTrue(args[0][0].endswith("ros2"))
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertIn(str(SIM_DIR / "models"), kwargs["env"]["GZ_SIM_RESOURCE_PATH"])  # gzenv's environment
+        self.assertIn("headless", out.getvalue())
+
+    def test_a_second_stop_signal_does_not_cut_the_way_out_short(self):
+        """Under ros2 launch (sim.launch.py station:=true) Ctrl-C reaches the station from the terminal and again from
+        ros2 launch: the second, while the station closes its /cmd_vel, is not a KeyboardInterrupt."""
+        cmd_vel = mock.Mock()
+        cmd_vel.close.side_effect = lambda: os.kill(os.getpid(), signal.SIGINT)
+        saved = {sig: signal.getsignal(sig) for sig in station_main.STOP_SIGNALS}
+        self.addCleanup(lambda: [signal.signal(sig, handler) for sig, handler in saved.items()])
+        signal.signal(signal.SIGINT, station_main.interrupt)  # the station's handler outside serve()
+        station_main.shut_down(cmd_vel, None)
+        cmd_vel.close.assert_called_once_with()
+
+
 class WorldArgument(unittest.TestCase):
     """pixi run drive <world>: a name in sim/worlds or a path; a world that is
     not here says why when sim-worlds skipped it (fetch_data.world_missing)."""
@@ -1435,10 +1502,11 @@ class WorldArgument(unittest.TestCase):
 
 
 class StationProcess(unittest.TestCase):
-    """pixi run drive as a process, in a private transport partition: it
-    stops the world it started however it is stopped (DiffDrive would keep
-    the last twist forever), one world has one station, and a world that
-    cannot start ends the wait at once."""
+    """pixi run drive as a process, in a private transport partition and ROS
+    domain: the world it starts runs with the rover's ROS 2 stack
+    (sim.launch.py), which the station drives through the drive controller;
+    it stops all of it however it is stopped, one world has one station, and
+    a world that cannot start ends the wait at once."""
 
     def station(self, *args):
         """A running station process; its output collects in .output."""
@@ -1479,6 +1547,12 @@ class StationProcess(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["pkill", "-KILL", "-f", path]))  # in case the test fails
         return path
 
+    @staticmethod
+    def copy_of(process):
+        """The world's copy that sim.launch.py runs (its line "world: <copy> (a copy of ...)")."""
+        found = re.search(r"world: (\S+) \(a copy of", "".join(process.output))
+        return found.group(1) if found else None
+
     def assert_world_stops(self, path, timeout=15.0):
         deadline = time.monotonic() + timeout
         while subprocess.run(["pgrep", "-f", path], capture_output=True).returncode == 0:
@@ -1488,7 +1562,9 @@ class StationProcess(unittest.TestCase):
     def test_closing_the_terminal_stops_the_world_and_one_station_per_world(self):
         path = self.world()
         first = self.station(path)
-        self.wait_for(first, "driver station on", 90)
+        self.wait_for(first, "driver station on", 120)
+        copy = self.copy_of(first)
+        self.assertIsNotNone(copy, "".join(first.output))
         self.assertIn("eye_camera: spawned", "".join(first.output))
         self.assertIn("chase_camera: spawned", "".join(first.output))
         self.assertEqual(subprocess.run(["pgrep", "-f", path], capture_output=True).returncode, 0)
@@ -1499,6 +1575,7 @@ class StationProcess(unittest.TestCase):
         first.send_signal(signal.SIGHUP)
         self.assertEqual(first.wait(30), 0, "".join(first.output))  # stopped by the station, not by the signal
         self.assert_world_stops(path)
+        self.assert_world_stops(copy)  # the Gazebo server sim.launch.py ran
 
     def test_fly_view_over_the_websocket(self):
         """The Fly view as the page uses it, from a WebSocket client: entering
@@ -1507,7 +1584,7 @@ class StationProcess(unittest.TestCase):
         holds still."""
         path = self.world()
         process = self.station(path)
-        self.wait_for(process, "driver station on", 90)
+        self.wait_for(process, "driver station on", 120)
         url = re.search(r"driver station on (\S+)", "".join(process.output)).group(1)
         info, states = asyncio.run(self.fly_session(url))
         self.wait_for(process, "fly_camera: spawned", 10)
@@ -1572,6 +1649,57 @@ class StationProcess(unittest.TestCase):
                 states["perspective"] = await hold(3.0, done=lambda m: m["fly"]["ortho"] == 0)
                 reader.cancel()
         return info, states
+
+    def test_drives_through_the_controllers(self):
+        """pixi run drive <world> starts sim.launch.py, so the station's /cmd_vel drives the rover through the drive
+        controller: W held for 3 s moves it forward (ground truth on the page, /odom in this process)."""
+        path = self.world()
+        process = self.station(path)
+        self.wait_for(process, "driver station on", 120)
+        probe = rosstack.Probe()
+        self.addCleanup(probe.close)
+        probe.wait(lambda: probe.messages["/odom"], 60, "/odom from the drive controller")
+        url = re.search(r"driver station on (\S+)", "".join(process.output)).group(1)
+        before, after = asyncio.run(self.drive_session(url))
+        self.assertGreater(after["x"] - before["x"], 0.5, (before, after))
+        self.assertGreater(probe.messages["/odom"][-1].pose.pose.position.x, 0.5)
+        copy = self.copy_of(process)
+        process.send_signal(signal.SIGTERM)
+        self.assertEqual(process.wait(30), 0, "".join(process.output))
+        self.assert_world_stops(path)
+        self.assert_world_stops(copy)
+
+    async def drive_session(self, url):
+        """Hold W for 3 s of sim time as the page does (its input at 20 Hz; sim time from the telemetry's stats, so a
+        runner slower than real time drives as far): the rover's pose before and after."""
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(url + "ws") as ws:
+                latest, sim = {}, [0.0]
+
+                async def receive():
+                    async for msg in ws:
+                        data = json.loads(msg.data)
+                        if data["t"] == "telemetry" and data.get("pose"):
+                            latest.update(data["pose"])
+                        if data["t"] == "telemetry" and (data.get("stats") or {}).get("sim_time") is not None:
+                            sim[0] = data["stats"]["sim_time"]
+
+                async def hold(seconds, keys, timeout=60.0):
+                    start, end = sim[0], time.monotonic() + timeout
+                    while sim[0] - start < seconds and time.monotonic() < end:
+                        await ws.send_json({"t": "input", "keys": keys, "axes": [0, 0]})
+                        await asyncio.sleep(0.05)
+                    return dict(latest)
+
+                reader = asyncio.create_task(receive())
+                deadline = time.monotonic() + 30
+                while not (latest and sim[0]) and time.monotonic() < deadline:  # the first pose and sim time
+                    await asyncio.sleep(0.05)
+                before = await hold(1.0, [])
+                await hold(3.0, ["KeyW"])
+                after = await hold(1.0, [])
+                reader.cancel()
+        return before, after
 
     def test_stopped_while_the_world_loads(self):
         path = self.world()
