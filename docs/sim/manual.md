@@ -3,8 +3,8 @@
 A generic model of our rover: rectangular chassis, rocker suspension with a
 differential (4 wheels, a rocker-bogie without the bogies), tank / skid-steer
 drive with a DC motor per wheel, an RGB-D camera on a pan-tilt head.
-Geometry is the placeholder from `rover_control/include/rover_driver/config.hpp`
-until the mechanical numbers arrive; the motor numbers are typical
+Geometry is the placeholder in `rover_description/config/rover.yaml` (the
+swerve design's numbers) until the mechanical numbers arrive; the motor numbers are typical
 placeholders until the drivetrain is chosen. Around it: the URC 2027 mission
 worlds on MDRS ground (real lidar terrain for Autonomy, MDRS micro-relief,
 ground types and clutter everywhere), a proving ground, a referee and a
@@ -22,12 +22,11 @@ From the repository's root (`<workspace>/src`), after `pixi install`:
 
 ```bash
 pixi run fetch-data             # the terrain rasters, once (git-ignored; --all for the research ones too)
-pixi run sim                    # build the plugins (colcon), regenerate rover and worlds, open Gazebo (rover_test)
-pixi run drive urc_autonomy     # or drive from the browser: starts the world headless, opens the station page
+pixi run sim                    # build the plugins (colcon), regenerate rover and worlds, open Gazebo with the ROS 2 stack (rover_test)
+pixi run drive urc_autonomy     # or drive from the browser: starts the world and the stack headless, opens the station page
 pixi run launcher               # every world as a tile: a click starts it with its station
-pixi run sim-bridge             # second terminal: ROS 2 <-> Gazebo topics
-pixi run ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.3}, angular: {z: 0.2}}'
-pixi run test                   # the colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite (~15 min with the build)
+pixi run ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/TwistStamped '{twist: {linear: {x: 0.3}, angular: {z: 0.2}}}'
+pixi run test                   # the colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite (~17 min with the build)
 pixi run sim-test               # the simulation's suite only
 pixi run sim-maps               # orthophoto maps for the station's Map view (GPU, ~1 min)
 pixi run sim-perf               # performance budgets (~25 min, wants an otherwise idle machine)
@@ -44,16 +43,39 @@ top-level folder of the repository (`rover_sim/`, `rover_control/`, `docs/`).
 the rover; with `--follow` it follows it, 5 m behind and 2.5 m up
 (CameraTracking `/gui/follow`, then `/gui/follow/offset`).
 
-The rover stops 0.5 s after its last command (the drivetrain's command
-timeout), so publish `cmd_vel` at a rate, as the line above and the station
-do. Gazebo GUI's Teleop plugin (⋮ menu → Teleop, topic
-`/model/rover/cmd_vel`) sends one message per button press: in button mode
-the rover moves for 0.5 s; use its keyboard mode, or build the rover with
-`cmd_timeout: 0.0` (`rover_sim/config/sim.yaml`, drivetrain), which holds the last command.
+The rover drives through the controllers, as the real rover will
+(`docs/topics.md`): `/cmd_vel` (geometry_msgs/TwistStamped) into the drive
+controller (`rover_control/config/controllers.yaml`), which ramps it and
+brakes 0.5 s after the last command (its `cmd_vel_timeout`), so publish at a
+rate, as the line above and the station do; behind it the drivetrain's own
+watchdog stops the motors 0.5 s after their last setpoint. Gazebo GUI's Teleop
+plugin speaks Gazebo's twist, which nothing takes now; use the station or
+`ros2 topic pub`.
 
-On macOS Gazebo cannot run its server and GUI in one process, so `rover_sim/run.sh`
-starts the server in the background and the GUI in the foreground; closing
-the GUI stops both.
+`rover_sim/run.sh` runs `rover_sim/launch/sim.launch.py` (`ros2 launch
+rover_sim sim.launch.py world:=<name> gui:= station:= controller:=
+sensors:=`): Gazebo's server and its GUI as separate processes (macOS cannot
+run both in one; closing the GUI stops everything), robot_state_publisher,
+the controllers in the controller manager gz_ros2_control runs inside
+Gazebo, and the sensor bridge (`bridge.yaml`). The worlds include the ROS-free
+rover (`model://rover`); the launch runs a copy of the world with the rover
+that has ros2_control, at the same pose. With `station:=true` it also starts
+the driver station, attached, which opens its page in the browser.
+
+The controllers' clock is the bridged `/clock` (sim time): without the
+bridge nothing drives. Harmless lines in the launch's log:
+`Velocity command timed out. Braking.` once a second while no command comes,
+`Received TwistStamped with zero timestamp` once (the stamp is left zero on
+purpose, `docs/topics.md`), once each `Executor is not available during
+hardware component initialization for 'rover'`, gz_ros2_control's `Desired
+controller update period (0.01 s) is slower than the gazebo simulation period
+(0.001 s)` (100 Hz controllers on the 1 ms step, by design) and
+robot_state_publisher's KDL warning about the root link's inertia. Gazebo's
+GUI does not load the rover's own components (`WheelSetpoint`,
+`WheelMotorCurrent`, on the wheel joints): at its default verbosity it skips
+them silently, at `-v 2` or more it warns once for each, `Component type
+[<id>] has not been registered in this process, so it can't be
+deserialized.`
 
 ## Files
 
@@ -75,9 +97,11 @@ the GUI stops both.
 | `plugins/fly_camera.cpp` | System `rover_sim::FlyCamera`: the Fly view's camera and the map tool's |
 | `plugins/tests/` | C++ unit tests (`pixi run colcon-test`): motor, dig-in, contact rule, tyre sink, ground map, the ruts' layer and geometry |
 | `worlds/rover_test.sdf` | Test ground: 10 cm step under the left wheels (x 2–3 m), 15° ramp to a 0.3 m platform (x 5–8.7 m), rocks |
-| `bridge.yaml` | ROS 2 bridge topics |
-| `run.sh`, `gzenv.py` | `pixi run sim`: server and GUI, camera on the rover; `gzenv.py` is the one place the Gazebo environment is set |
-| `station/` | Driver station: `__main__.py` (CLI), `server.py` (web app), `link.py` (gz-transport), `drive.py` (keys → twist, deadman, the look, the fly camera), `video.py` (frames → JPEG), `minimap.py` (hillshade), `static/` (page) |
+| `bridge.yaml` | The sensor bridge's topics (sim.launch.py runs it) |
+| `run.sh`, `gzenv.py`, `launch/sim.launch.py` | `pixi run sim`: sim.launch.py with the GUI, camera on the rover; `gzenv.py` is the one place the Gazebo environment is set |
+| `ros2_control/`, `rover_sim_system.xml` | `RoverSimSystem`, the simulated rover's ros2_control hardware, which gz_ros2_control loads inside Gazebo |
+| `wheel_cmd.py` | A twist as the wheel setpoints the drivetrain takes without ROS (the tests and tools) |
+| `station/` | Driver station: `__main__.py` (CLI), `server.py` (web app), `link.py` (gz-transport), `ros_link.py` (`/cmd_vel`), `drive.py` (keys → twist, deadman, the look, the fly camera), `video.py` (frames → JPEG), `minimap.py` (hillshade), `static/` (page) |
 | `gen_worlds.py`, `urc/` | Generator of the URC worlds and the proving ground (see below) |
 | `urc/terrains.py`, `urc/landscape.py` | The ground catalogue; ground rasters, micro-relief and clutter recipes |
 | `urc/features.py`, `urc/world.py`, `urc/terrain.py` | Terrain features, `WorldBuilder`, heightfields |
@@ -100,24 +124,28 @@ the GUI stops both.
 
 ## Topics
 
-| ROS 2 (via `sim-bridge`) | Gazebo | Type |
+The rover's ROS 2 topics, the same on the real rover, are the topic contract
+(`docs/topics.md`): `/cmd_vel` into the drive controller, `/odom` and
+`/joint_states` from the controllers, `/tf` from them and robot_state_publisher.
+`sim.launch.py` bridges these from Gazebo:
+
+| ROS 2 (sim.launch.py's bridge) | Gazebo | Type |
 |---|---|---|
-| `/cmd_vel` → | `/model/rover/cmd_vel` | Twist (vx, wz); a command older than 0.5 s counts as zero (`sim.yaml` drivetrain `cmd_timeout`, wall clock) |
-| `/odom` | `/model/rover/odometry` | wheel odometry, `odom` → `base_link`, 50 Hz; no slip, so it over-reports a turn in place (2.65× on packed ground) |
 | `/ground_truth/odom` | `/model/rover/ground_truth` | true pose, `world` → `base_link` (see Known limitations: an occasional yaw-rate spike) |
-| `/drivetrain` | `/model/rover/drivetrain` | String, JSON at 50 Hz: per wheel setpoint, speed, current, torque, voltage, saturation, slip, load, ground, dig factor |
-| `/joint_states` | `/model/rover/joint_states` | 2 rockers, 4 wheels, camera pan and tilt |
+| `/drivetrain` | `/model/rover/drivetrain` | String, JSON at 50 Hz: per wheel setpoint, speed, current, torque, voltage, saturation, slip, load, ground, dig factor; `cmd`, the twist the setpoints amount to |
 | `/imu` | `/model/rover/imu` | 100 Hz, frame `base_link` |
 | `/gps/fix` | `/model/rover/navsat` | GNSS, 10 Hz, σ 0.5 m horizontal, 1 m vertical, WGS84 ellipsoidal heights |
 | `/camera/{image,depth,points,camera_info}` | `/model/rover/camera/{image,depth_image,points,camera_info}` | RGB-D on the pan-tilt head, 1280×720, 1.5 rad, 15 Hz; RGB to 80 km, depth 0.1–40 m; frame `camera` |
 | `/camera/pan` →, `/camera/tilt` → | `/model/rover/joint/camera_{pan,tilt}_joint/0/cmd_pos` | Float64 target angle [rad] |
 | `/led` → | `/model/rover/led` | status LED: `red`, `blue`, `green` (flashing), `off` (URC rule 1.e.ii) |
-| `/tf` | `/model/rover/tf` | `odom` → `base_link` |
 | `/clock` | `/clock` | sim time |
 | `/urc/score`, `/urc/radio` | same | referee: score JSON at 1 Hz; `los` / `nlos` to the C2 antenna |
 | `/urc/display`, `/urc/launch_key` | same | Equipment Servicing: e-paper text, launch key |
 | `/astronaut/command`, `/astronaut/speech` | same | Autonomy: the astronaut's commands |
 | `/lander/joint_states` | `/model/lander/state` | the lander's joints (JointMonitor, 50 Hz) |
+| – | `/model/rover/wheel_cmd` | Double_V, the wheels' speed setpoints [rad/s], fl rl fr rr: the ROS-free way to drive (the tests and tools, `wheel_cmd.py`); ignored while ros2_control drives the wheels |
+| – | `/model/rover/odometry`, `/model/rover/tf` | the drivetrain's own no-slip odometry, `odom` → `base_link`, 50 Hz |
+| – | `/model/rover/joint_states` | the joints as Gazebo has them |
 | – | `/model/rover/link/rocker_{left,right}/particle_emitter/dust_r{l,r}/cmd` | ParticleEmitter: the drivetrain sets the dust behind the rear wheels (10 Hz); only with `sim.yaml`'s `dust` on, off by default (no dust, nothing on these topics) |
 
 Joint names: `rocker_left_joint`, `rocker_right_joint`, `wheel_{fl,rl,fr,rr}_joint`,
@@ -138,9 +166,11 @@ The rover's physical numbers are in `rover_description/config/rover.yaml`
 shapes), joint limits and damping, the differential, the motors and
 drivelines, the tyres, the sensors and the camera head, each with its source
 or an (A) label for an assumption. How the simulation models the rover is in
-`rover_sim/config/sim.yaml`: the drivetrain's settings (its twist input, the
-stand-in motor controller's PI tuning, the motor model's substeps), the
-contact model, dig-in, the visual cues, dust and the tyre model. Edit either,
+`rover_sim/config/sim.yaml`: the drivetrain's settings (its setpoint watchdog,
+the stand-in motor controller's PI tuning, the motor model's substeps), the
+ROS-free helpers' ramp, the contact model, dig-in, the visual cues, dust and
+the tyre model; the drive controller's are `rover_control/config/controllers.yaml`.
+Edit either,
 then `pixi run sim-model` (`sim`, `drive` and `sim-test` do it for you):
 `tools/gen_rover.py` expands `urdf/rover_sim.urdf.xacro` (the description and
 Gazebo's parts), converts it with `gz sdf -p` and writes `models/rover/model.sdf`.
@@ -173,18 +203,22 @@ before them (`test_rover_model.DigCues`; `test_equivalence`'s `cues_off`).
 ## Driver station
 
 ```bash
-pixi run drive urc_autonomy          # starts the world headless if nothing runs, opens the page
+pixi run drive urc_autonomy          # starts the world and its ROS 2 stack headless if nothing runs, opens the page
 pixi run sim urc_autonomy --follow   # or: the Gazebo GUI, its camera following the rover...
 pixi run drive                       # ...and the station attached to it (second terminal)
 ```
 
-`pixi run drive [world] [--no-browser] [--port N] [--host H] [--world-name NAME] [--released]`:
+`pixi run drive [world] [--no-browser] [--port N] [--host H] [--world-name NAME] [--wait S] [--released]`:
 - `world`: a path to an `.sdf` or a name in `rover_sim/worlds`. With a world and
-  nothing running, the station starts `gz sim -s -r <world>` with `run.sh`'s
-  environment, stops it on exit and exits when it exits. A world that fails
-  to load ends the wait at once ("gz sim exited (code N) before <world> came up").
+  nothing running, the station starts the world with the rover's ROS 2 stack
+  (`ros2 launch rover_sim sim.launch.py world:=<world> gui:=false station:=false`,
+  in `gzenv.py`'s environment), stops it on exit and exits when it exits. A world
+  that fails to load ends the wait at once ("the simulation exited (code N)
+  before <world> came up").
 - Without `world` it attaches to the running simulation (it finds
-  `/world/<name>/clock` on the transport); `--world-name` picks one.
+  `/world/<name>/clock` on the transport); `--world-name` picks one, `--wait`
+  waits up to that many seconds for it (`sim.launch.py station:=true` starts
+  the station so).
 - It spawns its two driving cameras (`model://eye_camera`,
   `model://chase_camera`, via `/world/<w>/create`) unless they are already in
   the world, and the fly camera (`model://fly_camera`) when Fly or Map is
@@ -281,8 +315,11 @@ How it works:
   telemetry comes back at 10 Hz.
 - `drive.py` turns inputs into a twist under acceleration limits: 1.0 m/s² and
   2.0 rad/s² speeding up, 2.0 m/s² and 4.0 rad/s² slowing down.
-- While the station has control it publishes `/model/rover/cmd_vel` at 20 Hz
-  and `blue` on `/model/rover/led` at 2 Hz (rule 1.e.ii: teleoperation).
+- While the station has control it publishes `/cmd_vel` (TwistStamped, the
+  stamp left zero for the drive controller; `station/ros_link.py`) at 20 Hz and
+  `blue` on `/model/rover/led` at 2 Hz (rule 1.e.ii: teleoperation). If nothing
+  subscribes to `/cmd_vel` 10 s after the start (a world started without
+  `sim.launch.py`), it says so.
 - Deadman: if the page stops sending for 0.5 s (tab closed, focus lost,
   network gone) the twist is zero. Pressing Cmd lets go of all held keys
   (macOS browsers send no keyup for keys released while Cmd is down).
@@ -312,11 +349,14 @@ Stopping and sharing:
   serving, and a world the station started gets SIGINT, then SIGKILL after
   10 s or at once on a second Ctrl-C. That world runs in its own session, so
   the terminal never reaches it. A signal ignored from the start (nohup) stays
-  ignored. A SIGKILLed station stops the rover through the drivetrain's
-  command timeout (0.5 s).
-- One world per `GZ_PARTITION`, one station per world: the rover's topics are
-  not world-scoped. Run separate worlds with `GZ_PARTITION=<name>`; the
-  station warns when several share its partition.
+  ignored. A SIGKILLed station stops the rover through the drive controller's
+  command timeout (0.5 s). Under `ros2 launch` (`sim.launch.py station:=true`)
+  Ctrl-C reaches the attached station twice, from the terminal and again from
+  the launch; the station ignores the second while it stops.
+- One world per `GZ_PARTITION` and ROS domain, one station per world: the
+  rover's topics are not world-scoped. Run separate worlds with
+  `GZ_PARTITION=<name>` and `ROS_DOMAIN_ID=<n>`; the station warns when several
+  share its partition.
 - Stations announce themselves on `/driver_station/announce` (StringMsg, JSON
   `id`, `world`, `url`) at 2 Hz. A second station in the partition exits
   ("another driver station is attached to <world> (<url>)"); if two start
@@ -471,7 +511,6 @@ drivetrain; visible dig-in; skid-steer friction.
   consumers of `/ground_truth/odom` twist should too.
 - The IMU sits at the chassis center but reports in `base_link`: orientation
   and angular rate are exact, linear acceleration differs by lever-arm terms.
-- No TF for rockers and wheels in ROS (no URDF / `robot_state_publisher`).
 - Sensors are GNSS, one RGB-D camera on a pan-tilt head and the IMU; no lidar.
   Cameras render only in worlds with the Sensors system (every generated world
   and `rover_test`).
@@ -480,7 +519,7 @@ drivetrain; visible dig-in; skid-steer friction.
   decoded only by luck from 3 m); farther and oblique reads were not measured.
 - Equipment Servicing runs on Dantzig (per-wheel friction approximate), and
   the lander's parts skip collision with the heightmap (collide bitmask).
-- One world per `GZ_PARTITION`: the rover's topics are not world-scoped.
+- One world per `GZ_PARTITION` and ROS domain: the rover's topics are not world-scoped.
 - Gazebo prints `XML Element[gz_frame_id], child of element[sensor], not
   defined in SDF` on load. Harmless: `gz_frame_id` is a gz-sensors extension
   that sets a sensor's frame id; SDF has no standard element for it.
@@ -500,7 +539,6 @@ Gazebo from 300 m above the terrain.*
 pixi run sim urc_autonomy          # or urc_equipment_servicing, urc_delivery, urc_astrobiology, proving_ground
 pixi run referee autonomy          # second terminal: scripts the astronaut, judges, shows the LED
 pixi run drive                     # or the driver station, attached to the running world
-pixi run sim-bridge                # for ROS 2
 pixi run sim-worlds                # regenerate (sim, drive and sim-test do it when an input changes)
 ```
 
@@ -1161,9 +1199,18 @@ spin.
   first picture can take 3–5 s.
 - **The Map view shows the hillshade or "Photo, out of date":** run `pixi run
   sim-maps`.
-- **The rover stops after half a second:** the drivetrain's command timeout;
-  publish `cmd_vel` at a rate (the station sends 20 Hz), or use
-  `cmd_timeout: 0.0` (`sim.yaml`, drivetrain) for Gazebo's GUI Teleop.
+- **The rover stops after half a second:** the drive controller's command
+  timeout (`cmd_vel_timeout`, `rover_control/config/controllers.yaml`);
+  publish `/cmd_vel` at a rate (the station sends 20 Hz). A command stamped
+  with the wall clock under sim time never times out: leave the stamp zero.
+- **The rover does not move:** nothing drives it through ROS. Start the world
+  with `pixi run sim` or `pixi run drive <world>` (sim.launch.py brings the
+  controllers; `ros2 control list_controllers` lists them active), and keep
+  the `/clock` bridge: the controllers run on sim time.
+- **`dyld: symbol not found in flat namespace '_PyExc_RuntimeError'`** from a
+  new ROS library or test program: link it with only the libraries it uses,
+  as `rover_control/CMakeLists.txt` and the Gazebo system plugins do
+  (`rover_control/README.md`, When the motor controllers are chosen).
 - **The rover will not turn in sand, or stops climbing:** that is the dig-in
   (wheel dig factor in the station's Drivetrain panel); drive out straight,
   approach slopes straight, or regenerate with `terrains.DIG = "mild"`.

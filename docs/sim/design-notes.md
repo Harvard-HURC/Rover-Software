@@ -49,12 +49,21 @@ crash Gazebo's in-process Python test fixture.
 spec section 6) drives each wheel the way its motor would and decides how
 every wheel contact grips. Every 1 ms step:
 
-- **Setpoints**: (vx ∓ wz·track·track_multiplier/2)/r per side, through a ramp
-  (`gz::math::SpeedLimiter`, 8 rad/s², 1.2 m/s² (A) until the driver team
-  reports its controller's ramp; `sim.yaml` `drivetrain: accel`) and clamped to the top speed
-  (`rover.yaml` `wheel: top_speed`).
-  `track_multiplier` is 1.0: the raw skid-steer response, which the team's
-  driver compensates (the user's choice; Clearpath ships 1.875 for Husky).
+- **Setpoints**: one per wheel, from its joint's `WheelSetpoint` component
+  (`plugins/rover_components.hh`; design spec 2026-10-09, 6.1): ros2_control's
+  `RoverSimSystem` writes it at the start of every step from the drive
+  controller's command, and the motors use it in that step
+  (`tests/test_ros2_control.py`); without ros2_control the drivetrain takes it
+  from its ROS-free topic `/model/rover/wheel_cmd` (`gz.msgs.Double_V`, fl rl fr
+  rr). Clamped to the top speed (`rover.yaml` `wheel: top_speed`). The skid-steer
+  kinematics (vx ∓ wz·track/2)/r and the ramp (8 rad/s² for a wheel, 1.2 m/s²
+  (A) until the driver team reports its controller's) are the drive
+  controller's (`rover_control/config/controllers.yaml`), and `wheel_cmd.py`'s
+  for the tests and tools (`sim.yaml` `wheel_cmd: accel`, with
+  gz::math::SpeedLimiter's arithmetic, so every run drives as it did before
+  PR 3). The effective-track multiplier is 1.0 (`wheel_separation_multiplier`):
+  the raw skid-steer response, which the team's driver compensates (the user's
+  choice; Clearpath ships 1.875 for Husky).
 - **Motor** per wheel (`rover_drivetrain.hh`; `rover.yaml` `motor`, `driveline`; the PI's gains
   and the integration substeps: `sim.yaml` `drivetrain`): a DC motor
   (48 V, 0.46 Ω, kt = ke 0.0445; the Husky A200 motor at twice its 24 V, for 3 m/s), gearbox 50 at efficiency 0.8,
@@ -125,12 +134,13 @@ every wheel contact grips. Every 1 ms step:
   over-reported by 1/ratio, as on a real rover; `/model/rover/ground_truth`
   is the truth. Realistic slip makes a gyro yaw-rate loop worth having in
   the driver.
-- **Command timeout**: a command older than 0.5 s (wall clock) counts as
-  zero, so a commander that dies cannot leave the rover driving
-  (`sim.yaml` drivetrain `cmd_timeout`; 0 holds the last command; tests use the sim
-  clock).
-- **Reset**: `ISystemReset` clears the command, motors, ramps, dig-in and
-  odometry, puts the tyres back at their SDF poses and clears the ruts and
+- **Watchdog**: a setpoint older than 0.5 s (wall clock) counts as zero, at
+  once, as a motor controller's watchdog stops its motor, so a commander that
+  dies cannot leave the rover driving (`sim.yaml` drivetrain `cmd_timeout`; 0
+  holds the last setpoint; tests use the sim clock). The drive controller has
+  its own 0.5 s command timeout in front of it.
+- **Reset**: `ISystemReset` zeroes the setpoints and clears the motors, dig-in
+  and odometry, puts the tyres back at their SDF poses and clears the ruts and
   pits.
 
 Measured with the physical rover on flat ground of one type (`pixi run
