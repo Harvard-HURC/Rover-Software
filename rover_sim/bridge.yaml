@@ -1,34 +1,15 @@
-# ros_gz_bridge config for the rover (pixi run sim-bridge).
-# gz topics are set in rover_sim/config/sim.yaml (topics).
-- ros_topic_name: /cmd_vel
-  gz_topic_name: /model/rover/cmd_vel
-  ros_type_name: geometry_msgs/msg/Twist
-  gz_type_name: gz.msgs.Twist
-  direction: ROS_TO_GZ
-- ros_topic_name: /odom
-  gz_topic_name: /model/rover/odometry
-  ros_type_name: nav_msgs/msg/Odometry
-  gz_type_name: gz.msgs.Odometry
-  direction: GZ_TO_ROS
+# ros_gz_bridge config for the rover: the sensor bridge launch/sim.launch.py runs (design spec 2026-10-09, 6.2;
+# docs/topics.md). gz topics are set in rover_sim/config/sim.yaml (topics). /cmd_vel, /odom, /joint_states and /tf are
+# not bridged: the drive controller, joint_state_broadcaster and robot_state_publisher provide them.
 - ros_topic_name: /ground_truth/odom
   gz_topic_name: /model/rover/ground_truth
   ros_type_name: nav_msgs/msg/Odometry
   gz_type_name: gz.msgs.Odometry
   direction: GZ_TO_ROS
-- ros_topic_name: /joint_states
-  gz_topic_name: /model/rover/joint_states
-  ros_type_name: sensor_msgs/msg/JointState
-  gz_type_name: gz.msgs.Model
-  direction: GZ_TO_ROS
 - ros_topic_name: /imu
   gz_topic_name: /model/rover/imu
   ros_type_name: sensor_msgs/msg/Imu
   gz_type_name: gz.msgs.IMU
-  direction: GZ_TO_ROS
-- ros_topic_name: /tf
-  gz_topic_name: /model/rover/tf
-  ros_type_name: tf2_msgs/msg/TFMessage
-  gz_type_name: gz.msgs.Pose_V
   direction: GZ_TO_ROS
 - ros_topic_name: /clock
   gz_topic_name: /clock

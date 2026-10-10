@@ -105,10 +105,17 @@ add_test(NAME test_rover_sim_system COMMAND test_rover_sim_system)
 # the simulation's own style (120 columns, its docstrings), which flake8, pep257
 # and uncrustify with ROS settings reject file by file.
 
+# The launch files, with the wrapper xacro and sim.yaml they read. sim.launch.py runs the simulation from this source
+# tree (its generated worlds and models are here, and gzenv.py sets Gazebo's environment from it): the installed copy
+# finds the tree through share/rover_sim/source_dir.
 install(DIRECTORY
   launch
+  urdf
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/source_dir" "${CMAKE_CURRENT_SOURCE_DIR}\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/source_dir" DESTINATION share/${PROJECT_NAME})
 ament_environment_hooks("${CMAKE_CURRENT_SOURCE_DIR}/env-hooks/${PROJECT_NAME}.dsv.in")
 
 ament_package()
