@@ -6,6 +6,7 @@ lists them). SdfEquivalence checks the comparison itself; Drives runs the frozen
 side in Gazebo. When the rover changes on purpose, refreeze the fixtures from gen_rover.py in the same commit and say
 why (fixtures/rover_model/README.md)."""
 import contextlib
+import copy
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -108,6 +109,22 @@ class SdfEquivalence(unittest.TestCase):
         def extra(model):
             sdf.sub(model.find("link[@name='base_link']"), "self_collide", True)
         self.assertEqual(len(self.changed(extra)), 1)
+
+    def test_a_name_two_elements_share_differs(self):
+        """Elements pair by name, so a second one of the same name, the same or not, would hide behind the other."""
+        def same_sensor(model):
+            link = model.find("link[@name='base_link']")
+            link.append(copy.deepcopy(link.find("sensor[@name='imu']")))
+
+        def other_tyre(model):
+            link = model.find("link[@name='wheel_fl']")
+            tyre = copy.deepcopy(link.find("collision[@name='tire_collision']"))
+            tyre.find("geometry/cylinder/radius").text = "9"
+            link.insert(0, tyre)
+
+        for edit in (same_sensor, other_tyre):
+            with self.subTest(edit.__name__):
+                self.assertEqual(len(self.changed(edit)), 1)
 
 
 class Equivalence(unittest.TestCase):

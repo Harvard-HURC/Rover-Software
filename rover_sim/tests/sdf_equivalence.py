@@ -4,9 +4,10 @@ gen_model.py wrote, tests/fixtures/rover_model).
 differences(reference, generated) lists every difference: an element or attribute that one has and the other lacks,
 a number that differs beyond the tolerance (a pose by its position and its rotation matrix), different text, a
 different order of links, joints or plugins. Children with the same tag pair by name where they all have one (not
-plugins: those pair in order), otherwise in order; children with different tags may come in any order, as SDF reads
-them. An element that one side lacks counts as SDF's default: DEFAULTS lists the values that the converter writes
-where gen_model.py wrote nothing, which sdformat assumes when the element is missing."""
+plugins: those pair in order), otherwise in order; two of them with the same name on one side are a difference too
+(paired by name, one would hide the other). Children with different tags may come in any order, as SDF reads them.
+An element that one side lacks counts unless it holds only what sdformat reads as no element: DEFAULTS lists the
+values that the converter writes where gen_model.py wrote nothing."""
 import math
 import xml.etree.ElementTree as ET
 
@@ -17,7 +18,9 @@ REL_TOL = 1e-9  # 9 significant digits, as gen_model.py and `gz sdf -p --precisi
 # the converter writes as its float32 value.
 ABS_TOL = 1e-12
 ROTATION_TOL = 1e-8  # entries of two rotation matrices: an angle to pi written with 9 significant digits
-# The tail of an element's tag path -> SDF 1.11's default for it.
+# The tail of an element's tag path -> the value sdformat reads as no element: SDF 1.11's default, except a joint
+# limit's effort and velocity, -1, which the URDF writes for none (URDF needs the attributes) and sdformat reads
+# as inf, SDF 1.11's default (a negative limit is none).
 DEFAULTS = {
     ("axis", "dynamics", "damping"): "0",
     ("axis", "dynamics", "friction"): "0",
@@ -99,6 +102,10 @@ def _compare(a, b, path, out):
     for tag in dict.fromkeys([c.tag for c in a] + [c.tag for c in b]):
         ca, cb = a.findall(tag), b.findall(tag)
         if tag != "plugin" and all(c.get("name") is not None for c in ca + cb):
+            for side, children in (("reference", ca), ("generated", cb)):
+                names = [c.get("name") for c in children]
+                for name in dict.fromkeys(n for n in names if names.count(n) > 1):
+                    out.append(f"{where}/{tag}[{name}]: {names.count(name)} of them in the {side} model")
             pairs = {c.get("name"): [c, None] for c in ca}
             for c in cb:
                 pairs.setdefault(c.get("name"), [None, None])[1] = c
