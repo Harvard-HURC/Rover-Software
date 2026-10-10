@@ -52,7 +52,9 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
       # The build needs no terrain data, so it is checked even when fetch-data fails.
       - run: pixi run build
-      # The terrain rasters, cached by their manifest and saved as soon as they are fetched, whatever the tests do.
+      # The terrain rasters, cached by what makes them (the manifest, each raster's .json, fetch_data.py and
+      # usgs_lidar.py: a change to the recipe rebuilds the lidar DEM here) and saved as soon as fetch-data succeeds,
+      # whatever the tests do. A run whose fetch-data fails saves nothing, so the next run fetches them again.
       - name: Restore the terrain rasters
         id: rasters
         uses: actions/cache/restore@v6.1.0
@@ -60,11 +62,15 @@ jobs:
           path: |
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
-          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+          key: >-
+            rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json', 'src/rover_sim/data/dem/*.json',
+            'src/rover_sim/data/imagery/*.json', 'src/rover_sim/tools/fetch_data.py',
+            'src/rover_sim/tools/usgs_lidar.py') }}
       # fetch-data gets every raster the simulation reads from its official source and fails if one fails; the
-      # Autonomy world's 0.5 m lidar DEM it rebuilds from USGS lidar (371 MB of downloads, 5 to 20 minutes, on a
-      # cache miss only). Off the Mac that made rasters.json the rebuild may round differently in the last bits:
-      # fetch-data then keeps it within the tolerance of the manifest's stats and says that it is not bit-identical.
+      # Autonomy world's 0.5 m lidar DEM it rebuilds from USGS lidar (371 MB of downloads, 5 to 20 minutes, when
+      # the cache misses). Off the Mac that made rasters.json the rebuild may round differently in the last bits:
+      # fetch-data then keeps it within the tolerance of the manifest's stats and says that it is not bit-identical,
+      # naming the runner's system and CPU.
       - run: pixi run fetch-data
       - name: Save the terrain rasters
         if: steps.rasters.outputs.cache-hit != 'true'
@@ -73,7 +79,7 @@ jobs:
           path: |
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
-          key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
+          key: ${{ steps.rasters.outputs.cache-primary-key }}
       - run: pixi run test
 
   windows:

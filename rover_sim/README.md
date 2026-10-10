@@ -15,7 +15,7 @@ pixi run launcher               # every world as a tile
 pixi run test                   # the C++ tests and the simulation's suite
 ```
 
-Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, 5 to 20 minutes; `--sources <folder>` keeps the downloads); like every raster it is checked against `data/rasters.json`.
+Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, 5 to 20 minutes; `--sources <folder>` keeps the downloads: give a folder outside the repository, such as `../lidar-sources`, as git does not ignore one inside it); like every raster it is checked against `data/rasters.json`.
 
 ### Layout
 | Path | What it is |

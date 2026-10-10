@@ -522,11 +522,13 @@ cross-check and the source of the other worlds' altitudes.
 `pixi run fetch-data` rebuilds the file from the USGS tiles and point clouds
 its `.json` lists (`tools/usgs_lidar.py`, recipe `route_area`: 5 OPR DEM
 tiles and 6 LAZ tiles, 371 MB, each pinned by its SHA-256), with the steps
-that made it on 2026-10-06. On macOS (Apple silicon) the rebuild is the
-file byte for byte (`data/rasters.json`); where floating point rounds
-differently (OpenCV's blur and GDAL's bilinear kernel may on Linux x86-64),
-fetch-data keeps a rebuild whose minimum, maximum and 16 × 16 block means
-are within 1 mm of the manifest's, and says it is not bit-identical.
+that made it on 2026-10-06. On the Mac that made `data/rasters.json`
+(osx-arm64, an Apple M4, with the pinned GDAL 3.13.3 and PROJ 9.8.1; the
+`.json`'s `rebuilt`) the rebuild is the file byte for byte. Another machine
+or library version may round differently (OpenCV's blur and GDAL's bilinear
+kernel may on Linux x86-64; no other Mac was tried): fetch-data then keeps
+a rebuild whose minimum, maximum and 16 × 16 block means are within 1 mm of
+the manifest's, and says it is not bit-identical and on which machine.
 
 **Imagery and ground.** `data/imagery/route_area_naip2024.tif`: NAIP
 2024-07-06, 0.6 m, 4 bands, public domain. It is resampled to the world and

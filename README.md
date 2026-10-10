@@ -22,7 +22,7 @@ From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in t
 
 ### Simulation
 The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows it runs in WSL2 (see Platforms). From the `src` folder:
-1. `pixi run fetch-data` gets the terrain rasters the simulation reads from their official sources, once, and checks each against `rover_sim/data/rasters.json` (git ignores them): about 90 MB of USGS elevation data and USDA NAIP imagery, and the Autonomy world's 0.5 m lidar DEM, which it rebuilds from USGS's public lidar (371 MB of point clouds and DEM tiles to download, about 1.5 GB of temporary space and 3 GB of memory; 5 to 20 minutes, mostly the download from USGS's rockyweb server, which is slow at times; `--sources <folder>` keeps the downloads, so a run that failed part way goes on from them). The tasks below generate every world, so they need these, also for the test ground. When a source is down, `rover_sim/tools/link_data.sh <a clone that has the rasters>` links them from another clone
+1. `pixi run fetch-data` gets the terrain rasters the simulation reads (git ignores them) from their official sources, once, and checks each against `rover_sim/data/rasters.json`: about 90 MB of USGS elevation data and USDA NAIP imagery, and the Autonomy world's 0.5 m lidar DEM, which it rebuilds from USGS's public lidar (371 MB of point clouds and DEM tiles to download, about 1.5 GB of temporary space and 3 GB of memory; 5 to 20 minutes, mostly the download from USGS's rockyweb server, which is slow at times; `--sources <folder>` keeps the downloads, so a run that failed part way goes on from them; give a folder outside the repository, such as `../lidar-sources`, as git does not ignore one inside it). The tasks below generate every world, so they need these, also for the test ground. When a source is down, `rover_sim/tools/link_data.sh <a clone that has the rasters>` links them from another clone
 2. `pixi run sim` builds the simulation's plugins, generates the rover and the worlds and opens Gazebo on the test ground (`pixi run sim urc_autonomy` opens a URC mission world)
 3. `pixi run drive urc_autonomy` drives the rover from the browser; `pixi run launcher` shows every world as a tile that starts it with its driver station
 
@@ -30,7 +30,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ### Tests
 - `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`. The rasters are cached by their manifest, so fetch-data downloads and rebuilds them only when `rasters.json` changes
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data` and `pixi run test` (the rendering tests on macOS only), on Windows `pixi run build`. The rasters are cached by what makes them (`rasters.json`, each raster's `.json`, `fetch_data.py` and `usgs_lidar.py`), so fetch-data downloads and rebuilds them only when one of those changes; a run whose fetch-data fails saves nothing, so the next run downloads them again
 
 ### Platforms
 - **macOS (Apple silicon):** everything
