@@ -67,12 +67,39 @@ foreach(source IN LISTS plugin_sources)
 endforeach()
 install(TARGETS ${plugin_targets} LIBRARY DESTINATION lib/${PROJECT_NAME})
 
-# C++ unit tests of the plugins' parts that need no Gazebo running:
+# RoverSimSystem: the simulated rover's ros2_control hardware (ros2_control/), which gz_ros2_control loads inside
+# Gazebo through pluginlib (rover_sim_system.xml): each wheel's velocity command into the drivetrain's motor model
+# (plugins/rover_components.hh), the joints' state and the motor currents back. It takes only gz_ros2_control's
+# interface header: gz_ros2_control's library is the Gazebo system that loads this one.
+find_package(gz_ros2_control REQUIRED)
+find_package(hardware_interface REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+set(gz_ros2_control_include "${gz_ros2_control_DIR}/../../../include/gz_ros2_control")
+if(TARGET gz_ros2_control::gz_ros2_control-system)
+  get_target_property(gz_ros2_control_include gz_ros2_control::gz_ros2_control-system INTERFACE_INCLUDE_DIRECTORIES)
+endif()
+add_library(rover_sim_system SHARED ros2_control/rover_sim_system.cpp)
+target_include_directories(rover_sim_system PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ros2_control"
+                           "${CMAKE_CURRENT_SOURCE_DIR}/plugins" ${gz_ros2_control_include})
+target_link_libraries(rover_sim_system PUBLIC gz-sim8::gz-sim8 hardware_interface::hardware_interface
+                      pluginlib::pluginlib rclcpp::rclcpp rclcpp_lifecycle::rclcpp_lifecycle)
+target_compile_options(rover_sim_system PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS rover_sim_system LIBRARY DESTINATION lib)
+pluginlib_export_plugin_description_file(gz_ros2_control rover_sim_system.xml)
+
+# C++ unit tests of the plugins' parts that need no Gazebo running, and of RoverSimSystem against a bare ECM:
 # pixi run colcon-test, or ctest --test-dir <build directory>.
 enable_testing()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/tests/CMakeLists.txt")
   add_subdirectory(plugins/tests)
 endif()
+find_package(GTest REQUIRED)
+add_executable(test_rover_sim_system ros2_control/test/test_rover_sim_system.cpp)
+target_link_libraries(test_rover_sim_system PRIVATE rover_sim_system GTest::gtest)
+target_compile_options(test_rover_sim_system PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME test_rover_sim_system COMMAND test_rover_sim_system)
 
 # The ament linters (ament_lint_auto) do not run on this package: its code keeps
 # the simulation's own style (120 columns, its docstrings), which flake8, pep257
