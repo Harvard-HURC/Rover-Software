@@ -1,6 +1,5 @@
 {
- "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py).",
- "mirror": "https://github.com/Harvard-HURC/Rover-Software/releases/download/data-2026-10-06/",
+ "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). The rasters that are not official fetch-data cannot rebuild yet, and there is no other copy to fetch; for each of them worlds: the generated worlds that read it; rebuild: what is planned. A teammate's clone lends them (tools/link_data.sh <that clone>).",
  "rasters": [
   {
    "path": "dem/far_dem_3dep_60km.tif",
@@ -31,6 +30,8 @@
    "provenance": "dem/mdrs_area_lidar2018_0p5m.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 58431428,
    "sha256": "f09b7a3688f525ff977241f5c49bf953cd268ea0c47f0f4fa76352fd3ccfb5b5",
    "content_sha256": "833648e4dc8e263c08bf09fbc479f10b321bea1ba7c7de194eb37aa357a9b8ee",
@@ -55,6 +56,8 @@
    "provenance": "dem/route_area_lidar_0p5m.json",
    "required": true,
    "official": false,
+   "worlds": ["urc_autonomy"],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 41457287,
    "sha256": "499c9454eac5433bbb0797bd2118b7b5b6295e283129a4dc727578f773847224",
    "content_sha256": "0d2da6c0449e0690788c634e454d7f69651cf2fbbd04313a8e677934c352d3db",
@@ -67,6 +70,8 @@
    "provenance": "dem/route_area_lidar_0p5m.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 214914,
    "sha256": "2787f7f34c4aa7ad559dbfc2d75f4c903ee7cd7bd6cbd398029bf4f2d924f39c",
    "content_sha256": "b587fd9040d401333934e4e042d5c7e41a897098e2e2bf97e09287998d53f266",
@@ -103,6 +108,8 @@
    "provenance": "imagery/naip2021_route_area.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "NAIP imagery, which the planned script from USGS lidar does not cover; its provenance gives only a URL template",
    "bytes": 69697630,
    "sha256": "d7b6ef5e8f8aeda0e049c0fc736b18da4631fa604a74ee7a314337c80741e769",
    "content_sha256": "ce82e853e252183169d41ef2999d6270406e31336556b200e677430825fdc7c1",

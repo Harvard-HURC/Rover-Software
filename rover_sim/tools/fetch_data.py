@@ -4,17 +4,26 @@
 data/rasters.json lists every raster under data/ that git ignores, with its
 size, its SHA-256, the SHA-256 of its content (the pixels and georeferencing
 urc.dem.read_raster reads) and the tracked .json that says where it came
-from. A missing raster is fetched:
-- from its official source when it is one or more ImageServer exportImage
-  requests (`official`; its .json lists them as url, urls or requests): each
-  tile is placed on the raster's grid by its own georeferencing, the mosaic
-  is written as a deflate GeoTIFF and kept only if its content matches;
-- otherwise, or when the source fails or now returns other pixels, from the
-  team's copy (`mirror`, a GitHub release), kept only if the file matches.
+from. A missing raster is fetched from its official source when it is one or
+more ImageServer exportImage requests (`official`; its .json lists them as
+url, urls or requests): each tile is placed on the raster's grid by its own
+georeferencing, the mosaic is written as a deflate GeoTIFF and kept only if
+its content matches. The others fetch-data cannot rebuild yet (the 0.5 m
+lidar DEMs and their source map, made by processing that is not in the
+repository; the NAIP 2021 route mosaic, whose .json gives only a URL
+template): for each one missing it names the worlds that need it (`worlds`)
+and what is planned (`rebuild`), and a teammate's clone lends it
+(tools/link_data.sh <that clone>). There is no other copy to fetch from.
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
 .json files are never written, so a fresh clone needs no --force.
+
+Exit status: 0 when every listed raster fetch-data can fetch is here, fetched
+or already present (those it cannot rebuild yet may be missing; it names
+them); 1 when one it can fetch was not fetched (with --verify: a raster here
+differs from the manifest, or one it can fetch is missing); 2 for a usage
+error.
 """
 import argparse
 import hashlib
@@ -37,6 +46,30 @@ DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
 TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
+LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+
+
+def load_manifest(data_dir=DATA_DIR):
+    return json.loads((Path(data_dir) / MANIFEST).read_text())
+
+
+def entry_of(path, data_dir=DATA_DIR):
+    """The manifest's entry for the raster at path (under data_dir, or relative to it), or None."""
+    path = Path(path)
+    if path.is_absolute():
+        path = path.relative_to(data_dir)
+    return next((e for e in load_manifest(data_dir)["rasters"] if e["path"] == path.as_posix()), None)
+
+
+def cannot_fetch(entry):
+    """What to do about a raster fetch-data cannot rebuild yet (not `official`) when it is missing."""
+    return f"fetch-data cannot rebuild it from official sources yet ({entry['rebuild']}); {LINK}"
+
+
+def needed_by(entry):
+    """Which generated worlds read the raster, as a clause."""
+    worlds = entry["worlds"]
+    return f"{', '.join(worlds)} need{'s' if len(worlds) == 1 else ''} it" if worlds else "no world reads it"
 
 
 def file_sha256(path):
@@ -149,33 +182,23 @@ def mosaic(entry, provenance, get, out_path):
     write_geotiff(out_path, out, geotags(entry["transform"]))
 
 
-def fetch(entry, data_dir, mirror, get=download, log=print):
-    """Fetch one raster into data_dir; True once it is in place and verified."""
+def fetch(entry, data_dir, get=download, log=print):
+    """Fetch one raster from its official source into data_dir; True once it is in place and its content
+    verified."""
     path = data_dir / entry["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.part")
     try:
-        if entry["official"]:
-            try:
-                mosaic(entry, json.loads((data_dir / entry["provenance"]).read_text()), get, part)
-                if content_sha256(part) == entry["content_sha256"]:
-                    os.replace(part, path)
-                    log(f"{entry['path']}: fetched from its official source, content verified")
-                    return True
-                log(f"{entry['path']}: the official source now returns other pixels; trying the team's copy")
-            except Exception as e:  # any failure of the source: the team's copy is the fallback
-                log(f"{entry['path']}: the official source failed ({e}); trying the team's copy")
-        url = mirror + Path(entry["path"]).name
         try:
-            part.write_bytes(get(url))
-        except Exception as e:
-            log(f"{entry['path']}: FAILED, no team's copy at {url} ({e})")
+            mosaic(entry, json.loads((data_dir / entry["provenance"]).read_text()), get, part)
+        except Exception as e:  # any failure of the source
+            log(f"{entry['path']}: FAILED, the official source failed ({e})")
             return False
-        if file_sha256(part) != entry["sha256"]:
-            log(f"{entry['path']}: FAILED, the team's copy at {url} differs from rasters.json")
+        if content_sha256(part) != entry["content_sha256"]:
+            log(f"{entry['path']}: FAILED, the official source now returns other pixels than rasters.json lists")
             return False
         os.replace(part, path)
-        log(f"{entry['path']}: fetched from the team's copy, SHA-256 verified")
+        log(f"{entry['path']}: fetched from its official source, content verified")
         return True
     finally:
         part.unlink(missing_ok=True)
@@ -190,32 +213,36 @@ def main(argv=None, get=download):
                         help="check the rasters here against rasters.json; fetch nothing")
     parser.add_argument("--data", type=Path, default=DATA_DIR, help=f"data directory (default {DATA_DIR})")
     args = parser.parse_args(argv)
-    manifest = json.loads((args.data / MANIFEST).read_text())
-    failed = 0
-    for entry in manifest["rasters"]:
+    failed, missing = 0, []
+    for entry in load_manifest(args.data)["rasters"]:
         if not (args.all or entry["required"]):
             continue
         path = args.data / entry["path"]
-        if args.verify:
+        if not (entry["official"] or path.exists()):  # nothing to fetch it from: say so, whatever the mode
+            print(f"{entry['path']}: missing, {needed_by(entry)}; {cannot_fetch(entry)}")
+            missing.append(entry)
+        elif args.verify:
             state = "verified" if path.exists() and matches(entry, path) else "DIFFERS" if path.exists() else "MISSING"
             print(f"{entry['path']}: {state}")
             failed += state != "verified"
         elif path.exists():
             print(f"{entry['path']}: present")
         elif args.dry_run:
-            if entry["official"]:
-                count = len(requests_of(json.loads((args.data / entry["provenance"]).read_text())))
-                print(f"{entry['path']}: missing, would fetch from the official source, {count} request(s)")
-            else:
-                print(f"{entry['path']}: missing, would fetch from the team's copy")
-        elif not fetch(entry, args.data, manifest["mirror"], get):
+            count = len(requests_of(json.loads((args.data / entry["provenance"]).read_text())))
+            print(f"{entry['path']}: missing, would fetch from the official source, {count} request(s)")
+        elif not fetch(entry, args.data, get):
             failed += 1
+    sys.stdout.flush()  # the summary after the lines above, also in a log
     if failed and not args.verify:
-        sys.stdout.flush()  # the hint after the lines above, also in a log
-        print(f"fetch-data: {failed} raster(s) not fetched; a clone that has them can link them here: "
-              "rover_sim/tools/link_data.sh <that clone> (README, Simulation)", file=sys.stderr)
+        print(f"fetch-data: {failed} raster(s) not fetched (FAILED above); a clone that has them can link them "
+              "here: rover_sim/tools/link_data.sh <that clone> (README, Simulation)", file=sys.stderr)
+    if missing:
+        worlds = sorted({world for entry in missing for world in entry["worlds"]})
+        print(f"fetch-data: {len(missing)} raster(s) it cannot rebuild yet are not here (above)"
+              + (f"; without them sim-worlds skips {', '.join(worlds)} and the tests that need "
+                 f"{'it' if len(worlds) == 1 else 'them'} skip" if worlds else ""),
+              file=sys.stderr)
     return 1 if failed else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

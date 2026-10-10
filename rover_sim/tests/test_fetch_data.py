@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
-a fresh clone, official tiles made into a raster and checked, the team's copy
-as the fallback, and nothing installed that does not match."""
+a fresh clone, official tiles made into a raster and checked, nothing
+installed that does not match, and the rasters it cannot rebuild yet named
+with the worlds that need them and how to get them, without failing the run."""
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -19,12 +21,12 @@ from worldfiles import SIM_DIR
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import fetch_data  # noqa: E402
 from urc import dem, farfield  # noqa: E402
-from urc.missions import autonomy  # noqa: E402
+from urc.missions import COURSES, MISSIONS, autonomy  # noqa: E402
 
 MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
-MIRROR = "https://mirror.test/"
+LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 
 
 def raster_bytes(bands, transform):
@@ -51,14 +53,14 @@ class Server:
 def case(directory, bands):
     """A data directory holding the manifest and provenance of one raster,
     dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
-    (data directory, {url: body} of the tiles and of the team's copy)."""
+    (data directory, {url: body} of the tiles)."""
     data = Path(directory)
     (data / "dem").mkdir()
     count, height, width = bands.shape
     whole = raster_bytes(bands, TRANSFORM)
     (data / "whole.tif").write_bytes(whole)
     lon0, dlon, _, lat0, _, dlat = TRANSFORM
-    bodies, urls = {MIRROR + "made_up.tif": whole}, []
+    bodies, urls = {}, []
     for row in (0, height // 2):
         for col in (0, width // 2):
             tile = bands[:, row:row + height // 2, col:col + width // 2]
@@ -71,8 +73,23 @@ def case(directory, bands):
              "content_sha256": fetch_data.content_sha256(data / "whole.tif"), "shape": list(bands.shape),
              "dtype": str(bands.dtype), "transform": list(TRANSFORM)}
     (data / "whole.tif").unlink()
-    (data / fetch_data.MANIFEST).write_text(json.dumps({"mirror": MIRROR, "rasters": [entry]}))
+    (data / fetch_data.MANIFEST).write_text(json.dumps({"rasters": [entry]}))
     return data, bodies
+
+
+def add_unofficial(data, name, worlds, required=True):
+    """Adds to the manifest in data a raster dem/<name>.tif that fetch-data cannot rebuild (its provenance lists
+    tiles, not exportImage requests), read by `worlds`. Returns its bytes, as a teammate's clone would have it."""
+    body = raster_bytes(dem_band() + 7.0, TRANSFORM)
+    (data / "dem" / f"{name}.json").write_text(json.dumps({"source_tiles": ["https://example.test/lidar.tif"]}))
+    manifest = json.loads((data / fetch_data.MANIFEST).read_text())
+    manifest["rasters"].append({
+        "path": f"dem/{name}.tif", "provenance": f"dem/{name}.json", "required": required, "official": False,
+        "worlds": worlds, "rebuild": "a made-up script is planned", "bytes": len(body),
+        "sha256": hashlib.sha256(body).hexdigest(), "content_sha256": "not checked here",
+        "shape": [1, 6, 8], "dtype": "float32", "transform": list(TRANSFORM)})
+    (data / fetch_data.MANIFEST).write_text(json.dumps(manifest))
+    return body
 
 
 def run(data, server, *flags, err=None):
@@ -105,6 +122,24 @@ class Manifest(unittest.TestCase):
                 requests = fetch_data.requests_of(provenance)
                 self.assertEqual(bool(requests) and all("exportImage" in url for url in requests), e["official"])
 
+    def test_the_rasters_it_cannot_rebuild_name_their_worlds_and_what_is_planned(self):
+        """There is no data release: a raster that is not official has only a
+        teammate's clone, and the manifest says which worlds need it (the
+        required ones, read by the simulation) and what is planned."""
+        self.assertNotIn("mirror", MANIFEST)
+        names = {f"urc_{key}" for key in MISSIONS} | set(COURSES)
+        for e in MANIFEST["rasters"]:
+            with self.subTest(e["path"]):
+                if e["official"]:
+                    self.assertNotIn("worlds", e)
+                    continue
+                self.assertTrue(set(e["worlds"]) <= names, e["worlds"])
+                self.assertEqual(bool(e["worlds"]), e["required"])
+                self.assertTrue(e["rebuild"])
+        lidar = fetch_data.entry_of(autonomy.DEM_PATH)
+        self.assertEqual((lidar["official"], lidar["worlds"]), (False, ["urc_autonomy"]))
+        self.assertIn("USGS lidar", lidar["rebuild"])
+
     def test_the_rasters_here_are_the_manifests(self):
         here = [e for e in MANIFEST["rasters"] if (fetch_data.DATA_DIR / e["path"]).exists()]
         if not here:
@@ -130,7 +165,9 @@ class DryRun(unittest.TestCase):
             self.assertIn("dem/route_area_3dep.tif: missing, would fetch from the official source, 1 request(s)", lines)
             self.assertIn("imagery/route_area_naip2024.tif: missing, would fetch from the official source, "
                           "9 request(s)", lines)
-            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, would fetch from the team's copy", lines)
+            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, urc_autonomy needs it; fetch-data cannot rebuild it "
+                          "from official sources yet (a script that rebuilds it from the USGS lidar its provenance "
+                          f"lists is planned); {LINK}", lines)
 
 
 class Fetch(unittest.TestCase):
@@ -147,43 +184,102 @@ class Fetch(unittest.TestCase):
                 server = Server(bodies)
                 code, lines = run(data, server)
                 self.assertEqual(code, 0, lines)
-                self.assertNotIn(MIRROR + "made_up.tif", server.asked)
+                self.assertEqual(sorted(server.asked), sorted(bodies))
                 got, transform = dem.read_raster(data / "dem" / "made_up.tif")
                 np.testing.assert_array_equal(got, bands.astype(np.float32))
                 self.assertEqual(transform, TRANSFORM)
                 self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json", "made_up.tif"])
                 self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
 
-    def test_other_pixels_from_the_source_bring_the_teams_copy(self):
+    def test_other_pixels_from_the_source_fail_and_install_nothing(self):
         data, bodies = case(self.tmp.name, dem_band())
         first = next(url for url in bodies if "row=0&col=0" in url)
         bodies[first] = raster_bytes(dem_band(3, 4) + 1.0, TRANSFORM)
-        code, lines = run(data, Server(bodies))
-        self.assertEqual(code, 0, lines)
-        self.assertIn("dem/made_up.tif: the official source now returns other pixels; trying the team's copy", lines)
-        self.assertEqual((data / "dem" / "made_up.tif").read_bytes(), bodies[MIRROR + "made_up.tif"])
-
-    def test_nothing_is_installed_when_the_source_and_the_copy_fail(self):
-        data, bodies = case(self.tmp.name, naip_bands())
-        bodies = {url: body for url, body in bodies.items() if "row=0&col=0" not in url}
-        bodies[MIRROR + "made_up.tif"] = b"not the raster"
         err = io.StringIO()
         code, lines = run(data, Server(bodies), err=err)
-        self.assertEqual(code, 1)
-        self.assertTrue(lines[-1].startswith("dem/made_up.tif: FAILED"), lines)
+        self.assertEqual((code, lines), (1, ["dem/made_up.tif: FAILED, the official source now returns other pixels "
+                                             "than rasters.json lists"]))
         self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
-        self.assertIn("1 raster(s) not fetched; a clone that has them can link them here: "
+        self.assertIn("1 raster(s) not fetched (FAILED above); a clone that has them can link them here: "
                       "rover_sim/tools/link_data.sh <that clone>", err.getvalue())
+
+    def test_nothing_is_installed_when_the_source_fails(self):
+        data, bodies = case(self.tmp.name, naip_bands())
+        bodies = {url: body for url, body in bodies.items() if "row=0&col=0" not in url}
+        code, lines = run(data, Server(bodies))
+        self.assertEqual(code, 1)
+        self.assertTrue(lines[-1].startswith("dem/made_up.tif: FAILED, the official source failed (HTTP Error 404"),
+                        lines)
+        self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
 
     def test_a_raster_here_is_not_fetched_and_verify_catches_a_wrong_one(self):
         data, bodies = case(self.tmp.name, dem_band())
-        (data / "dem" / "made_up.tif").write_bytes(bodies[MIRROR + "made_up.tif"])
+        (data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
         server = Server(bodies)
         self.assertEqual(run(data, server), (0, ["dem/made_up.tif: present"]))
         self.assertEqual(server.asked, [])
         (data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band() + 0.5, TRANSFORM))
         self.assertEqual(run(data, server, "--verify"), (1, ["dem/made_up.tif: DIFFERS"]))
+        (data / "dem" / "made_up.tif").unlink()
+        self.assertEqual(run(data, server, "--verify"), (1, ["dem/made_up.tif: MISSING"]))
 
+
+class CannotRebuild(unittest.TestCase):
+    """A raster fetch-data cannot rebuild yet (not official): when it is
+    missing, every mode names the worlds that need it, what is planned and
+    how to get it, asks the network nothing and does not fail the run; it
+    fails only when a raster it can fetch was not fetched."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data, self.bodies = case(self.tmp.name, dem_band())
+        self.lidar = add_unofficial(self.data, "lidar", ["urc_made_up"])
+        self.line = ("dem/lidar.tif: missing, urc_made_up needs it; fetch-data cannot rebuild it from official sources "
+                     f"yet (a made-up script is planned); {LINK}")
+
+    def test_it_is_named_and_the_others_fetched(self):
+        server, err = Server(self.bodies), io.StringIO()
+        code, lines = run(self.data, server, err=err)
+        self.assertEqual((code, lines), (0, ["dem/made_up.tif: fetched from its official source, content verified",
+                                             self.line]))
+        self.assertEqual(sorted(server.asked), sorted(self.bodies))
+        self.assertEqual(err.getvalue(), "fetch-data: 1 raster(s) it cannot rebuild yet are not here (above); without "
+                                         "them sim-worlds skips urc_made_up and the tests that need it skip\n")
+
+    def test_the_dry_run_and_verify_name_it_without_failing(self):
+        server = Server(self.bodies)
+        self.assertEqual(run(self.data, server, "--dry-run"),
+                         (0, ["dem/made_up.tif: missing, would fetch from the official source, 4 request(s)",
+                              self.line]))
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        self.assertEqual(run(self.data, server, "--verify"), (0, ["dem/made_up.tif: verified", self.line]))
+        self.assertEqual(server.asked, [])
+
+    def test_it_fails_the_run_only_with_a_raster_it_can_fetch(self):
+        bodies = {url: body for url, body in self.bodies.items() if "row=0&col=0" not in url}
+        code, lines = run(self.data, Server(bodies))
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[1:], [self.line])
+
+    def test_from_a_teammates_clone_it_is_present_and_verified(self):
+        (self.data / "dem" / "lidar.tif").write_bytes(self.lidar)
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        self.assertEqual(run(self.data, Server({})), (0, ["dem/made_up.tif: present", "dem/lidar.tif: present"]))
+        self.assertEqual(run(self.data, Server({}), "--verify"),
+                         (0, ["dem/made_up.tif: verified", "dem/lidar.tif: verified"]))
+
+    def test_one_no_world_reads_only_with_all(self):
+        add_unofficial(self.data, "research_only", [], required=False)
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        err = io.StringIO()
+        code, lines = run(self.data, Server({}), "--all", err=err)
+        self.assertEqual((code, lines[2]), (0, "dem/research_only.tif: missing, no world reads it; fetch-data cannot "
+                                               f"rebuild it from official sources yet (a made-up script is planned); "
+                                               f"{LINK}"))
+        self.assertEqual(len(run(self.data, Server({}))[1]), 2)
+        self.assertIn("2 raster(s) it cannot rebuild yet are not here (above); without them sim-worlds skips "
+                      "urc_made_up", err.getvalue())
 
 if __name__ == "__main__":
     unittest.main()
