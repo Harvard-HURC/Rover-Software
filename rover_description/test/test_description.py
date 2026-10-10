@@ -1,4 +1,5 @@
 """The rover's description: what xacro makes of urdf/rover.urdf.xacro and config/rover.yaml."""
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -30,6 +31,14 @@ def robot(**args):
 def numbers(text):
     """Return the numbers of a URDF attribute such as xyz or size."""
     return [float(v) for v in text.split()]
+
+
+def load_module(path, name):
+    """Import a Python file that is not on the path (a script, a launch file)."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class Description(unittest.TestCase):
@@ -123,6 +132,13 @@ class Description(unittest.TestCase):
         self.assertEqual(other.findtext('ros2_control/hardware/plugin'),
                          'rover_sim/RoverSimSystem')
         self.assertIsNone(robot(ros2_control='false').find('ros2_control'))
+
+    def test_wheel_mesh_is_what_its_generator_writes(self):
+        generator = load_module(PACKAGE / 'meshes' / 'gen_wheel_mesh.py', 'gen_wheel_mesh')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'wheel.glb'
+            generator.write_glb(path, generator.wheel_parts(*generator.colors()))
+            self.assertEqual(path.read_bytes(), (PACKAGE / 'meshes' / 'wheel.glb').read_bytes())
 
 
 if __name__ == '__main__':
