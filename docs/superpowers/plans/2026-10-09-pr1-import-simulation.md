@@ -36,7 +36,7 @@ The spec leaves these open; each is final for PR 1 and stated in the commit or d
 1. **Research split.** `sim/data/research` has 543 tracked files. Four are read or written by code and stay at `rover_sim/data/research/` (so no code path changes): `terrain_targets.json` (urc/realism.py, tools/terrain_targets.py, test_landscape, test_urc_terrain, the sim-worlds inputs), `mdrs_terrain_measurements.json` (tools/make_relief_swatches.py), `realism_report.json` and `realism_contact_sheet.jpg` (tools/realism_report.py writes them; it stores the sheet's path relative to `rover_sim/`, so they must stay under it). The other 539 move to `docs/research/`. That includes `gates/` and `gates.json`: no code or test reads them (grep: only comments cite them); they are research scripts that themselves locate the repository by `parents[4] / "sim"`, so they run only on the tree before the move wherever they live. `docs/research/README.md` says how to run them (check out the commit before the move).
 2. **Plugin directory.** colcon builds `rover_sim` in `<workspace>/build/rover_sim`; the plugins land there. `gzenv.BUILD_DIR` becomes that directory (the patched media stay in it too, as before in `sim/build`). The plugins are also installed to `install/rover_sim/lib/rover_sim` with an environment hook that adds them to `GZ_SIM_SYSTEM_PLUGIN_PATH` in a sourced workspace, for ROS launch files.
 3. **Linters.** The team's skeleton runs `ament_lint_auto` (flake8, pep257, uncrustify, cpplint...) under `colcon test`. The imported code keeps its own style (120 columns, its docstrings), which those linters reject file by file, so `rover_sim` drops the lint block and `rover_control` does not get one. `rover_description` keeps the team's block.
-4. **fetch-data.** No script in SOURCE rebuilds most rasters: only `tools/fetch_dem.py` exists, for one 3DEP request, and it refuses without `--force` on a fresh clone because the tracked `.json` exists. The 0.5 m lidar DEMs were made from USGS point clouds and tiles by processing that is not in the repository. So `tools/fetch_data.py` with a manifest `data/rasters.json` (SHA-256 of each file and of its content): the six rasters whose provenance lists their ImageServer `exportImage` requests are rebuilt from those official requests and kept only if their content matches; the other four (the two 0.5 m lidar DEMs and the lidar source map, made by processing not in the repository, among them `route_area_lidar_0p5m.tif`, which `urc_autonomy` needs; and the NAIP 2021 route mosaic, whose provenance gives only a URL template) and any official source that fails or changes come from the team's copy, a GitHub release `data-2026-10-06` of Harvard-HURC/Rover-Software. Creating that release needs the user's approval (Task 19 prepares the command); until it exists, fetch-data on a fresh clone cannot get the derived rasters and CI fails at its fetch step.
+4. **fetch-data.** No script in SOURCE rebuilds most rasters: only `tools/fetch_dem.py` exists, for one 3DEP request, and it refuses without `--force` on a fresh clone because the tracked `.json` exists. The 0.5 m lidar DEMs were made from USGS point clouds and tiles by processing that is not in the repository. So `tools/fetch_data.py` with a manifest `data/rasters.json` (SHA-256 of each file and of its content): the six rasters whose provenance lists their ImageServer `exportImage` requests are rebuilt from those official requests and kept only if their content matches; the run fails (exit 1) when one of them fails or now returns other pixels. The other four (the two 0.5 m lidar DEMs and the lidar source map, made by processing not in the repository, among them `route_area_lidar_0p5m.tif`, which `urc_autonomy` needs; and the NAIP 2021 route mosaic, whose provenance gives only a URL template) it cannot rebuild yet, and there is no other copy to fetch (**amended 2026-10-09, the user's decision**: no copy of the rasters is published; a later pull request rebuilds the 0.5 m lidar DEMs with a script from USGS's public lidar). For each of them that is missing it names the worlds that need it (`route_area_lidar_0p5m.tif`: `urc_autonomy`; the others no world), what is planned and `rover_sim/tools/link_data.sh <a teammate's clone>`, without failing the run. `gen_worlds` skips a world whose raster it cannot rebuild, `pixi run sim` and `pixi run drive` say why that world is not there, and the tests that need it or the raster skip, saying why, so CI on a fresh clone runs with what fetch-data can fetch. Task 11 shows the code as amended.
 5. **pixi.** The team's `pixi.lock` is the base: it already holds every package the simulation uses on all three platforms, and on osx-arm64 the physics and rendering packages are the versions SOURCE runs today (gz-sim 8.10.0, gz-physics 7.5.0, dartsim 6.19.4, ogre-next 2.3.3, gz-rendering 8.2.2). The simulation's direct dependencies are listed under `[target.unix.dependencies]` (the team's lock resolves the Gazebo packages on `win-64` too, through `ros2-ros-gz-sim`, and colcon, ament, Eigen, GoogleTest and `vs2022_win-64` are there; the simulation just does not run there); on `win-64` the `build` task builds `rover_description` and `rover_control` only, without tests (the simulation runs in WSL2 there, spec section 7).
 6. **Compiler.** The team's `ros-dev-tools` brings conda's clang 21 (`cxx-compiler`, whose activation CMake may follow); SOURCE built the plugins and the driver with Apple's `/usr/bin/c++` (its `CMakeCache.txt`). Task 5 Step 3 records which compiler colcon's CMake took; the full suite on the new build is the check (Task 12).
 7. **Paths in prose.** The move commit is pure renames (100 % similarity, so `git log --follow` and blame work). Afterwards only paths that run or that a user sees at run time change (build directory, tasks, help texts, skip reasons, one station message, `link_data.sh`). Comments and docstrings that say `sim/...` stay: changing them would touch `gen_model.py` (PR 2), the tracked generated models and the media caches keyed on `urc/` sources. `rover_sim/README.md` tells readers how to read them.
@@ -755,8 +755,9 @@ build = { cmd = "colcon build", cwd = "..", depends-on = ["sim-media"] }
 colcon-test = { cmd = "colcon test --packages-select rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
 # The C++ tests and the simulation's suite. The rendering tests skip where there is no GPU and say why.
 test = { depends-on = ["colcon-test", "sim-test"] }
-# The git-ignored terrain rasters the simulation reads, from their official sources or the team's copy
-# (--all: every raster; --dry-run; --verify).
+# The git-ignored terrain rasters the simulation reads, from their official sources; it names the ones it cannot
+# rebuild yet (the Autonomy world's lidar: link it from a teammate's clone, README) (--all: every raster; --dry-run;
+# --verify).
 fetch-data = "python rover_sim/tools/fetch_data.py"
 # rover_control's interactive view of the swerve kinematics.
 control-viz = { cmd = "python rover_control/tools/viz.py", env = { ROVER_STATE_EXE = "$PIXI_PROJECT_ROOT/../build/rover_control/rover_state" }, depends-on = ["build"] }
@@ -1273,6 +1274,8 @@ Expected: `10`; `git status --porcelain` prints nothing; `.gitignore:<line>:rove
 
 ### Task 11: `pixi run fetch-data`
 
+> Amended 2026-10-09 (Decision 4, the user's decision): the steps show the code as the branch holds it. The first version, committed by Step 7, also fetched the four rasters it cannot rebuild, and any official one whose source failed, from a copy of the rasters to be published on GitHub; the commits of 2026-10-09 removed that copy and added the worlds, the skips and `world_missing`.
+
 **Files:**
 - Create: `rover_sim/data/rasters.json`
 - Create: `rover_sim/tools/fetch_data.py`
@@ -1284,8 +1287,7 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
 
 ```json
 {
- "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py).",
- "mirror": "https://github.com/Harvard-HURC/Rover-Software/releases/download/data-2026-10-06/",
+ "what": "The git-ignored rasters under rover_sim/data, which pixi run fetch-data (tools/fetch_data.py) fetches when missing. sha256: the file; content_sha256: its pixels and georeferencing as urc.dem.read_raster reads them; shape: bands, rows, columns; transform: the GDAL geotransform; provenance: the tracked .json that says where it came from; official: rebuilt from the exportImage requests its provenance lists; required: read by the simulation (the others only by the research and tools/make_relief_swatches.py). The rasters that are not official fetch-data cannot rebuild yet, and there is no other copy to fetch; for each of them worlds: the generated worlds that read it; rebuild: what is planned. A teammate's clone lends them (tools/link_data.sh <that clone>).",
  "rasters": [
   {
    "path": "dem/far_dem_3dep_60km.tif",
@@ -1316,6 +1318,8 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "provenance": "dem/mdrs_area_lidar2018_0p5m.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 58431428,
    "sha256": "f09b7a3688f525ff977241f5c49bf953cd268ea0c47f0f4fa76352fd3ccfb5b5",
    "content_sha256": "833648e4dc8e263c08bf09fbc479f10b321bea1ba7c7de194eb37aa357a9b8ee",
@@ -1340,6 +1344,8 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "provenance": "dem/route_area_lidar_0p5m.json",
    "required": true,
    "official": false,
+   "worlds": ["urc_autonomy"],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 41457287,
    "sha256": "499c9454eac5433bbb0797bd2118b7b5b6295e283129a4dc727578f773847224",
    "content_sha256": "0d2da6c0449e0690788c634e454d7f69651cf2fbbd04313a8e677934c352d3db",
@@ -1352,6 +1358,8 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "provenance": "dem/route_area_lidar_0p5m.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "a script that rebuilds it from the USGS lidar its provenance lists is planned",
    "bytes": 214914,
    "sha256": "2787f7f34c4aa7ad559dbfc2d75f4c903ee7cd7bd6cbd398029bf4f2d924f39c",
    "content_sha256": "b587fd9040d401333934e4e042d5c7e41a897098e2e2bf97e09287998d53f266",
@@ -1388,6 +1396,8 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
    "provenance": "imagery/naip2021_route_area.json",
    "required": false,
    "official": false,
+   "worlds": [],
+   "rebuild": "NAIP imagery, which the planned script from USGS lidar does not cover; its provenance gives only a URL template",
    "bytes": 69697630,
    "sha256": "d7b6ef5e8f8aeda0e049c0fc736b18da4631fa604a74ee7a314337c80741e769",
    "content_sha256": "ce82e853e252183169d41ef2999d6270406e31336556b200e677430825fdc7c1",
@@ -1417,9 +1427,12 @@ The numbers were measured on SOURCE's files on 2026-10-09 (SHA-256 of each file;
 #!/usr/bin/env python3
 """pixi run fetch-data (tools/fetch_data.py) without the network: the raster
 manifest against what the simulation reads and what is here, the dry run of
-a fresh clone, official tiles made into a raster and checked, the team's copy
-as the fallback, and nothing installed that does not match."""
+a fresh clone, official tiles made into a raster and checked, nothing
+installed that does not match, the rasters it cannot rebuild yet named with
+the worlds that need them and how to get them, without failing the run, and
+its exit status in --help."""
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -1435,12 +1448,12 @@ from worldfiles import SIM_DIR
 sys.path.insert(0, str(SIM_DIR / "tools"))
 import fetch_data  # noqa: E402
 from urc import dem, farfield  # noqa: E402
-from urc.missions import autonomy  # noqa: E402
+from urc.missions import COURSES, MISSIONS, autonomy  # noqa: E402
 
 MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
-MIRROR = "https://mirror.test/"
+LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 
 
 def raster_bytes(bands, transform):
@@ -1467,14 +1480,14 @@ class Server:
 def case(directory, bands):
     """A data directory holding the manifest and provenance of one raster,
     dem/made_up.tif = bands (B, H, W), made of 2 x 2 exportImage tiles. Returns
-    (data directory, {url: body} of the tiles and of the team's copy)."""
+    (data directory, {url: body} of the tiles)."""
     data = Path(directory)
     (data / "dem").mkdir()
     count, height, width = bands.shape
     whole = raster_bytes(bands, TRANSFORM)
     (data / "whole.tif").write_bytes(whole)
     lon0, dlon, _, lat0, _, dlat = TRANSFORM
-    bodies, urls = {MIRROR + "made_up.tif": whole}, []
+    bodies, urls = {}, []
     for row in (0, height // 2):
         for col in (0, width // 2):
             tile = bands[:, row:row + height // 2, col:col + width // 2]
@@ -1487,14 +1500,30 @@ def case(directory, bands):
              "content_sha256": fetch_data.content_sha256(data / "whole.tif"), "shape": list(bands.shape),
              "dtype": str(bands.dtype), "transform": list(TRANSFORM)}
     (data / "whole.tif").unlink()
-    (data / fetch_data.MANIFEST).write_text(json.dumps({"mirror": MIRROR, "rasters": [entry]}))
+    (data / fetch_data.MANIFEST).write_text(json.dumps({"rasters": [entry]}))
     return data, bodies
 
 
-def run(data, server, *flags):
-    """fetch_data.main on data with the fake network: (exit code, printed lines)."""
+def add_unofficial(data, name, worlds, required=True):
+    """Adds to the manifest in data a raster dem/<name>.tif that fetch-data cannot rebuild (its provenance lists
+    tiles, not exportImage requests), read by `worlds`. Returns its bytes, as a teammate's clone would have it."""
+    body = raster_bytes(dem_band() + 7.0, TRANSFORM)
+    (data / "dem" / f"{name}.json").write_text(json.dumps({"source_tiles": ["https://example.test/lidar.tif"]}))
+    manifest = json.loads((data / fetch_data.MANIFEST).read_text())
+    manifest["rasters"].append({
+        "path": f"dem/{name}.tif", "provenance": f"dem/{name}.json", "required": required, "official": False,
+        "worlds": worlds, "rebuild": "a made-up script is planned", "bytes": len(body),
+        "sha256": hashlib.sha256(body).hexdigest(), "content_sha256": "not checked here",
+        "shape": [1, 6, 8], "dtype": "float32", "transform": list(TRANSFORM)})
+    (data / fetch_data.MANIFEST).write_text(json.dumps(manifest))
+    return body
+
+
+def run(data, server, *flags, err=None):
+    """fetch_data.main on data with the fake network: (exit code, printed lines); err (a StringIO) gets what it
+    says on stderr."""
     out = io.StringIO()
-    with contextlib.redirect_stdout(out):
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err if err is not None else io.StringIO()):
         code = fetch_data.main([*flags, "--data", str(data)], get=server)
     return code, out.getvalue().splitlines()
 
@@ -1519,6 +1548,24 @@ class Manifest(unittest.TestCase):
                 provenance = json.loads((fetch_data.DATA_DIR / e["provenance"]).read_text())
                 requests = fetch_data.requests_of(provenance)
                 self.assertEqual(bool(requests) and all("exportImage" in url for url in requests), e["official"])
+
+    def test_the_rasters_it_cannot_rebuild_name_their_worlds_and_what_is_planned(self):
+        """A raster that is not official has no copy to fetch, only a
+        teammate's clone: the manifest says which worlds need it (the
+        required ones, read by the simulation) and what is planned."""
+        self.assertNotIn("mirror", MANIFEST)
+        names = {f"urc_{key}" for key in MISSIONS} | set(COURSES)
+        for e in MANIFEST["rasters"]:
+            with self.subTest(e["path"]):
+                if e["official"]:
+                    self.assertNotIn("worlds", e)
+                    continue
+                self.assertTrue(set(e["worlds"]) <= names, e["worlds"])
+                self.assertEqual(bool(e["worlds"]), e["required"])
+                self.assertTrue(e["rebuild"])
+        lidar = fetch_data.entry_of(autonomy.DEM_PATH)
+        self.assertEqual((lidar["official"], lidar["worlds"]), (False, ["urc_autonomy"]))
+        self.assertIn("USGS lidar", lidar["rebuild"])
 
     def test_the_rasters_here_are_the_manifests(self):
         here = [e for e in MANIFEST["rasters"] if (fetch_data.DATA_DIR / e["path"]).exists()]
@@ -1545,7 +1592,9 @@ class DryRun(unittest.TestCase):
             self.assertIn("dem/route_area_3dep.tif: missing, would fetch from the official source, 1 request(s)", lines)
             self.assertIn("imagery/route_area_naip2024.tif: missing, would fetch from the official source, "
                           "9 request(s)", lines)
-            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, would fetch from the team's copy", lines)
+            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, urc_autonomy needs it; fetch-data cannot rebuild it "
+                          "from official sources yet (a script that rebuilds it from the USGS lidar its provenance "
+                          f"lists is planned); {LINK}", lines)
 
 
 class Fetch(unittest.TestCase):
@@ -1562,39 +1611,125 @@ class Fetch(unittest.TestCase):
                 server = Server(bodies)
                 code, lines = run(data, server)
                 self.assertEqual(code, 0, lines)
-                self.assertNotIn(MIRROR + "made_up.tif", server.asked)
+                self.assertEqual(sorted(server.asked), sorted(bodies))
                 got, transform = dem.read_raster(data / "dem" / "made_up.tif")
                 np.testing.assert_array_equal(got, bands.astype(np.float32))
                 self.assertEqual(transform, TRANSFORM)
                 self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json", "made_up.tif"])
                 self.assertEqual(run(data, Server({}), "--verify"), (0, ["dem/made_up.tif: verified"]))
 
-    def test_other_pixels_from_the_source_bring_the_teams_copy(self):
+    def test_other_pixels_from_the_source_fail_and_install_nothing(self):
         data, bodies = case(self.tmp.name, dem_band())
         first = next(url for url in bodies if "row=0&col=0" in url)
         bodies[first] = raster_bytes(dem_band(3, 4) + 1.0, TRANSFORM)
-        code, lines = run(data, Server(bodies))
-        self.assertEqual(code, 0, lines)
-        self.assertIn("dem/made_up.tif: the official source now returns other pixels; trying the team's copy", lines)
-        self.assertEqual((data / "dem" / "made_up.tif").read_bytes(), bodies[MIRROR + "made_up.tif"])
+        err = io.StringIO()
+        code, lines = run(data, Server(bodies), err=err)
+        self.assertEqual((code, lines), (1, ["dem/made_up.tif: FAILED, the official source now returns other pixels "
+                                             "than rasters.json lists"]))
+        self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
+        self.assertIn("1 raster(s) not fetched (FAILED above); a clone that has them can link them here: "
+                      "rover_sim/tools/link_data.sh <that clone>", err.getvalue())
 
-    def test_nothing_is_installed_when_the_source_and_the_copy_fail(self):
+    def test_nothing_is_installed_when_the_source_fails(self):
         data, bodies = case(self.tmp.name, naip_bands())
         bodies = {url: body for url, body in bodies.items() if "row=0&col=0" not in url}
-        bodies[MIRROR + "made_up.tif"] = b"not the raster"
         code, lines = run(data, Server(bodies))
         self.assertEqual(code, 1)
-        self.assertTrue(lines[-1].startswith("dem/made_up.tif: FAILED"), lines)
+        self.assertTrue(lines[-1].startswith("dem/made_up.tif: FAILED, the official source failed (HTTP Error 404"),
+                        lines)
         self.assertEqual(sorted(p.name for p in (data / "dem").iterdir()), ["made_up.json"])
 
     def test_a_raster_here_is_not_fetched_and_verify_catches_a_wrong_one(self):
         data, bodies = case(self.tmp.name, dem_band())
-        (data / "dem" / "made_up.tif").write_bytes(bodies[MIRROR + "made_up.tif"])
+        (data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
         server = Server(bodies)
         self.assertEqual(run(data, server), (0, ["dem/made_up.tif: present"]))
         self.assertEqual(server.asked, [])
         (data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band() + 0.5, TRANSFORM))
         self.assertEqual(run(data, server, "--verify"), (1, ["dem/made_up.tif: DIFFERS"]))
+        (data / "dem" / "made_up.tif").unlink()
+        self.assertEqual(run(data, server, "--verify"), (1, ["dem/made_up.tif: MISSING"]))
+
+
+class CannotRebuild(unittest.TestCase):
+    """A raster fetch-data cannot rebuild yet (not official): when it is
+    missing, every mode names the worlds that need it, what is planned and
+    how to get it, asks the network nothing and does not fail the run; it
+    fails only when a raster it can fetch was not fetched."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data, self.bodies = case(self.tmp.name, dem_band())
+        self.lidar = add_unofficial(self.data, "lidar", ["urc_made_up"])
+        self.line = ("dem/lidar.tif: missing, urc_made_up needs it; fetch-data cannot rebuild it from official sources "
+                     f"yet (a made-up script is planned); {LINK}")
+
+    def test_it_is_named_and_the_others_fetched(self):
+        server, err = Server(self.bodies), io.StringIO()
+        code, lines = run(self.data, server, err=err)
+        self.assertEqual((code, lines), (0, ["dem/made_up.tif: fetched from its official source, content verified",
+                                             self.line]))
+        self.assertEqual(sorted(server.asked), sorted(self.bodies))
+        self.assertEqual(err.getvalue(), "fetch-data: 1 raster(s) it cannot rebuild yet are not here (above); without "
+                                         "them sim-worlds skips urc_made_up and the tests that need it skip\n")
+
+    def test_the_dry_run_and_verify_name_it_without_failing(self):
+        server = Server(self.bodies)
+        self.assertEqual(run(self.data, server, "--dry-run"),
+                         (0, ["dem/made_up.tif: missing, would fetch from the official source, 4 request(s)",
+                              self.line]))
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        self.assertEqual(run(self.data, server, "--verify"), (0, ["dem/made_up.tif: verified", self.line]))
+        self.assertEqual(server.asked, [])
+
+    def test_it_fails_the_run_only_with_a_raster_it_can_fetch(self):
+        bodies = {url: body for url, body in self.bodies.items() if "row=0&col=0" not in url}
+        code, lines = run(self.data, Server(bodies))
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[1:], [self.line])
+
+    def test_from_a_teammates_clone_it_is_present_and_verified(self):
+        (self.data / "dem" / "lidar.tif").write_bytes(self.lidar)
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        self.assertEqual(run(self.data, Server({})), (0, ["dem/made_up.tif: present", "dem/lidar.tif: present"]))
+        self.assertEqual(run(self.data, Server({}), "--verify"),
+                         (0, ["dem/made_up.tif: verified", "dem/lidar.tif: verified"]))
+
+    def test_one_no_world_reads_only_with_all(self):
+        add_unofficial(self.data, "research_only", [], required=False)
+        (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
+        err = io.StringIO()
+        code, lines = run(self.data, Server({}), "--all", err=err)
+        self.assertEqual((code, lines[2]), (0, "dem/research_only.tif: missing, no world reads it; fetch-data cannot "
+                                               f"rebuild it from official sources yet (a made-up script is planned); "
+                                               f"{LINK}"))
+        self.assertEqual(len(run(self.data, Server({}))[1]), 2)
+        self.assertIn("2 raster(s) it cannot rebuild yet are not here (above); without them sim-worlds skips "
+                      "urc_made_up", err.getvalue())
+
+    def test_world_missing_says_why_a_world_is_not_here(self):
+        """What sim, drive and the tests' skips say about a world sim-worlds skipped."""
+        lidar = self.data.absolute() / "dem" / "lidar.tif"  # outside the repository: shown as it is
+        self.assertEqual(fetch_data.world_missing("urc_made_up", self.data),
+                         f"urc_made_up needs {lidar}, which is not here: fetch-data cannot rebuild it from official "
+                         f"sources yet (a made-up script is planned); {LINK}")
+        self.assertIsNone(fetch_data.world_missing("urc_other", self.data))  # no raster it reads is missing
+        (self.data / "dem" / "lidar.tif").write_bytes(self.lidar)
+        self.assertIsNone(fetch_data.world_missing("urc_made_up", self.data))
+
+    def test_the_autonomy_lidar_is_shown_from_the_repository(self):
+        self.assertEqual(fetch_data.shown(autonomy.DEM_PATH), "rover_sim/data/dem/route_area_lidar_0p5m.tif")
+
+
+class Help(unittest.TestCase):
+    def test_help_gives_the_exit_status(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
+            fetch_data.main(["--help"])
+        self.assertEqual(caught.exception.code, 0)
+        self.assertIn("Exit status: 0 when every listed raster fetch-data can fetch is here", out.getvalue())
+        self.assertIn("2 for a usage\nerror.", out.getvalue())
 
 
 if __name__ == "__main__":
@@ -1620,17 +1755,28 @@ Expected: `ModuleNotFoundError: No module named 'fetch_data'`, `FAILED (errors=1
 data/rasters.json lists every raster under data/ that git ignores, with its
 size, its SHA-256, the SHA-256 of its content (the pixels and georeferencing
 urc.dem.read_raster reads) and the tracked .json that says where it came
-from. A missing raster is fetched:
-- from its official source when it is one or more ImageServer exportImage
-  requests (`official`; its .json lists them as url, urls or requests): each
-  tile is placed on the raster's grid by its own georeferencing, the mosaic
-  is written as a deflate GeoTIFF and kept only if its content matches;
-- otherwise, or when the source fails or now returns other pixels, from the
-  team's copy (`mirror`, a GitHub release), kept only if the file matches.
+from. A missing raster is fetched from its official source when it is one or
+more ImageServer exportImage requests (`official`; its .json lists them as
+url, urls or requests): each tile is placed on the raster's grid by its own
+georeferencing, the mosaic is written as a deflate GeoTIFF and kept only if
+its content matches. The others fetch-data cannot rebuild yet (the 0.5 m
+lidar DEMs and their source map, made by processing that is not in the
+repository; the NAIP 2021 route mosaic, whose .json gives only a URL
+template): for each one missing it names the worlds that need it (`worlds`)
+and what is planned (`rebuild`), and a teammate's clone lends it
+(tools/link_data.sh <that clone>). There is no other copy to fetch from;
+without such a raster sim-worlds skips the worlds that need it, and sim,
+drive and the tests' skips say why (world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
 .json files are never written, so a fresh clone needs no --force.
+
+Exit status: 0 when every listed raster fetch-data can fetch is here, fetched
+or already present (those it cannot rebuild yet may be missing; it names
+them); 1 when one it can fetch was not fetched (with --verify: a raster here
+differs from the manifest, or one it can fetch is missing); 2 for a usage
+error.
 """
 import argparse
 import hashlib
@@ -1653,6 +1799,47 @@ DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
 TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
+LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+
+
+def load_manifest(data_dir=DATA_DIR):
+    """data_dir's rasters.json."""
+    return json.loads((Path(data_dir) / MANIFEST).read_text())
+
+
+def entry_of(path, data_dir=DATA_DIR):
+    """The manifest's entry for the raster at path (under data_dir, or relative to it), or None."""
+    path = Path(path)
+    if path.is_absolute():
+        path = path.relative_to(data_dir)
+    return next((e for e in load_manifest(data_dir)["rasters"] if e["path"] == path.as_posix()), None)
+
+
+def cannot_fetch(entry):
+    """What to do about a raster fetch-data cannot rebuild yet (not `official`) when it is missing."""
+    return f"fetch-data cannot rebuild it from official sources yet ({entry['rebuild']}); {LINK}"
+
+
+def needed_by(entry):
+    """Which generated worlds read the raster, as a clause."""
+    worlds = entry["worlds"]
+    return f"{', '.join(worlds)} need{'s' if len(worlds) == 1 else ''} it" if worlds else "no world reads it"
+
+
+def shown(path):
+    """path as a user sees it, from the repository's root when it is in it."""
+    path = Path(path).absolute()
+    return path.relative_to(SIM_DIR.parent).as_posix() if path.is_relative_to(SIM_DIR.parent) else str(path)
+
+
+def world_missing(world, data_dir=DATA_DIR):
+    """Why the generated world (urc_<mission>, proving_ground) is not here, or None: a raster it reads that
+    fetch-data cannot rebuild yet is missing (the manifest's `worlds`), so sim-worlds skips it."""
+    for entry in load_manifest(data_dir)["rasters"]:
+        path = Path(data_dir) / entry["path"]
+        if world in entry.get("worlds", ()) and not path.exists():
+            return f"{world} needs {shown(path)}, which is not here: {cannot_fetch(entry)}"
+    return None
 
 
 def file_sha256(path):
@@ -1765,40 +1952,32 @@ def mosaic(entry, provenance, get, out_path):
     write_geotiff(out_path, out, geotags(entry["transform"]))
 
 
-def fetch(entry, data_dir, mirror, get=download, log=print):
-    """Fetch one raster into data_dir; True once it is in place and verified."""
+def fetch(entry, data_dir, get=download, log=print):
+    """Fetch one raster from its official source into data_dir; True once it is in place and its content
+    verified."""
     path = data_dir / entry["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.part")
     try:
-        if entry["official"]:
-            try:
-                mosaic(entry, json.loads((data_dir / entry["provenance"]).read_text()), get, part)
-                if content_sha256(part) == entry["content_sha256"]:
-                    os.replace(part, path)
-                    log(f"{entry['path']}: fetched from its official source, content verified")
-                    return True
-                log(f"{entry['path']}: the official source now returns other pixels; trying the team's copy")
-            except Exception as e:  # any failure of the source: the team's copy is the fallback
-                log(f"{entry['path']}: the official source failed ({e}); trying the team's copy")
-        url = mirror + Path(entry["path"]).name
         try:
-            part.write_bytes(get(url))
-        except Exception as e:
-            log(f"{entry['path']}: FAILED, no team's copy at {url} ({e})")
+            mosaic(entry, json.loads((data_dir / entry["provenance"]).read_text()), get, part)
+        except Exception as e:  # any failure of the source
+            log(f"{entry['path']}: FAILED, the official source failed ({e})")
             return False
-        if file_sha256(part) != entry["sha256"]:
-            log(f"{entry['path']}: FAILED, the team's copy at {url} differs from rasters.json")
+        if content_sha256(part) != entry["content_sha256"]:
+            log(f"{entry['path']}: FAILED, the official source now returns other pixels than rasters.json lists")
             return False
         os.replace(part, path)
-        log(f"{entry['path']}: fetched from the team's copy, SHA-256 verified")
+        log(f"{entry['path']}: fetched from its official source, content verified")
         return True
     finally:
         part.unlink(missing_ok=True)
 
 
 def main(argv=None, get=download):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
+                                     epilog=__doc__[__doc__.index("Exit status"):],  # the docstring's last paragraph
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--all", action="store_true",
                         help="also the rasters only the research and the relief tool read")
     parser.add_argument("--dry-run", action="store_true", help="say what would be fetched; fetch nothing")
@@ -1806,26 +1985,35 @@ def main(argv=None, get=download):
                         help="check the rasters here against rasters.json; fetch nothing")
     parser.add_argument("--data", type=Path, default=DATA_DIR, help=f"data directory (default {DATA_DIR})")
     args = parser.parse_args(argv)
-    manifest = json.loads((args.data / MANIFEST).read_text())
-    failed = 0
-    for entry in manifest["rasters"]:
+    failed, missing = 0, []
+    for entry in load_manifest(args.data)["rasters"]:
         if not (args.all or entry["required"]):
             continue
         path = args.data / entry["path"]
-        if args.verify:
+        if not (entry["official"] or path.exists()):  # nothing to fetch it from: say so, whatever the mode
+            print(f"{entry['path']}: missing, {needed_by(entry)}; {cannot_fetch(entry)}")
+            missing.append(entry)
+        elif args.verify:
             state = "verified" if path.exists() and matches(entry, path) else "DIFFERS" if path.exists() else "MISSING"
             print(f"{entry['path']}: {state}")
             failed += state != "verified"
         elif path.exists():
             print(f"{entry['path']}: present")
         elif args.dry_run:
-            if entry["official"]:
-                count = len(requests_of(json.loads((args.data / entry["provenance"]).read_text())))
-                print(f"{entry['path']}: missing, would fetch from the official source, {count} request(s)")
-            else:
-                print(f"{entry['path']}: missing, would fetch from the team's copy")
-        elif not fetch(entry, args.data, manifest["mirror"], get):
+            count = len(requests_of(json.loads((args.data / entry["provenance"]).read_text())))
+            print(f"{entry['path']}: missing, would fetch from the official source, {count} request(s)")
+        elif not fetch(entry, args.data, get):
             failed += 1
+    sys.stdout.flush()  # the summary after the lines above, also in a log
+    if failed and not args.verify:
+        print(f"fetch-data: {failed} raster(s) not fetched (FAILED above); a clone that has them can link them "
+              "here: rover_sim/tools/link_data.sh <that clone> (README, Simulation)", file=sys.stderr)
+    if missing:
+        worlds = sorted({world for entry in missing for world in entry["worlds"]})
+        print(f"fetch-data: {len(missing)} raster(s) it cannot rebuild yet are not here (above)"
+              + (f"; without them sim-worlds skips {', '.join(worlds)} and the tests that need "
+                 f"{'it' if len(worlds) == 1 else 'them'} skip" if worlds else ""),
+              file=sys.stderr)
     return 1 if failed else 0
 
 
@@ -1839,7 +2027,7 @@ if __name__ == "__main__":
 cd /Users/alarion239/Desktop/hurc_ws/src/rover_sim/tests && /Users/alarion239/.pixi/bin/pixi run python -m unittest -v test_fetch_data 2>&1 | tail -3
 ```
 
-Expected: `Ran 8 tests`, `OK` (`test_the_rasters_here_are_the_manifests` checks the ten linked rasters).
+Expected: `Ran 17 tests`, `OK` (`test_the_rasters_here_are_the_manifests` checks the ten linked rasters).
 
 - [ ] **Step 6: Verify the linked data and the dry run through the task (no download)**
 
@@ -1855,7 +2043,7 @@ Expected: ten lines `<path>: verified`; then six lines `<path>: present` (the re
 
 ```bash
 cd /Users/alarion239/Desktop/hurc_ws/src && git add rover_sim/data/rasters.json rover_sim/tools/fetch_data.py rover_sim/tests/test_fetch_data.py && git commit -q -F - <<'EOF'
-fetch-data: the git-ignored rasters from their official sources, else the team's copy
+fetch-data: the git-ignored rasters from their official sources
 
 pixi run fetch-data fetches the missing rasters listed in
 rover_sim/data/rasters.json (size, SHA-256 of the file and of the content
@@ -1864,13 +2052,16 @@ dem.read_raster reads, provenance) and works on a fresh clone without
 - The six rasters that are ImageServer exportImage requests (3DEP DEMs,
   NAIP 2024 and 2021 imagery) are rebuilt from the requests their .json
   lists: tiles placed by their own georeferencing, kept only if the content
-  matches.
+  matches; a source that fails or now returns other pixels fails the run.
 - The other four (the 0.5 m lidar DEMs and their source map, made by
   processing that is not in the repository; the NAIP 2021 route mosaic,
-  whose provenance has only a URL template), or an official source that
-  fails or changed, come from the team's copy, the release data-2026-10-06
-  of this repository, kept only if the file's SHA-256 matches. The release
-  is made when the user approves it.
+  whose provenance has only a URL template) it cannot rebuild yet, and
+  there is no other copy: for each one missing it names the worlds that
+  need it (worlds: urc_autonomy for route_area_lidar_0p5m.tif), what is
+  planned (rebuild: a script from USGS's public lidar for the lidar DEMs)
+  and link_data.sh <a teammate's clone>, and does not fail the run.
+- Exit status 0, or 1 when a raster it can fetch was not fetched (--verify:
+  one here differs, or one it can fetch is missing), 2 for a usage error.
 - --all also fetches what only the research and the relief tool read;
   --dry-run says what it would fetch; --verify checks what is here.
 test_fetch_data runs every path offline against a fake server.
@@ -2192,8 +2383,8 @@ Ubuntu 24.04 and macOS (Apple silicon): pixi run build, pixi run
 fetch-data (the rasters cached by their manifest as soon as they are
 fetched), pixi run test; the rendering tests skip on the GPU-less Ubuntu
 runner (ROVER_RENDERING=0) and run on macOS. Windows: pixi run build
-(rover_description and rover_control). fetch-data needs the data release
-for the derived lidar DEM before the first green run.
+(rover_description and rover_control). fetch-data cannot rebuild the
+Autonomy world's lidar DEM yet, so that world and its tests skip in CI.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -2294,8 +2485,9 @@ REPLACEMENTS = [
      "the workspace's `build/rover_sim` |", 1),
     ("| `tools/fetch_dem.py`, `tools/link_data.sh` | Fetches a USGS 3DEP DEM; links the git-ignored rasters into a "
      "git worktree |",
-     "| `tools/fetch_data.py`, `data/rasters.json` | `pixi run fetch-data`: fetches the git-ignored rasters (their "
-     "official sources, else the team's copy) and checks them against the manifest |\n"
+     "| `tools/fetch_data.py`, `data/rasters.json` | `pixi run fetch-data`: fetches the git-ignored rasters from "
+     "their official sources and checks them against the manifest; names those it cannot rebuild yet (the 0.5 m lidar "
+     "DEMs, the NAIP 2021 route mosaic), the worlds that need them and how to get them |\n"
      "| `tools/fetch_dem.py`, `tools/link_data.sh` | Fetches a USGS 3DEP DEM for a new area; links the git-ignored "
      "rasters into a git worktree |", 1),
     ("| `data/research/` | Research inputs of the realism spec, the gates (`gates.json`, `gates/`), the realism "
@@ -2663,10 +2855,12 @@ Expected:
 dem/far_dem_3dep_60km.tif: missing, would fetch from the official source, 1 request(s)
 dem/mdrs_area_3dep.tif: missing, would fetch from the official source, 2 request(s)
 dem/route_area_3dep.tif: missing, would fetch from the official source, 1 request(s)
-dem/route_area_lidar_0p5m.tif: missing, would fetch from the team's copy
+dem/route_area_lidar_0p5m.tif: missing, urc_autonomy needs it; fetch-data cannot rebuild it from official sources yet (a script that rebuilds it from the USGS lidar its provenance lists is planned); link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)
 imagery/naip2021_far_60km.tif: missing, would fetch from the official source, 1 request(s)
 imagery/route_area_naip2024.tif: missing, would fetch from the official source, 9 request(s)
+fetch-data: 1 raster(s) it cannot rebuild yet are not here (above); without them sim-worlds skips urc_autonomy and the tests that need it skip
 ```
+(the lidar line and the last line as amended on 2026-10-09, Decision 4; the last line on stderr; exit 0)
 and `git status` lists only `!! .pixi/...` (build/, install/ and log/ are in the workspace root, outside the repository).
 
 - [ ] **Step 4: Delete the temporary workspace**
@@ -2675,22 +2869,13 @@ and `git status` lists only `!! .pixi/...` (build/, install/ and log/ are in the
 rm -rf /private/tmp/claude-502/rover-pr1/freshws && df -h /Users/alarion239/Desktop | tail -1
 ```
 
-### Task 19: Hand-off: the data release command, cleanup, report
+### Task 19: Hand-off: cleanup, report
 
 **Files:** none.
 
-- [ ] **Step 1: The command that publishes the team's copy of the rasters (do not run it)**
+- [ ] **Step 1: The rasters fetch-data cannot rebuild**
 
-Give the user this command in the report. It needs their approval: it creates a release and a tag on GitHub.
-
-```bash
-gh release create data-2026-10-06 --repo Harvard-HURC/Rover-Software --target main \
-  --title "Terrain rasters (fetched 2026-10-06)" \
-  --notes "The git-ignored rasters of rover_sim/data: USGS 3DEP elevation and lidar, USDA NAIP imagery (public domain). pixi run fetch-data takes them from here when their official source cannot rebuild them; rover_sim/data/rasters.json holds their SHA-256." \
-  /Users/alarion239/Desktop/Rover/sim/data/dem/*.tif /Users/alarion239/Desktop/Rover/sim/data/imagery/*.tif
-```
-
-The assets keep their file names, which `rasters.json`'s `mirror` URL expects; the release does not depend on the pull request (its tag only marks `main`).
+Amended 2026-10-09 (Decision 4): nothing is published for them, so there is no command to give the user. Until a later pull request rebuilds the 0.5 m lidar DEMs from USGS's public lidar with a script, a teammate links them from a clone that has them (`rover_sim/tools/link_data.sh <that clone>`); without them `sim-worlds` skips `urc_autonomy` and its tests skip.
 
 - [ ] **Step 2: The suites on the branch as it will be pushed**
 
@@ -2709,7 +2894,7 @@ grep -E "tests passed|^Summary" "$T/final_test.log"; grep -E "^Ran |^OK|^FAILED|
 cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && echo "tree clean"
 ```
 
-Expected: as in Task 12 Step 3, with `Ran 508 tests` (Task 13 added `test_launch_files`), `OK (skipped=9, expected failures=2)`, `exit 0`, then `tree clean`. A failure here is handled as in Task 12 Step 3.
+Expected: as in Task 12 Step 3, with `Ran 508 tests` (Task 13 added `test_launch_files`), `OK (skipped=9, expected failures=2)`, `exit 0`, then `tree clean`. A failure here is handled as in Task 12 Step 3. (Amended 2026-10-09: the review fixes and Decision 4's amendment bring the suite to 525 tests.)
 
 - [ ] **Step 3: SOURCE untouched, the branch complete, nothing pushed**
 
@@ -2732,13 +2917,13 @@ Expected: `0`. The workspace keeps its environment (`src/.pixi`), `build/`, `ins
 
 - [ ] **Step 5: Report to the user**
 
-Report: the branch and its commits; the test results of Task 12 and Step 2 (counts, skips, expected failures, any failure that SOURCE shares); the compiler the build used (Task 5 Step 3); the fresh-clone result; that nothing is pushed; and the decisions that need them: the data release (Step 1; without it fetch-data cannot get `route_area_lidar_0p5m.tif` on a fresh clone and CI stops at its fetch step, after the build), and the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below). The description also says:
+Report: the branch and its commits; the test results of Task 12 and Step 2 (counts, skips, expected failures, any failure that SOURCE shares); the compiler the build used (Task 5 Step 3); the fresh-clone result; that nothing is pushed; and the decision that needs them: the push of `import/simulation` with the pull request (title "Import the simulation", description from the commits and the acceptance list below). The description also says:
 
 - Merge with **Create a merge commit**, not squash or rebase (the repository allows all three). A squash or a rebase would leave the imported history out of `main` (spec 9.1: every commit with its message and author, `git log --follow` and blame back to `sim/` and `driver/`) and break `docs/research/README.md`'s command for the tree before the move.
 - Review commit by commit: against `main`, which has no `sim/`, the Files tab shows about 700 added files; the renames show only in the moves-only commit (`Layout: sim/ becomes rover_sim/ ...`, 678 renames, no line changed).
 - Bisecting: the pixi tasks do not run on the three commits from the moves-only commit (47fdf57) to `pixi: three platforms ...` (a5cf8eb): their tasks or `.gitignore` name the old paths, or gzenv does not yet look in colcon's build directory, as it does from 6ad7091 on. Skip them (`git bisect skip`), or bisect `main` with `git bisect --first-parent` once the merge commit is there.
 - `.pixi/config.toml` comes with the simulation's history and lets the packages run their post-link scripts: graphviz, gtk3 and gdk-pixbuf, from the team's `ros-jazzy-desktop`, build their caches with them (without graphviz's, `dot`, rqt_graph and view_frames fail). The simulation needs none of them.
-- Until the data release exists, fetch-data cannot get `route_area_lidar_0p5m.tif`: the Ubuntu and macOS jobs stop at their fetch step, and a teammate links the rasters from a clone that has them (`rover_sim/tools/link_data.sh <that clone>`, README).
+- fetch-data cannot rebuild `route_area_lidar_0p5m.tif` yet and has no other copy to fetch (the user's decision, 2026-10-09), so on a fresh clone and in CI `sim-worlds` skips `urc_autonomy` and the tests that need it skip, saying why; a teammate links the raster from a clone that has it (`rover_sim/tools/link_data.sh <that clone>`, README). A later pull request rebuilds the 0.5 m lidar DEMs from USGS's public lidar with a script.
 
 ---
 
@@ -2755,7 +2940,7 @@ Report: the branch and its commits; the test results of Task 12 and Step 2 (coun
 | rover_control's tests pass | Task 5 Step 5, Task 12 and Task 19 Step 2 (57 tests) |
 | fetch-data works on a fresh clone without `--force` (logic and dry run) | Task 11, Task 18 Step 3 |
 | The team's launch-file bug fixed | Task 13 |
-| CI file valid | Task 14 Step 2 (CI green on GitHub needs the push and the data release) |
+| CI file valid | Task 14 Step 2 (CI green on GitHub needs the push; without the lidar DEM the Autonomy world's tests skip there) |
 | README extended; `sim/README.md` split into `rover_sim/README.md` and `docs/sim/` without losing content | Tasks 15 and 16 |
 | Nothing of ours ignored | Task 17 |
 
@@ -2763,8 +2948,8 @@ Report: the branch and its commits; the test results of Task 12 and Step 2 (coun
 
 | Risk | Handling |
 |---|---|
-| The 0.5 m lidar DEMs (one of them required by `urc_autonomy`) cannot be rebuilt from official sources with code in the repository | fetch-data takes them from the team's release, which needs the user's approval (Task 19); until then CI fails at fetch-data. The alternative is a later PR that scripts the lidar processing from the USGS tiles and point clouds |
-| The official ImageServers may return other pixels later (3DEP is a dynamic mosaic) or be down | fetch-data checks the content and falls back to the team's copy; downloads were not run for this plan (offline tests only) |
+| The 0.5 m lidar DEMs (one of them required by `urc_autonomy`) cannot be rebuilt from official sources with code in the repository | No copy of them is published (the user's decision, 2026-10-09; Decision 4): fetch-data names them and how to get them (link_data.sh from a teammate's clone); without the Autonomy DEM `sim-worlds` skips that world and its tests skip, so CI runs with what fetch-data can fetch. A later PR scripts the lidar processing from the USGS tiles and point clouds |
+| The official ImageServers may return other pixels later (3DEP is a dynamic mosaic) or be down | fetch-data checks the content and fails (exit 1) when it differs or the source fails; there is no other copy to fall back on, so CI then stops at its fetch step unless its raster cache holds the raster, and a teammate links the raster from a clone (link_data.sh) |
 | Linux and Windows are built for the first time in CI: GCC on the plugins, MSVC on rover_control, numeric tolerances on Linux, wall-clock-sensitive tests on slower runners | Nothing can be built for them locally (no Docker); expect a fix-up commit after the first CI run |
 | conda's clang 21 may replace Apple's compiler for the plugins and rover_control (the team's `ros-dev-tools` brings `cxx-compiler`) | Task 5 Step 3 records which one CMake took; the full suite (Task 12) decides; a test that passes in SOURCE and fails here is treated as a regression, and Task 12 Step 3 says how to tell a compiler effect |
 | macOS runners may not render with ogre2 (virtualised GPU), the suite may take over an hour there (3 cores), and 7 GB of memory is tight for generating the 4097² Autonomy world and rendering | `ROVER_RENDERING: "0"` in the macOS matrix entry is the fallback for rendering; timeout 150 minutes; a larger runner if memory runs out |
