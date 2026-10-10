@@ -7775,3 +7775,66 @@ Checked on this Mac against a scratch environment locked as Task 2 locks it: gz_
 - **Task 14's test:** launch's `ExecuteProcess.name` is a list of substitutions, which cannot be a dict key. The test now performs it first.
 - **The GUI:** the server's full state (`/world/<name>/state`) carries `WheelSetpoint` and `WheelMotorCurrent` on the wheel joints. Gazebo's GUI does not load the library that registers them (Task 6 Step 4, Risks).
 - **diff_drive_controller in the log:** it warns `Velocity command timed out. Braking.` once a second while no command comes.
+
+## Prototype results (Task 6, 2026-10-10)
+
+Measured on the Apple M4 (macOS 26.5.1), gz-sim 8.10.0, gz_ros2_control 1.2.19, ros2_control 4.47.0, ros2_controllers
+4.42.1. The gate is passed: Parts B to E may start.
+- `GZ_SIM_SYSTEM_PLUGIN_PATH` after activation: `GZ_SIM_SYSTEM_PLUGIN_PATH=[]` (empty: no activation script sets it);
+  gzenv appends the environment's lib, and Gazebo found `gz_ros2_control-system` there.
+- `test_ros2_control`: `Ran 3 tests in 9.724s`, `OK`; three more runs of the same stack also passed (10.7 s and
+  10.3 s, and the measuring run below). The controllers were updating and `/cmd_vel` had its subscriber 4.1 s after
+  the server started (wall clock: the server's start, `/robot_description`, the hardware, both controllers).
+- Timing: a setpoint the controller manager writes at the start of step k drives the motors in step k. Every one of
+  the 51 setpoint changes in the drivetrain's per-step state is in a step 11, 21, 31 ... (the first at 1601, 1611,
+  1621 ms); the controllers update in the PostUpdate of steps 10, 20, 30 ... None was one step late.
+- Readback: `/joint_states`' wheel efforts equal the drivetrain's motor currents of an update step. Of 517 messages,
+  411 match exactly one step within 50 ms of their stamp, and every one of those is a step 10, 20, 30 ...; the
+  stamps lag that step by 0 to 8 ms (mean 3.2 ms), the controller manager's clock from the bridged `/clock`.
+  `cmd_vel_out`'s stamps are 5 to 17 ms apart (mostly 11 and 12 ms). After 3 s of the arc and 1.5 s of stop the
+  wheels had turned 2.03 rad (left) and 10.03 rad (right).
+- Server and GUI as separate processes (`split_check.sh`, domain 63, its world with the SceneBroadcaster: see below):
+  `spawner exit 0`, `odom x 1.597 y 0.000`, `gui running`, `server stopped`, the server's `Loading
+  controller_manager` and `RoverSimSystem: 8 joints, 4 wheels driven through RoverDrivetrain's motor model`, `2`
+  controllers activated, and `0` GUI lines `Failed to create component`, not the 8 this plan guessed. Three more
+  split runs (one without the SceneBroadcaster, one that queried the state, one with the GUI at `-v 2`) gave
+  `odom x` 1.594, 1.573 and 1.710 and the same other lines.
+- The GUI and the rover's components: the server's state (`/world/test/state`, queried during a split run) carries
+  `WheelSetpoint` and `WheelMotorCurrent` on the four wheel joints (4 entries each). The GUI skips both types it has
+  no registration for. At its default verbosity it prints nothing about them. At `-v 2` it warns once per type:
+  `Component type [15200978981940006955] has not been registered in this process, so it can't be deserialized.`
+  (WheelSetpoint) and the same for `[6913242256637207411]` (WheelMotorCurrent). The ids are gz-common's `hash64`
+  of the registered names. The manual's paragraph on harmless log lines (Task 19) and the Risks row should name this
+  warning instead of `Failed to create component type`. The GUI also printed gz-rendering's
+  `Unable to load Ogre Plugin[.../lib/OGRE-Next]` twice, which `docs/sim/gazebo-lessons.md` already documents as
+  harmless.
+- The server's log has the lines the Risks table names: `Executor is not available during hardware component
+  initialization for 'rover'. Skipping node creation!` once, `Velocity command timed out. Braking.` about once a
+  second while no command comes, and diff_drive_controller's one-time `Received TwistStamped with zero timestamp,
+  setting it to current time`. It also has gz_ros2_control's `Desired controller update period (0.01 s) is slower
+  than the gazebo simulation period (0.001 s)` once, which is the design (100 Hz on the 1 ms step).
+
+What differed from this plan:
+- `tests/rosstack.py`'s `stop()`: the first run failed in `setUpClass`'s cleanup with `PermissionError` from
+  `os.killpg`. The spawner exits once both controllers are active, and macOS refuses a signal to a process group
+  whose only member is an unreaped zombie with EPERM. The exception also stopped the cleanup before it reached the
+  other processes; I stopped them by hand. `stop()` now reaps the process first and treats EPERM like a group that
+  has ended.
+- `split_check.sh`: (1) it stops the background jobs by process group (`kill -INT -$pid`, under `set -m`), because
+  `ros2 run` waits for its child and does not pass on a signal sent only to itself; (2) the world written by
+  `proto_stack.py` adds the SceneBroadcaster and UserCommands systems. The test world (`simulate.world_sdf`) has
+  neither, and every real world has both. Without the SceneBroadcaster the GUI has no scene to load, so the first run
+  (0 component lines too) showed only that the GUI process starts beside the server.
+- Task 4 Step 2 failed at configure with `'.../rover_sim/rover_sim_system.xml' does not exist`
+  (pluginlib_export_plugin_description_file checks the file before CMake looks for the missing source). Step 4 built
+  without a compiler warning. Configuring the package now prints CMake author, policy and deprecation warnings from
+  the environment's own config files (fastrtps' `FindTinyXML2` case, realtime_tools' CMP0167, the deprecated
+  tl_expected), which `find_package(hardware_interface)` and `rclcpp` pull in; they are not this package's. The new
+  test binary's first run took 13 s, not 70 s.
+- Task 2: the lock is the planning session's byte for byte (31, 31 and 29 packages added, none removed or updated).
+  Six of the added packages per platform are conda-forge's, not RoboStack `_21` builds: cpp-expected, filelock,
+  jinja2, markupsafe, pygraphviz, typeguard. The commit message says so.
+- Task 5's expected test counts held (`Ran 72 tests`); `check_urdf` is installed, so `test_check_urdf_accepts_it` ran.
+- For later tasks: Task 13's `test_rover_launch.py` stops its launch with a bare `os.killpg(launch.pid, ...)`. If the
+  launch has already ended there, macOS raises the same `PermissionError` and hides the test's own failure; reap it
+  first (`launch.poll()`) or use `rosstack.stop`'s rule.
