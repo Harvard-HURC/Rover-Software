@@ -29,7 +29,7 @@ The rover's Gazebo simulation (`rover_sim`) runs on macOS and Linux; on Windows 
 The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](docs/sim/design-notes.md) and [Gazebo lessons](docs/sim/gazebo-lessons.md).
 
 ### Tests
-- `pixi run test` runs the C++ tests of `rover_control` and `rover_sim` (`colcon test`) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
+- `pixi run test` runs the colcon tests of `rover_description` (xacro and `check_urdf` on the description, the team's linters), `rover_control` and `rover_sim` (C++) and the simulation's suite: about 15 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
 - CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data`, `pixi run test` (the rendering tests on macOS only) and then `git diff --exit-code`, which fails when the tests left a tracked file changed (they regenerate the tracked rover model, so one committed stale fails); on Windows `pixi run build`. CI has only the rasters fetch-data can fetch, so the Autonomy world's tests skip there until its lidar DEM can be rebuilt
 
 ### Platforms
@@ -39,8 +39,8 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ## Project Structure
 Most of our work is structured into folders called "packages". Whenever you create a new package, please add a description of it here:
-- `rover_description`: Contains the URDFs that define the rover's structure, joints, actuators, sensors, etc
-- `rover_sim`: Contains SDFs, URDFs, launch configurations, and any other tools that help with simulating the rover in Gazebo. Today it holds the URC simulation: Gazebo plugins for the drivetrain and motors, the rocker differential and the driver station's cameras; the URC 2027 mission worlds and their generator; a browser driver station, a launcher and a referee (macOS and Linux)
+- `rover_description`: Contains the URDFs that define the rover's structure, joints, actuators, sensors, etc. Every physical number of the rover is in `config/rover.yaml` (geometry, masses, joints, the rocker differential, the motors, the sensors and the camera head); `urdf/rover.urdf.xacro` builds the description from it, with the `ros2_control` block in `urdf/ros2_control.xacro`; `meshes/` has the tread tyre and `launch/view.launch.py` shows the rover in RViz. Its README says how to change the rover
+- `rover_sim`: Contains SDFs, URDFs, launch configurations, and any other tools that help with simulating the rover in Gazebo. Today it holds the URC simulation: Gazebo plugins for the drivetrain and motors, the rocker differential and the driver station's cameras; the rover's Gazebo model, built from `rover_description` and `config/sim.yaml` (how the simulation models the rover) with `urdf/rover_sim.urdf.xacro`; the URC 2027 mission worlds and their generator; a browser driver station, a launcher and a referee (macOS and Linux)
 - `rover_control`: The rover's drive code. For now the swerve design's kinematics library `rover_driver` with its tests and tools, superseded by tank drive; the ros2_control work replaces it
 
 Beside the packages, `docs/` holds the design specs and plans (`docs/superpowers`), the simulation's manual (`docs/sim`) and the research behind it (`docs/research`).

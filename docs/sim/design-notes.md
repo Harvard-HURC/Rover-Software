@@ -51,10 +51,10 @@ every wheel contact grips. Every 1 ms step:
 
 - **Setpoints**: (vx ∓ wz·track·track_multiplier/2)/r per side, through a ramp
   (`gz::math::SpeedLimiter`, 8 rad/s², 1.2 m/s² (A) until the driver team
-  reports its controller's ramp) and clamped to `Params.wheel_speed`.
+  reports its controller's ramp) and clamped to the top speed (`rover.yaml` `wheel: top_speed`).
   `track_multiplier` is 1.0: the raw skid-steer response, which the team's
   driver compensates (the user's choice; Clearpath ships 1.875 for Husky).
-- **Motor** per wheel (`rover_drivetrain.hh`, `DriveParams`): a DC motor
+- **Motor** per wheel (`rover_drivetrain.hh`; `rover.yaml` `motor`, `driveline`): a DC motor
   (48 V, 0.46 Ω, kt = ke 0.0445; the Husky A200 motor at twice its 24 V, for 3 m/s), gearbox 50 at efficiency 0.8,
   current limit 20 A (35.6 N·m at the wheel), driveline 1500 N·m/rad with 1.5°
   backlash, a PI speed controller (kp 4 V/(rad/s), ki 160 V/rad, back-EMF
@@ -83,7 +83,7 @@ every wheel contact grips. Every 1 ms step:
   `risers_` are rock); on a plane, the default surface (regolith); on any
   other model, the μ its SDF `<surface>` sets (as μs = μk, Crr 0.015, slip
   0.05), else the object surface (`manmade`). A world without a ground map
-  uses the rows gen_model writes into the plugin from the catalogue.
+  uses the rows `tools/gen_rover.py` writes from the catalogue (`config/surfaces.yaml`).
 - **Loads** come from each wheel joint's transmitted wrench (gate G8: within
   2.6 % of contact loads, and cheaper): the contact force is minus the joint
   force, the wheel's weight and the hub force.
@@ -102,14 +102,14 @@ every wheel contact grips. Every 1 ms step:
   rover to the mild preset (a spin in sand slows to ~0.7× and keeps turning).
   Dig-in changes resistance, not geometry: physics never sinks a wheel
   further than the static carve; the cues of Visible dig-in draw it.
-- **Visible dig-in**: the tyre sink (`DriveParams.dig_sink`) is drawn from
+- **Visible dig-in**: the tyre sink (`sim.yaml` `dig_sink`) is drawn from
   each wheel's D at the end of its step, and the ruts and pits
-  (`DriveParams.ruts`) are fed from it; both read the drivetrain's state and
+  (`sim.yaml` `ruts`) are fed from it; both read the drivetrain's state and
   change none of it (Visible dig-in, below).
 - **Dust**: none by default (the user's decision of 2026-10-07): gz-rendering
   8.2.2's depth camera sees any visible particle (Gazebo lessons), and clean
-  depth images and point clouds come first. `DriveParams(dust=True)` (or
-  `dust: bool = True` in `gen_model.py`, then `pixi run sim-model`) puts an
+  depth images and point clouds come first. `dust: enabled: true` in
+  `rover_sim/config/sim.yaml` (then `pixi run sim-model`) puts an
   emitter behind each rear wheel on the rocker links and gives the drivetrain
   their topics; the drivetrain sets their rate from speed, slip, dig factor
   and the ground's dust factor (at most 40 /s, nothing below 0.05 m/s). The
@@ -125,7 +125,7 @@ every wheel contact grips. Every 1 ms step:
   the driver.
 - **Command timeout**: a command older than 0.5 s (wall clock) counts as
   zero, so a commander that dies cannot leave the rover driving
-  (`DriveParams.cmd_timeout`; 0 holds the last command; tests use the sim
+  (`sim.yaml` drivetrain `cmd_timeout`; 0 holds the last command; tests use the sim
   clock).
 - **Reset**: `ISystemReset` clears the command, motors, ramps, dig-in and
   odometry, puts the tyres back at their SDF poses and clears the ruts and
@@ -180,13 +180,13 @@ global, and it ignores the normal component of a contact's
 unchanged at ±5 cm/s); tyre compliance lowers the body, not the wheel, and a
 deeper static carve changes the contacts. When the user found that "dig is
 not really visible", they chose three cues that only draw it (2026-10-07),
-each behind its own switch in `gen_model.py`, all on:
+each behind its own switch in `rover_sim/config/sim.yaml`, all on:
 
 | Cue | Switch | Drawn | Seen by |
 |---|---|---|---|
-| Tyre sink | `DriveParams.dig_sink` (`dig_sink_gain` 1.0, `dig_sink_max` 0.06 m, `dig_sink_tau` 0.1 s): the drivetrain's `<dig_sink>` | each tyre (D − 1) × s below its SDF pose, at true scale | every camera: the station's, the rover's RGB-D and the Gazebo GUI (through `/world/<w>/state`) |
-| Ruts and pits | `DriveParams.ruts` (numbers in `TrackParams`): the drivetrain's `<tracks>` | on every ground with s > 0, a faint floor behind each wheel (low berms too where s ≥ 1.5 cm or the wheel digs in); darker, with higher berms and pits, where the wheels dig in | camera sensors only: the station's views and the rover's RGB-D, not `gz sim -g` |
-| Tread tyres | `Params.tread_tyre` (`models/rover/meshes/wheel.glb`) | tread bars, a hub and spokes, one of them ochre, so a wheel spinning in place shows | every view of the wheels |
+| Tyre sink | `dig_sink` (`gain` 1.0, `max` 0.06 m, `tau` 0.1 s): the drivetrain's `<dig_sink>` | each tyre (D − 1) × s below its SDF pose, at true scale | every camera: the station's, the rover's RGB-D and the Gazebo GUI (through `/world/<w>/state`) |
+| Ruts and pits | `ruts` (numbers under `tracks`): the drivetrain's `<tracks>` | on every ground with s > 0, a faint floor behind each wheel (low berms too where s ≥ 1.5 cm or the wheel digs in); darker, with higher berms and pits, where the wheels dig in | camera sensors only: the station's views and the rover's RGB-D, not `gz sim -g` |
+| Tread tyres | `tread_tyre` (`rover_description/meshes/wheel.glb`) | tread bars, a hub and spokes, one of them ochre, so a wheel spinning in place shows | every view of the wheels |
 
 What drives them is each wheel's dig factor D (sinkage over static sinkage,
 grown by slip on loose ground, healed by travel; at most 2.0 on sand, dusty
@@ -250,8 +250,8 @@ its marker service).
   step runs), at most 256 records a frame (`frame_budget`), so a station that
   connects late catches up over a few frames; a process that renders nothing
   reads no map and draws nothing.
-- **Tread tyres**: the tyres' visual is `meshes/wheel.glb`
-  (`gen_model.wheel_parts`, the cylinder's outline, 384 triangles, no SDF
+- **Tread tyres**: the tyres' visual is `rover_description/meshes/wheel.glb`
+  (`gen_wheel_mesh.py` beside it, the cylinder's outline, 384 triangles, no SDF
   `<material>`): the plain tyre's dark with 16 light tread bars, a light hub
   and four spokes, one of them the chassis' ochre. The bars alias above about
   3.9 rad/s in a 20 Hz view (they seem to creep), the ochre spoke only above
@@ -263,7 +263,7 @@ its marker service).
   surface (the 2 cm carve and the 2 cm sink: the physical s·D), and the rim
   round it stands up to 2.6 cm above that surface (measured 2.9 cm with the
   lumps), the soil pushed aside. The ruts' berm rule was set before the sink
-  existed, to show the dig-in on its own; `TrackParams.berm_gain` scales it
+  existed, to show the dig-in on its own; `ruts: tracks: berm_gain` scales it
   and stays 1.0 (open: design spec 17.5).
 - **Visual only**, each switch on its own, and tested so: the base_link pose
   every step and the drivetrain states are bit for bit the same with the cues
@@ -280,7 +280,7 @@ its marker service).
   it grows as the view grazes: 11 cm for `test_render.Ruts`'s RGB-D (rays
   about 15° down), 25–43 cm for cameras 0.25–0.6 m up, 66 cm for one 15 cm up
   (2.5°). A tyre drawn lower makes the band its top uncovered farther, all on
-  the tyre, nothing floating. `test_gen_model` checks that each switch takes
+  the tyre, nothing floating. `test_rover_model` checks that each switch takes
   away only its own cue; `ctest` the sink's rule and lag and the ruts' layer
   (spacing, soft ground only, the pit rule, pits kept open, the ring, resets,
   the per-frame sim-time cut, with a ring that drops chunks too, geometry);

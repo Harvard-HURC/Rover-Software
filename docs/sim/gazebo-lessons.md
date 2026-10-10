@@ -81,7 +81,7 @@ cost a wrong first attempt.
   with a command timeout stops after the timeout; it needs `cmd_timeout` 0.
 - **OdometryPublisher's twist can spike** (one yaw rate of 4π/dt in 1233
   messages while spinning); its pose is right.
-- **NavSat noise is in degrees** for latitude/longitude; `gen_model.py`
+- **NavSat noise is in degrees** for latitude/longitude; `rover_sim.urdf.xacro`
   converts metres. NavSat reports the ellipsoidal height of the world
   origin's altitude plus z: give the origin an ellipsoidal altitude.
 - **Lidar and imagery datums**: PROJ's default NAD83(2011) → WGS84 is a null
@@ -177,7 +177,7 @@ cost a wrong first attempt.
   particle pixel with any red for a return at a fixed scatter ratio:
   `particle_scatter_ratio` (SDF or the emitter's topic) never reaches it, nor
   does a camera `<visibility_mask>`. Hence the rover has no dust by default
-  (`DriveParams.dust`).
+  (`sim.yaml` `dust`).
 - **Orthographic near plane**: an orthographic camera clips at its near plane
   just under it, and a custom projection with a near plane behind the camera
   changed nothing; draw it from above whatever it must show (the window
