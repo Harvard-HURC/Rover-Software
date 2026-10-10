@@ -17,9 +17,9 @@ build = { cmd = "colcon build", cwd = "..", depends-on = ["_workspace", "sim-med
 colcon-test = { cmd = "colcon test --packages-select rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
 # The C++ tests and the simulation's suite. The rendering tests skip where there is no GPU and say why.
 test = { depends-on = ["colcon-test", "sim-test"] }
-# The git-ignored terrain rasters the simulation reads, from their official sources; it names the ones it cannot
-# rebuild yet (the Autonomy world's lidar: link it from a teammate's clone, README) (--all: every raster; --dry-run;
-# --verify).
+# The git-ignored terrain rasters the simulation reads, from their official sources: ImageServer requests, and the
+# 0.5 m lidar DEMs rebuilt from USGS lidar (tools/usgs_lidar.py) (--all: every raster; --dry-run; --verify;
+# --sources DIR keeps the USGS lidar files).
 fetch-data = "python rover_sim/tools/fetch_data.py"
 # rover_control's interactive view of the swerve kinematics.
 control-viz = { cmd = "python rover_control/tools/viz.py", depends-on = ["build"] }

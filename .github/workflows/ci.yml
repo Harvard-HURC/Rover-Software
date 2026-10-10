@@ -61,9 +61,10 @@ jobs:
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
           key: rasters-${{ runner.os }}-${{ hashFiles('src/rover_sim/data/rasters.json') }}
-      # fetch-data gets the rasters it can rebuild from their official sources and fails only if one of those fails; it
-      # cannot rebuild the Autonomy world's 0.5 m lidar DEM yet, so sim-worlds skips that world and the tests that
-      # need it skip, saying why.
+      # fetch-data gets every raster the simulation reads from its official source and fails if one fails; the
+      # Autonomy world's 0.5 m lidar DEM it rebuilds from USGS lidar (371 MB of downloads, 5 to 20 minutes, on a
+      # cache miss only). Off the Mac that made rasters.json the rebuild may round differently in the last bits:
+      # fetch-data then keeps it within the tolerance of the manifest's stats and says that it is not bit-identical.
       - run: pixi run fetch-data
       - name: Save the terrain rasters
         if: steps.rasters.outputs.cache-hit != 'true'
