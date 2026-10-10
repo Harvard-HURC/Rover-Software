@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -45,7 +46,8 @@ def raster_bytes(bands, transform):
 
 
 class Server:
-    """The network: url -> body; it records what was asked and 404s the rest."""
+    """The network: url -> body; it records what was asked and 404s the rest, as urllib does (its error leaves the
+    URL out)."""
 
     def __init__(self, bodies):
         self.bodies, self.asked = dict(bodies), []
@@ -53,7 +55,7 @@ class Server:
     def __call__(self, url):
         self.asked.append(url)
         if url not in self.bodies:
-            raise OSError(f"HTTP Error 404: {url}")
+            raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
         return self.bodies[url]
 
 
@@ -189,7 +191,7 @@ class Manifest(unittest.TestCase):
 
     def test_the_lidar_comes_from_usgs(self):
         """The recipes read USGS's own files only: the OPR DEM tiles on The National Map's S3 bucket and the point
-        clouds on rockyweb (the user, 2026-10-09: no data release; the lidar DEMs rebuilt from USGS's public lidar)."""
+        clouds on rockyweb (the user, 2026-10-09: the lidar DEMs rebuilt from USGS's public lidar)."""
         usgs = ("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/",
                 "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/"
                 "UT_StatewideSouth_2020_A20/")
@@ -229,6 +231,16 @@ class Manifest(unittest.TestCase):
         for e in here:
             with self.subTest(e["path"]):
                 self.assertTrue(fetch_data.matches(e, fetch_data.DATA_DIR / e["path"]))
+
+    def test_the_stats_are_those_of_the_lidar_rasters_here(self):
+        """matches() takes a raster with the manifest's SHA-256 without its stats, which only a rebuild that is not
+        bit-identical meets: they must be the stats of the rasters themselves."""
+        here = [e for e in MANIFEST["rasters"] if "stats" in e and (fetch_data.DATA_DIR / e["path"]).exists()]
+        if not here:
+            self.skipTest("no lidar raster here (pixi run fetch-data)")
+        for e in here:
+            with self.subTest(e["path"]):
+                self.assertEqual(fetch_data.stats(dem.read_raster(fetch_data.DATA_DIR / e["path"])[0]), e["stats"])
 
 
 class DryRun(unittest.TestCase):
@@ -444,6 +456,27 @@ class Sources(unittest.TestCase):
         self.assertEqual(len(self.server.asked), 3)  # a.laz once; b.tif again, as the copy here was not it
         self.assertEqual((self.dir / "b.tif").read_bytes(), b"second")
 
+    def test_a_failed_download_raises_with_its_url(self):
+        del self.server.bodies["https://example.test/b.tif"]
+        with self.assertRaisesRegex(RuntimeError, "^https://example.test/b.tif: HTTP Error 404: Not Found$"):
+            fetch_data.source_files(self.tiles, self.dir, self.server, lambda line: None)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["a.laz"])
+
+    def test_each_download_is_said_at_once(self):
+        """Each line is flushed as it is said: in CI stdout is a pipe, which Python buffers."""
+        class Flushes(io.StringIO):  # what had been said at each flush
+            def __init__(self):
+                super().__init__()
+                self.flushed = []
+
+            def flush(self):
+                self.flushed.append(self.getvalue())
+        out = Flushes()
+        with contextlib.redirect_stdout(out):
+            fetch_data.source_files(self.tiles, self.dir, self.server)
+        self.assertEqual(out.flushed, ["  a.laz: downloaded, 0.0 MB\n",
+                                       "  a.laz: downloaded, 0.0 MB\n  b.tif: downloaded, 0.0 MB\n"])
+
     def test_a_file_that_is_not_the_listed_one_raises_and_is_not_kept(self):
         self.server.bodies["https://example.test/b.tif"] = b"second, changed"
         with self.assertRaisesRegex(ValueError, "https://example.test/b.tif is not the file the provenance lists "
@@ -469,6 +502,18 @@ class Sources(unittest.TestCase):
                 mock.patch.object(fetch_data.time, "sleep"):
             self.assertEqual(fetch_data.download("https://example.test/a.laz"), b"first")
         self.assertEqual(responses, [])
+
+    def test_a_download_that_keeps_failing_raises_its_error_after_the_last_try(self):
+        tries = []
+
+        def urlopen(request, timeout):
+            tries.append(request.full_url)
+            raise urllib.error.URLError(TimeoutError(60, "Operation timed out"))
+        with mock.patch.object(fetch_data.urllib.request, "urlopen", urlopen), \
+                mock.patch.object(fetch_data.time, "sleep"):
+            with self.assertRaisesRegex(urllib.error.URLError, "Operation timed out"):
+                fetch_data.download("https://example.test/a.laz")
+        self.assertEqual(tries, ["https://example.test/a.laz"] * fetch_data.TRIES)
 
 
 class Lidar(unittest.TestCase):
@@ -530,10 +575,12 @@ class Lidar(unittest.TestCase):
         self.assertIn("1 raster(s) not fetched (FAILED above)", err.getvalue())
 
     def test_a_rebuild_within_the_tolerance_is_kept_and_says_so(self):
+        """It names the machine; --verify, which may check a raster made elsewhere, does not."""
         self.offset["m"] = 0.0002  # what another platform's rounding might give
         code, lines = run(self.data, Server(self.bodies))
         how = "content within 0.001 of rasters.json's stats, not bit-identical"
-        self.assertEqual((code, lines[-1]), (0, f"dem/lidar.tif: rebuilt from the USGS lidar, {how}"))
+        self.assertEqual((code, lines[-1]),
+                         (0, f"dem/lidar.tif: rebuilt from the USGS lidar on {fetch_data.MACHINE}, {how}"))
         self.assertEqual(run(self.data, Server({}), "--verify"),
                          (0, ["dem/made_up.tif: verified", f"dem/lidar.tif: verified, {how}"]))
 
@@ -554,6 +601,16 @@ class Lidar(unittest.TestCase):
                          (0, ["dem/made_up.tif: present",
                               "dem/lidar.tif: rebuilt from the USGS lidar, content verified"]))
         self.assertEqual(server.asked, [])
+
+    def test_a_failed_recipe_fails_each_of_its_rasters_without_running_again(self):
+        """With --all the source map fails for the reason the DEM did: no second download, no second run."""
+        del self.bodies[LIDAR_URL]
+        server = Server(self.bodies)
+        code, lines = run(self.data, server, "--all")
+        why = f"the rebuild from the USGS lidar failed ({LIDAR_URL}: HTTP Error 404: Not Found)"
+        self.assertEqual((code, lines[1:]), (1, [f"dem/lidar.tif: FAILED, {why}", f"dem/lidar_map.tif: FAILED, {why}"]))
+        self.assertEqual((server.asked.count(LIDAR_URL), self.runs), (1, []))
+        self.assertEqual(self.files(), ["lidar.json", "made_up.json", "made_up.tif"])
 
     def test_a_raster_the_recipe_reads_that_is_not_here_fails_before_any_download(self):
         usgs_lidar.RECIPES["made_up"] = dataclasses.replace(usgs_lidar.RECIPES["made_up"], needs=("dem/fill.tif",))

@@ -14,12 +14,12 @@ each download checked against its size and SHA-256 (--sources DIR keeps
 them for the next run). A raster is kept only if its content matches; a
 lidar rebuild that is not bit-identical (another platform's floating point)
 is kept when its stats (min, max and 16 x 16 block means) are within
-TOLERANCE of the manifest's, and fetch-data says so. A raster that is not
-official fetch-data cannot rebuild: for each one missing it names the worlds
-that need it (`worlds`) and what is planned (`rebuild`), and a clone that
-has it lends it (tools/link_data.sh <that clone>); without such a raster
-sim-worlds skips the worlds that need it, and sim, drive and the tests'
-skips say why (world_missing).
+TOLERANCE of the manifest's, and fetch-data says so and names the machine
+(MACHINE). A raster that is not official fetch-data cannot rebuild: for
+each one missing it names the worlds that need it (`worlds`) and what is
+planned (`rebuild`), and a clone that has it lends it (tools/link_data.sh
+<that clone>); without such a raster sim-worlds skips the worlds that need
+it, and sim, drive and the tests' skips say why (world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
@@ -38,6 +38,7 @@ import hashlib
 import http.client
 import json
 import os
+import platform
 import shutil
 import sys
 import tempfile
@@ -67,6 +68,12 @@ STATS_BLOCKS = 16  # blocks per side of a raster's stats
 # thousandth of a code for the source map. Rounding differences between platforms (OpenCV's blur, GDAL's bilinear
 # kernel) are a few float32 steps (0.1 mm at 1400 m); a wrong tile, shift or step is centimetres (A).
 TOLERANCE = 1e-3
+MACHINE = f"{platform.system()} {platform.machine()}"  # what fetch-data names when a rebuild is not bit-identical
+
+
+def say(line):
+    """Prints a progress line at once, also when stdout is a pipe (CI's log): a rebuild takes minutes."""
+    print(line, flush=True)
 
 
 def load_manifest(data_dir=DATA_DIR):
@@ -212,14 +219,18 @@ def inputs_of(provenance):
     return [tile for key in recipe_of(provenance).inputs for tile in provenance[key]]
 
 
-def source_files(tiles, directory, get=download, log=print):
+def source_files(tiles, directory, get=download, log=say):
     """The files of `tiles` ({url, size_bytes, sha256}) in directory, in their order: downloaded unless a file with
     that SHA-256 is there, up to CONNECTIONS at once, and checked against the size and SHA-256 listed (rockyweb's
-    ETags are no checksums, so the provenance pins every file itself)."""
+    ETags are no checksums, so the provenance pins every file itself). A failed download raises with its URL: urllib's
+    errors leave it out, and the host tells S3 from rockyweb."""
     paths = [Path(directory) / tile["url"].rsplit("/", 1)[1] for tile in tiles]
 
     def fetch_file(tile, path):
-        body = get(tile["url"])
+        try:
+            body = get(tile["url"])
+        except (OSError, http.client.HTTPException) as e:
+            raise RuntimeError(f"{tile['url']}: {e}") from e
         digest = hashlib.sha256(body).hexdigest()
         if (len(body), digest) != (tile["size_bytes"], tile["sha256"]):
             raise ValueError(f"{tile['url']} is not the file the provenance lists ({len(body)} bytes, SHA-256 "
@@ -251,7 +262,7 @@ class Rebuilds:
     def temporary(self, prefix):
         return Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix=prefix)))
 
-    def output(self, entry, provenance, log=print):
+    def output(self, entry, provenance, log=say):
         """The file in a work directory that entry's recipe made for it; runs the recipe if this run has not."""
         name = provenance["recipe"]
         if name not in self.made:
@@ -356,9 +367,10 @@ def plan(entry, data_dir):
             f"{sum(t['size_bytes'] for t in tiles) / 1e6:.0f} MB")
 
 
-def fetch(entry, data_dir, get=download, log=print, rebuilds=None):
+def fetch(entry, data_dir, get=download, log=say, rebuilds=None):
     """Fetch one raster from its official source into data_dir; True once it is in place and its content
-    verified (rebuilds: the run's Rebuilds, for a raster a recipe makes)."""
+    verified (rebuilds: the run's Rebuilds, for a raster a recipe makes). A rebuild kept within TOLERANCE is said
+    to be not bit-identical on this machine (MACHINE)."""
     path = data_dir / entry["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.part")
@@ -382,8 +394,10 @@ def fetch(entry, data_dir, get=download, log=print, rebuilds=None):
                     "rasters.json lists")
                 return False
             os.replace(part, path)
-            log(f"{entry['path']}: {'rebuilt from the USGS lidar' if lidar else 'fetched from its official source'}, "
-                f"{how}")
+            done = "rebuilt from the USGS lidar" if lidar else "fetched from its official source"
+            if how != "content verified":  # kept within TOLERANCE: where floating point rounded differently
+                done += f" on {MACHINE}"
+            log(f"{entry['path']}: {done}, {how}")
             return True
         finally:
             part.unlink(missing_ok=True)
@@ -401,7 +415,8 @@ def main(argv=None, get=download):
     parser.add_argument("--data", type=Path, default=DATA_DIR, help=f"data directory (default {DATA_DIR})")
     parser.add_argument("--sources", type=Path,
                         help="keep the USGS lidar files a rebuild downloads in this directory, and use the ones "
-                             "already there (default: a temporary directory, removed afterwards)")
+                             "already there (default: a temporary directory, removed afterwards); put it outside "
+                             "the repository, for example ../lidar-sources: git does not ignore it")
     args = parser.parse_args(argv)
     failed, missing = 0, []
     with contextlib.ExitStack() as stack:
