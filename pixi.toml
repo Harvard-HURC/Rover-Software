@@ -69,6 +69,15 @@ ros2-joint-state-publisher-gui = ">=2.4.3,<3"
 # rover_control: the kinematics library and its tests
 eigen = ">=5.0.1,<6"
 gtest = ">=1.18.0,<2"
+yaml-cpp = ">=0.8.0,<0.9"
+# The drive boundary (design spec 2026-10-09, section 6): the controller manager and the hardware interface that the
+# rover's hardware stub and the simulation's RoverSimSystem implement, the drive controller, the joint state
+# broadcaster and `ros2 control`; the packages themselves, not the ros2_control and ros2_controllers metapackages
+ros2-controller-manager = ">=4.47.0,<5"
+ros2-hardware-interface = ">=4.47.0,<5"
+ros2-diff-drive-controller = ">=4.42.1,<5"
+ros2-joint-state-broadcaster = ">=4.42.1,<5"
+ros2-ros2controlcli = ">=4.47.0,<5"
 
 # rover_sim: Gazebo's libraries for the plugins and the simulation's Python. macOS and Linux only: on Windows the
 # simulation runs in WSL2.
@@ -86,3 +95,5 @@ py-opencv = ">=4.13.0,<5"
 pillow = ">=12.3.0,<13"
 matplotlib-base = ">=3.11.2,<4"
 aiohttp = ">=3.14.3,<4"
+# gz_ros2_control: the Gazebo system that runs the controller manager inside the simulation, with RoverSimSystem
+ros2-gz-ros2-control = ">=1.2.19,<2"
