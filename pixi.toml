@@ -34,12 +34,14 @@ sim-relief = { cmd = "python rover_sim/tools/make_relief_swatches.py", inputs = 
 sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/rover_config.py", "rover_description/config/rover.yaml", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
 # Orthophoto maps of the worlds for the station's Map view (needs the GPU, so not part of sim-test).
 sim-maps = { cmd = "python rover_sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The world in Gazebo's GUI with the rover's ROS 2 stack (rover_sim/launch/sim.launch.py): pixi run sim [world]
+# [--follow]. /cmd_vel drives it: pixi run drive, or ros2 topic pub (README, Simulation).
 sim = { cmd = "bash rover_sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The driver station: with a world it starts sim.launch.py headless, without one it attaches to the running world.
 drive = { cmd = "python rover_sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # Every world as a tile on one page: a click starts it with its driver station, Exit stops it.
 launcher = { cmd = "python rover_sim/launcher/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 referee = "python rover_sim/referee.py"
-sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=rover_sim/bridge.yaml"
 sim-test = { cmd = "python -m unittest discover -s rover_sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # The performance budgets (physics speed, start-up, memory, the drivetrain's cost against DiffDrive): slow, so opt-in.
 sim-perf = { cmd = "python -m unittest -v test_perf test_drivetrain.Cost", cwd = "rover_sim/tests", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
