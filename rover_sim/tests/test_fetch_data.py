@@ -7,13 +7,16 @@ the worlds that need them and how to get them, without failing the run, and
 its exit status in --help."""
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -91,6 +94,10 @@ def add_unofficial(data, name, worlds, required=True):
         "shape": [1, 6, 8], "dtype": "float32", "transform": list(TRANSFORM)})
     (data / fetch_data.MANIFEST).write_text(json.dumps(manifest))
     return body
+
+
+def sha256(body):
+    return hashlib.sha256(body).hexdigest()
 
 
 def run(data, server, *flags, err=None):
@@ -325,6 +332,56 @@ class Stats(unittest.TestCase):
                              "content within 0.001 of rasters.json's stats, not bit-identical")
             path.write_bytes(raster_bytes(dem_band(32, 32), (TRANSFORM[0] + STEP, *TRANSFORM[1:])))
             self.assertIsNone(fetch_data.verdict(entry, path))
+
+
+class Sources(unittest.TestCase):
+    """The USGS files a recipe reads: downloaded once, several at once, checked against the size and SHA-256 its
+    provenance lists; a download cut short is tried again."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.tiles = [{"url": f"https://example.test/{name}", "size_bytes": len(body), "sha256": sha256(body)}
+                      for name, body in (("a.laz", b"first"), ("b.tif", b"second"))]
+        self.server = Server({"https://example.test/a.laz": b"first", "https://example.test/b.tif": b"second"})
+
+    def test_they_are_downloaded_checked_and_used_again(self):
+        said = []
+        paths = fetch_data.source_files(self.tiles, self.dir, self.server, said.append)
+        self.assertEqual(paths, [self.dir / "a.laz", self.dir / "b.tif"])
+        self.assertEqual([p.read_bytes() for p in paths], [b"first", b"second"])
+        self.assertEqual(said, ["  a.laz: downloaded, 0.0 MB", "  b.tif: downloaded, 0.0 MB"])
+        (self.dir / "b.tif").write_bytes(b"spoiled")
+        self.assertEqual(fetch_data.source_files(self.tiles, self.dir, self.server, said.append), paths)
+        self.assertEqual(len(self.server.asked), 3)  # a.laz once; b.tif again, as the copy here was not it
+        self.assertEqual((self.dir / "b.tif").read_bytes(), b"second")
+
+    def test_a_file_that_is_not_the_listed_one_raises_and_is_not_kept(self):
+        self.server.bodies["https://example.test/b.tif"] = b"second, changed"
+        with self.assertRaisesRegex(ValueError, "https://example.test/b.tif is not the file the provenance lists "
+                                                "[(]15 bytes, SHA-256 [0-9a-f]{12}[.][.][.][)]"):
+            fetch_data.source_files(self.tiles, self.dir, self.server, lambda line: None)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["a.laz"])
+
+    def test_they_are_downloaded_at_the_same_time(self):
+        both = threading.Barrier(2, timeout=10)
+
+        def get(url):  # answers once both requests are in flight; one at a time breaks the barrier after 10 s
+            both.wait()
+            return self.server(url)
+        self.assertEqual(fetch_data.source_files(self.tiles, self.dir, get, lambda line: None),
+                         [self.dir / "a.laz", self.dir / "b.tif"])
+
+    def test_a_download_cut_short_is_tried_again(self):
+        class Cut(io.BytesIO):  # a response whose body breaks off, as http.client reports it
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"fir", 2)
+        responses = [Cut(), io.BytesIO(b"first")]
+        with mock.patch.object(fetch_data.urllib.request, "urlopen", lambda request, timeout: responses.pop(0)), \
+                mock.patch.object(fetch_data.time, "sleep"):
+            self.assertEqual(fetch_data.download("https://example.test/a.laz"), b"first")
+        self.assertEqual(responses, [])
 
 
 class Help(unittest.TestCase):

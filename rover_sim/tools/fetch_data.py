@@ -28,7 +28,9 @@ differs from the manifest, or one it can fetch is missing); 2 for a usage
 error.
 """
 import argparse
+import concurrent.futures
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -46,7 +48,10 @@ from urc import dem  # noqa: E402
 
 DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
-TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
+TRIES = 5  # per download: the ImageServers answer HTTP 500 now and then, rockyweb drops connections (M, 2026-10-10)
+# Downloads at once of a lidar rebuild: rockyweb gave 0.14 MB/s to one connection and 0.32 MB/s to six
+# (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
+CONNECTIONS = 6
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 STATS_BLOCKS = 16  # blocks per side of a raster's stats
@@ -169,13 +174,14 @@ def check(entry, path):
 
 
 def download(url):
-    """The body at url, after up to TRIES attempts."""
+    """The body at url, after up to TRIES attempts: a refused or dropped connection, an HTTP error and a body cut
+    short are tried again."""
     for attempt in range(TRIES):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
                                         timeout=600) as response:
                 return response.read()
-        except OSError:
+        except (OSError, http.client.HTTPException):  # HTTPException: IncompleteRead, a body cut short
             if attempt == TRIES - 1:
                 raise
             time.sleep(5 * (attempt + 1))
@@ -186,6 +192,34 @@ def requests_of(provenance):
     if "url" in provenance:
         return [provenance["url"]]
     return list(provenance.get("urls") or provenance.get("requests") or [])
+
+
+def source_files(tiles, directory, get=download, log=print):
+    """The files of `tiles` ({url, size_bytes, sha256}) in directory, in their order: downloaded unless a file with
+    that SHA-256 is there, up to CONNECTIONS at once, and checked against the size and SHA-256 listed (rockyweb's
+    ETags are no checksums, so the provenance pins every file itself)."""
+    paths = [Path(directory) / tile["url"].rsplit("/", 1)[1] for tile in tiles]
+
+    def fetch_file(tile, path):
+        body = get(tile["url"])
+        digest = hashlib.sha256(body).hexdigest()
+        if (len(body), digest) != (tile["size_bytes"], tile["sha256"]):
+            raise ValueError(f"{tile['url']} is not the file the provenance lists ({len(body)} bytes, SHA-256 "
+                             f"{digest[:12]}...)")
+        part = path.with_name(f".{path.name}.part")
+        part.write_bytes(body)
+        os.replace(part, path)
+        return len(body)
+
+    pool = concurrent.futures.ThreadPoolExecutor(CONNECTIONS)
+    try:
+        sizes = [(path, pool.submit(fetch_file, tile, path)) for tile, path in zip(tiles, paths)
+                 if not (path.is_file() and file_sha256(path) == tile["sha256"])]
+        for path, size in sizes:  # in the listed order; the first failure raises
+            log(f"  {path.name}: downloaded, {size.result() / 1e6:.1f} MB")
+    finally:
+        pool.shutdown(cancel_futures=True)  # after a failure, start no other download
+    return paths
 
 
 def geotags(transform):
