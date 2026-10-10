@@ -11,6 +11,11 @@ namespace rover_control {
 
 namespace {
 constexpr int64_t kLogPeriod = 1000000000;  // [ns] between two logs of the commands it would send
+constexpr double kShown = 0.005;            // [rad/s] a command below this shows as 0.00, and counts as 0
+
+// A command as the log shows it: 0 when it is not set yet (NaN) or rounds to 0.00 (the drive controller's ramp leaves
+// residues like -1e-17, which would print as -0.00).
+double Shown(double command) { return std::isfinite(command) && std::abs(command) >= kShown ? command : 0.0; }
 }  // namespace
 
 hardware_interface::CallbackReturn RoverHardwareStub::on_init(
@@ -20,6 +25,7 @@ hardware_interface::CallbackReturn RoverHardwareStub::on_init(
   }
   states_.clear();
   commanded_.clear();
+  command_interfaces_.clear();
   for (const auto& joint : info_.joints) {
     for (const auto& state : joint.state_interfaces) states_.push_back(joint.name + "/" + state.name);
     for (const auto& command : joint.command_interfaces) {
@@ -29,6 +35,7 @@ hardware_interface::CallbackReturn RoverHardwareStub::on_init(
         return hardware_interface::CallbackReturn::ERROR;
       }
       commanded_.push_back(joint.name);
+      command_interfaces_.push_back(joint.name + "/" + command.name);
     }
   }
   RCLCPP_WARN(get_logger(),
@@ -51,17 +58,23 @@ hardware_interface::return_type RoverHardwareStub::read(const rclcpp::Time& /*ti
 
 hardware_interface::return_type RoverHardwareStub::write(const rclcpp::Time& time,
                                                          const rclcpp::Duration& /*period*/) {
-  std::vector<double> commands;
-  commands.reserve(commanded_.size());
-  for (const auto& joint : commanded_) {
-    commands.push_back(get_command<double>(joint + "/" + hardware_interface::HW_IF_VELOCITY));
+  commands_.clear();
+  bool moving = false;
+  for (const auto& name : command_interfaces_) {
+    commands_.push_back(get_command<double>(name));
+    moving = moving || Shown(commands_.back()) != 0.0;
   }
-  const std::string line = WouldSend(commanded_, commands);
-  if (!line.empty() && (!logged_once_ || time.nanoseconds() - logged_ >= kLogPeriod)) {
-    RCLCPP_WARN(get_logger(), "No motors are connected: %s", line.c_str());
+  // The commands at once when the wheels start, then at most once a second while they turn, and one line when they
+  // are back at zero, so that the log's last line is what the wheels were last told. The line is only formatted when
+  // it is logged: write() runs at the controller manager's rate.
+  if (moving && (!moving_ || time.nanoseconds() - logged_ >= kLogPeriod)) {
+    RCLCPP_WARN(get_logger(), "No motors are connected: %s", WouldSend(commanded_, commands_).c_str());
     logged_ = time.nanoseconds();
-    logged_once_ = true;
+  } else if (!moving && moving_) {
+    RCLCPP_WARN(get_logger(), "No motors are connected: would send 0 to every wheel");
+    logged_ = time.nanoseconds();
   }
+  moving_ = moving;
   return hardware_interface::return_type::OK;
 }
 
@@ -70,7 +83,7 @@ std::string RoverHardwareStub::WouldSend(const std::vector<std::string>& joints,
   std::ostringstream line;
   line << std::fixed << std::setprecision(2) << "would send ";
   for (size_t k = 0; k < joints.size() && k < commands.size(); ++k) {
-    const double value = std::isfinite(commands[k]) ? commands[k] : 0.0;
+    const double value = Shown(commands[k]);
     moving = moving || value != 0.0;
     line << (k ? ", " : "") << joints[k] << ' ' << value;
   }

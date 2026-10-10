@@ -1,8 +1,9 @@
 """rover.launch.py, the real rover's ROS 2 stack, with the hardware stub (design spec 2026-10-09, 6.3), and
-controllers.launch.py, which it shares with the simulation: what they start, and a run in a private ROS domain: the
-controllers come up, /joint_states reports zero motion, a /cmd_vel command reaches the stub, which logs what it would
-send, and /odom stays at the origin. CTest runs it with this package's install on AMENT_PREFIX_PATH
-(CMakeLists.txt)."""
+controllers.launch.py, which it shares with the simulation: what they start, and a run in a private ROS domain (and a
+ROS_HOME of its own, for the spawner's lock file): the controllers come up, /joint_states reports zero motion, a
+/cmd_vel command reaches the stub, which logs what it would send and, once the drive controller's timeout has braked
+the wheels, that they are back at zero, and /odom stays at the origin. CTest runs it with this package's install on
+AMENT_PREFIX_PATH (CMakeLists.txt)."""
 import contextlib
 import importlib.util
 import os
@@ -12,6 +13,8 @@ import subprocess
 import tempfile
 import time
 import unittest
+
+import yaml
 
 PACKAGE = Path(__file__).resolve().parents[1]
 JOINTS = {'wheel_fl_joint', 'wheel_rl_joint', 'wheel_fr_joint', 'wheel_rr_joint', 'rocker_left_joint',
@@ -64,12 +67,30 @@ class Description(unittest.TestCase):
         description = load(PACKAGE / 'launch' / 'rover.launch.py', 'rover_launch').generate_launch_description()
         found = defaults(description)
         self.assertEqual(found['controller'], 'drive_controller')
+        self.assertEqual(found['controllers'], str(PACKAGE / 'config' / 'controllers.yaml'))
         self.assertEqual(found['hardware'], 'rover_control/RoverHardwareStub')
         self.assertTrue(found['rover_yaml'].endswith(os.path.join('config', 'rover.yaml')))
         self.assertEqual([e.node_executable for e in description.entities if isinstance(e, Node)],
                          ['robot_state_publisher', 'ros2_control_node'])
-        self.assertEqual(len([e for e in description.entities
-                              if isinstance(e, IncludeLaunchDescription)]), 1)
+        includes = [e for e in description.entities if isinstance(e, IncludeLaunchDescription)]
+        self.assertEqual(len(includes), 1)
+
+    def test_rover_launch_hands_its_controllers_file_to_the_spawner(self):
+        """controllers:=<file> reaches controllers.launch.py's spawner (ros2_control_node takes the same
+        substitution), so the argument --show-args lists from the include is not a dead one."""
+        from launch import LaunchContext
+        from launch.actions import IncludeLaunchDescription
+        description = load(PACKAGE / 'launch' / 'rover.launch.py', 'rover_launch').generate_launch_description()
+        include = [e for e in description.entities if isinstance(e, IncludeLaunchDescription)][0]
+        context = LaunchContext()
+        context.launch_configurations.update(controller='drive_controller', controllers='/team/controllers.yaml')
+
+        def text(substitutions):  # a name is a string, a value a list of substitutions
+            from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
+            return perform_substitutions(context, normalize_to_list_of_substitutions(substitutions))
+
+        arguments = {text(name): text(value) for name, value in include.launch_arguments}
+        self.assertEqual(arguments['controllers'], '/team/controllers.yaml')
 
     def test_controllers_launch_spawns_both_with_the_contracts_topics(self):
         module = load(PACKAGE / 'launch' / 'controllers.launch.py', 'controllers_launch')
@@ -90,9 +111,17 @@ class Run(unittest.TestCase):
         from geometry_msgs.msg import TwistStamped
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import JointState
-        os.environ.update(ROS_DOMAIN_ID=DOMAIN, ROS_AUTOMATIC_DISCOVERY_RANGE='LOCALHOST')
+        from ament_index_python.packages import get_package_share_directory
+        installed = Path(get_package_share_directory('rover_control')) / 'config' / 'controllers.yaml'
+        radius = yaml.safe_load(installed.read_text())['drive_controller']['ros__parameters']['wheel_radius']
         got = {'/joint_states': [], '/odom': []}
         with tempfile.TemporaryDirectory() as tmp:
+            # The spawner's lock file in a ROS_HOME of this run's own (in ~/.ros every spawner on the machine waits
+            # for the same one), the logs where they would go (rover_sim's gzenv.private_ros_home).
+            logs = os.environ.get('ROS_LOG_DIR') or str(
+                Path(os.environ.get('ROS_HOME') or Path.home() / '.ros').expanduser() / 'log')
+            os.environ.update(ROS_DOMAIN_ID=DOMAIN, ROS_AUTOMATIC_DISCOVERY_RANGE='LOCALHOST',
+                              ROS_HOME=str(Path(tmp) / 'ros_home'), ROS_LOG_DIR=logs)
             log = Path(tmp) / 'launch.log'
             with open(log, 'w') as out:
                 launch = subprocess.Popen(['ros2', 'launch', 'rover_control', 'rover.launch.py'],
@@ -113,13 +142,21 @@ class Run(unittest.TestCase):
                 while time.monotonic() < end:
                     cmd.publish(msg)
                     rclpy.spin_once(node, timeout_sec=0.05)
+                # No command: the drive controller's 0.5 s timeout and its ramp bring the wheels back to zero.
+                end = time.monotonic() + 2.0
+                while time.monotonic() < end:
+                    rclpy.spin_once(node, timeout_sec=0.05)
             finally:
                 node.destroy_node()
                 rclpy.shutdown()
                 stop(launch)
             text = log.read_text()
         self.assertIn('No motors are connected: RoverHardwareStub reports zero motion', text)
-        self.assertIn('No motors are connected: would send wheel_fl_joint 3.33', text)  # 0.5 m/s / 0.15 m
+        # 0.5 m/s / the wheel radius, the installed controllers.yaml's (rover.yaml's: test_controllers_yaml).
+        sent = f'No motors are connected: would send wheel_fl_joint {0.5 / radius:.2f}'
+        self.assertIn(sent, text)
+        last = text.rfind('No motors are connected: would send')  # the log's last word on the wheels: stopped
+        self.assertEqual(last, text.rfind('No motors are connected: would send 0 to every wheel'), text[last:])
         joints = got['/joint_states'][-1]
         self.assertEqual(set(joints.name), JOINTS)
         self.assertEqual(set(joints.position), {0.0})

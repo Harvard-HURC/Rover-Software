@@ -10,9 +10,11 @@ the log the commands it would send), ros2_control_node with config/controllers.y
 (geometry_msgs/TwistStamped) and publishes /odom and odom -> base_link. The simulation runs the same controllers.yaml
 (rover_sim's sim.launch.py).
 
-Arguments: controller (the drive controller in controllers.yaml, default drive_controller), hardware (the
-ros2_control hardware plugin, default rover_control/RoverHardwareStub), rover_yaml (the rover's numbers, default
-rover_description's config/rover.yaml; a relative path is from the folder the launch runs in).
+Arguments: controller (the drive controller in the controllers' file, default drive_controller), controllers (that
+file, for the controller manager and the spawner alike, default this package's config/controllers.yaml), hardware
+(the ros2_control hardware plugin, default rover_control/RoverHardwareStub), rover_yaml (the rover's numbers, default
+rover_description's config/rover.yaml), timeout ([s] for the controller manager to come up, default 120); a relative
+path is from the folder the launch runs in.
 """
 import os
 from pathlib import Path
@@ -30,14 +32,17 @@ PACKAGE = Path(__file__).resolve().parent.parent  # share/rover_control, or the 
 
 def generate_launch_description():
     description = get_package_share_directory('rover_description')
-    controllers = str(PACKAGE / 'config' / 'controllers.yaml')
+    controllers = PathJoinSubstitution([os.getcwd(), LaunchConfiguration('controllers')])
     robot_description = ParameterValue(Command([
         'xacro ', os.path.join(description, 'urdf', 'rover.urdf.xacro'),
         ' rover_yaml:=', PathJoinSubstitution([os.getcwd(), LaunchConfiguration('rover_yaml')]),
         ' ros2_control_plugin:=', LaunchConfiguration('hardware')]), value_type=str)
     return LaunchDescription([
         DeclareLaunchArgument('controller', default_value='drive_controller',
-                              description='the drive controller in controllers.yaml'),
+                              description="the drive controller in the controllers' file"),
+        DeclareLaunchArgument('controllers', default_value=str(PACKAGE / 'config' / 'controllers.yaml'),
+                              description="the controllers' parameters (a relative path: from the current "
+                                          'folder)'),
         DeclareLaunchArgument('hardware', default_value='rover_control/RoverHardwareStub',
                               description='the ros2_control hardware plugin'),
         DeclareLaunchArgument('rover_yaml',
