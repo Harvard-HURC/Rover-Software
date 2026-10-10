@@ -41,6 +41,11 @@ find_package(gz-common5 REQUIRED COMPONENTS geospatial)
 # (env-hooks/rover_sim.dsv.in). Every plugin may use gz-rendering (camera
 # projection) and gz-common's ImageHeightmap (plugins/terrain_heightmap.hh);
 # the linker keeps only what a plugin uses.
+if(APPLE)
+  set(used_libraries_only "LINKER:-dead_strip_dylibs")
+else()
+  set(used_libraries_only "LINKER:--as-needed")
+endif()
 set(plugin_targets "")
 file(GLOB plugin_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*.cpp")
 foreach(source IN LISTS plugin_sources)
@@ -58,11 +63,7 @@ foreach(source IN LISTS plugin_sources)
   target_link_libraries(${target} PRIVATE gz-sim8::gz-sim8 gz-plugin2::register gz-rendering8::gz-rendering8
                         gz-common5::geospatial)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
-  if(APPLE)
-    target_link_options(${target} PRIVATE "LINKER:-dead_strip_dylibs")
-  else()
-    target_link_options(${target} PRIVATE "LINKER:--as-needed")
-  endif()
+  target_link_options(${target} PRIVATE ${used_libraries_only})
   list(APPEND plugin_targets ${target})
 endforeach()
 install(TARGETS ${plugin_targets} LIBRARY DESTINATION lib/${PROJECT_NAME})
@@ -70,7 +71,11 @@ install(TARGETS ${plugin_targets} LIBRARY DESTINATION lib/${PROJECT_NAME})
 # RoverSimSystem: the simulated rover's ros2_control hardware (ros2_control/), which gz_ros2_control loads inside
 # Gazebo through pluginlib (rover_sim_system.xml): each wheel's velocity command into the drivetrain's motor model
 # (plugins/rover_components.hh), the joints' state and the motor currents back. It takes only gz_ros2_control's
-# interface header: gz_ros2_control's library is the Gazebo system that loads this one.
+# interface header: gz_ros2_control's library is the Gazebo system that loads this one. It and its test link only the
+# libraries they use, as the plugins do: the ROS packages' exported link lines also name their messages' Python
+# extension libraries (*__rosidl_generator_py, 15 of them), which need libpython (here only the py312 build of
+# libgz-sim8 happened to bring it) and which ROS 2's library loader would walk past, one by one, every time it loads
+# a library after this one (rcutils' search of the loaded images on macOS; docs/sim/manual.md, Known limitations).
 find_package(gz_ros2_control REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -86,6 +91,7 @@ target_include_directories(rover_sim_system PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(rover_sim_system PUBLIC gz-sim8::gz-sim8 hardware_interface::hardware_interface
                       pluginlib::pluginlib rclcpp::rclcpp rclcpp_lifecycle::rclcpp_lifecycle)
 target_compile_options(rover_sim_system PRIVATE -Wall -Wextra -Wpedantic)
+target_link_options(rover_sim_system PRIVATE ${used_libraries_only})
 install(TARGETS rover_sim_system LIBRARY DESTINATION lib)
 pluginlib_export_plugin_description_file(gz_ros2_control rover_sim_system.xml)
 
@@ -99,6 +105,7 @@ find_package(GTest REQUIRED)
 add_executable(test_rover_sim_system ros2_control/test/test_rover_sim_system.cpp)
 target_link_libraries(test_rover_sim_system PRIVATE rover_sim_system GTest::gtest)
 target_compile_options(test_rover_sim_system PRIVATE -Wall -Wextra -Wpedantic)
+target_link_options(test_rover_sim_system PRIVATE ${used_libraries_only})
 add_test(NAME test_rover_sim_system COMMAND test_rover_sim_system)
 
 # The ament linters (ament_lint_auto) do not run on this package: its code keeps
