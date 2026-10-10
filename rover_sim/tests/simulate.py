@@ -4,7 +4,7 @@ Gazebo's Python TestFixture runs the server inside this process, so a run is
 repeatable: commands go out over gz-transport every 20 ms of sim time, and
 the state is read from the entity-component manager after the last step.
 The rover is model://rover (the physical drivetrain, its command timeout on
-the wall clock) or one built from gen_model Params (physical(): the same
+the wall clock) or one built from a rover_config.Variant (physical(): the same
 with the timeout on sim time, so runs repeat exactly; diffdrive(): Gazebo's
 DiffDrive), on flat ground (world_sdf) or on a synthetic terrain with a
 ground map (ground_world: heightmap, ground.png and ground.json as the
@@ -36,8 +36,10 @@ import numpy as np
 from PIL import Image
 from worldfiles import SIM_DIR, temp_sdf
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
 import gzenv  # noqa: E402
+import rover_config  # noqa: E402
+from rover_config import ROVER, Variant  # noqa: E402
 from urc import sdf, terrain, terrains  # noqa: E402
 
 # Set before Gazebo starts (gzenv): where model://rover and the plugins live,
@@ -132,42 +134,45 @@ def variant_sdf(text, rover_uri=None, solver=None):
 
 @contextlib.contextmanager
 def rover_model(params):
-    """URI of a temporary rover model built from gen_model Params `params`."""
+    """URI of a temporary rover model built from the rover_config.Variant `params` (gen_rover.build_sdf)."""
     with tempfile.TemporaryDirectory(prefix="rover_model_") as directory:
         model = Path(directory) / "rover"
         model.mkdir()
-        (model / "model.sdf").write_text(gen_model.build_sdf(params))
+        (model / "model.sdf").write_text(gen_rover.build_sdf(params))
         (model / "model.config").write_text(sdf.model_config("rover", "A test variant of the rover.",
                                                              "sim/tests/simulate.py"))
         yield model.as_uri()
 
 
-def physical(**drive):
-    """Params of the rover with the physical drivetrain (the default), its
-    DriveParams changed by `drive`; the command timeout runs on sim time, so
-    runs repeat exactly."""
-    return gen_model.Params(drive=gen_model.DriveParams(mode="physical", cmd_timeout_clock="sim", **drive))
+def physical(**sections):
+    """The rover with the physical drivetrain (the default) as a
+    rover_config.Variant, sections of rover.yaml and sim.yaml changed by
+    `sections` (Variant.replace: physical(contact={"dig": False})); the
+    command timeout runs on sim time, so runs repeat exactly."""
+    drivetrain = {"mode": "physical", "cmd_timeout_clock": "sim", **sections.pop("drivetrain", {})}
+    return Variant().replace(drivetrain=drivetrain, **sections)
 
 
-def diffdrive(**params):
-    """Params of the rover with Gazebo's DiffDrive (design spec D22: the A/B
-    and cost reference), other Params changed by `params`."""
-    return gen_model.Params(drive=gen_model.DriveParams(mode="diffdrive"), **params)
+def diffdrive(**sections):
+    """The rover with Gazebo's DiffDrive (design spec D22: the A/B and cost
+    reference) as a rover_config.Variant, other sections changed by
+    `sections` (diffdrive(diffdrive={"mu_lateral": 1.0}))."""
+    drivetrain = {"mode": "diffdrive", **sections.pop("drivetrain", {})}
+    return Variant().replace(drivetrain=drivetrain, **sections)
 
 
 @contextlib.contextmanager
 def world_file(world=None, extra="", spawn_z=0.02, rover_uri=None, params=None, default_surface=None, solver=None):
     """Path of the world to run: world_sdf(extra, spawn_z, ...) when world is
     None, else the SDF file `world` (a copy when its rover or solver change).
-    The rover: rover_uri, or one built from Params `params`, or model://rover.
-    A physical rover built from params takes default_surface as its
-    drivetrain's default surface, which is what it feels on a plane."""
+    The rover: rover_uri, or one built from the rover_config.Variant `params`,
+    or model://rover. A physical rover built from params takes default_surface
+    as its drivetrain's default surface, which is what it feels on a plane."""
     with contextlib.ExitStack() as stack:
         if params is not None:
             assert rover_uri is None, "rover_uri or params, not both"
-            if default_surface is not None and params.drive.mode == "physical":
-                drive = dataclasses.replace(params.drive, default_surface=default_surface)
-                params, default_surface = dataclasses.replace(params, drive=drive), None
+            if default_surface is not None and params.sim.drivetrain.mode == "physical":
+                params, default_surface = params.replace(contact={"default_surface": default_surface}), None
             rover_uri = stack.enter_context(rover_model(params))
         if world is None:
             text = world_sdf(extra, spawn_z, rover_uri or ROVER_URI, default_surface, solver)
@@ -211,7 +216,7 @@ def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None)
     messages = {topic: [] for topic, _ in subscribe}
     for topic, msg_type in subscribe:
         node.subscribe(msg_type, topic, messages[topic].append)
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
     scripted = bool(cmd) and isinstance(cmd[0], (tuple, list))
     twist = Twist()
     if not scripted:
@@ -298,7 +303,7 @@ def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
     20 ms of sim time, until it is within `tolerance` of the path's end
     (then it stops) or `seconds` of sim time have passed."""
     node = Node()
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
     goal = tuple(path[-1])
     handles, trace, arrived = {}, [], []
     twist = Twist()
@@ -332,13 +337,13 @@ def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
     return Drive(np.array(trace), arrived[0] if arrived else None)
 
 
-def spin_ratio(traction, dig=1.0, params=gen_model.Params()):
+def spin_ratio(traction, dig=1.0, rover=ROVER):
     """The yaw rate of the rover turning in place on ground `traction`
     (terrains.Traction) over the commanded rate, quasi-static and fresh or at
     dig factor `dig` (design spec 5.6): the root r of mu_k (c sx - a sy) / |s|
     = crr D c + bulldoze D^2 a, wheels at (+-a, +-c), sx = c (1 - r), sy = a r;
-    0 if it cannot turn."""
-    a, c = params.wheel_dx, params.pivot_y
+    0 if it cannot turn. rover: rover.yaml's numbers (rover_config.ROVER)."""
+    a, c = rover.wheel.dx, rover.rocker.pivot_y
     resist = traction.crr * dig * c + traction.bulldoze * dig * dig * a
 
     def surplus(r):
@@ -399,7 +404,7 @@ def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_o
     needs; a flat one gets a 1 mm north-west corner sample, because Gazebo
     scales by the highest pixel). ground: (n, n) type indices, ground.png;
     rows and ground_options (ground_json's keywords): ground.json. The rover:
-    model rover_uri, or one built from Params `params`, at rover = (x, y,
+    model rover_uri, or one built from the rover_config.Variant `params`, at rover = (x, y,
     yaw), `lift` above the terrain and tilted to its slope. terrain_extra:
     SDF of more shapes in the terrain's link; extra: SDF of more models;
     gravity [m/s^2] (SDF's default; tilted, flat ground stands in for a slope
@@ -469,7 +474,7 @@ def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
 
     for name in worlds:
         node.subscribe(WorldStatistics, f"/world/{name}/stats", on_stats)
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
     stop = threading.Event()
 
     def loop():

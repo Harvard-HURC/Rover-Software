@@ -21,8 +21,7 @@ import gpu
 from simulate import ROVER_URI, cpu_time_per_step, diffdrive, simulate, twist_at, variant_sdf, world_sdf
 from worldfiles import MODELS, SIM_DIR, temp_sdf
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
-import gzenv  # noqa: E402
+import gzenv  # noqa: E402  (worldfiles puts sim/ on the path)
 import rover_config  # noqa: E402
 import viewers  # noqa: E402
 from urc import dem, geo, sdf, terrain, terrains  # noqa: E402
@@ -274,7 +273,7 @@ class SimulateRuns(unittest.TestCase):
         DiffDrive rover in place (sim/README.md, skid-steer friction), while
         diffdrive() turns (test_rover_sim). The physical rover's own contact
         callback sets friction, so this needs the DiffDrive variant."""
-        square = dataclasses.replace(diffdrive(), mu_lateral=1.0)
+        square = diffdrive(diffdrive={"mu_lateral": 1.0})
         yaw = simulate(2.0, cmd=(0.0, 1.0), params=square).poses["base_link"][5]
         self.assertLess(abs(yaw), 0.05)
 
@@ -295,7 +294,7 @@ class CostHelpers(unittest.TestCase):
     def test_cost_of_a_driving_run(self):
         node = Node()
         xs = []
-        node.subscribe(Odometry, gen_model.GROUND_TRUTH_TOPIC, lambda m: xs.append(m.pose.position.x))
+        node.subscribe(Odometry, rover_config.GROUND_TRUTH_TOPIC, lambda m: xs.append(m.pose.position.x))
         with temp_sdf(world_sdf()) as world:
             cost = cpu_time_per_step({"flat": world}, iterations=4000, runs=1, schedule=[(0.0, 0.5, 0.0)])["flat"]
         self.assertTrue(0 < cost.per_step < 0.01, cost)

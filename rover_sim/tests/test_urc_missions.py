@@ -12,7 +12,7 @@ import numpy as np
 from worldfiles import WORLDS, gz_check, model_root, needs_world, rock_vertices, sheet, skip_if_missing, vec
 from worldfiles import terrain as world_terrain
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+from rover_config import ROVER  # noqa: E402  (worldfiles puts sim/ on the path)
 from urc import appearance, dem, lander, landscape, props, realism, routes, rules, sdf, terrain, terrains  # noqa: E402
 from urc import textures  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
@@ -78,7 +78,7 @@ class Autonomy(unittest.TestCase):
     (the sheet's heightmap, world coordinates): the DEM as it is."""
 
     ROCK_STOP = 0.25  # [m] the rover crosses 0.2 m rocks, 0.3 m ones stop it (proving ground)
-    ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width / 2  # [m] over the wheels
+    ROVER_HALF_WIDTH = ROVER.rocker.pivot_y + ROVER.wheel.width / 2  # [m] over the wheels
 
     @classmethod
     def setUpClass(cls):

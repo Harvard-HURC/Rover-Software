@@ -26,10 +26,11 @@ import numpy as np
 from PIL import Image as PILImage
 
 import gpu
-from simulate import gen_model, world_sdf
+from simulate import world_sdf
 from worldfiles import SIM_DIR, gz_check, temp_sdf
 
-import viewers  # noqa: E402  (worldfiles puts sim/ on the path)
+import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+import viewers  # noqa: E402
 from urc import meshes  # noqa: E402
 from urc import terrain as terrains  # noqa: E402
 
@@ -366,7 +367,7 @@ class Flight(unittest.TestCase):
         world = world_sdf(render_map.fly_model(FLY, (-6, 0, 3, 0, 0.4, 0)))
         r = fly(world, 9.0, events=[(1.0, viewers.FLY_MODE_TOPIC, text("follow")),
                                     (6.0, viewers.FLY_MODE_TOPIC, text("free"))],
-                holds=[(0.0, 9.0, gen_model.CMD_VEL_TOPIC, twist(0.6))], track=["rover"])
+                holds=[(0.0, 9.0, rover_config.CMD_VEL_TOPIC, twist(0.6))], track=["rover"])
 
         def offset(t):
             return np.array(at(r, t)[:3]) - at(r, t, "rover")

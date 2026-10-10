@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Headless physics tests for the rover model (pixi run sim-test)."""
-import dataclasses
 import json
 import math
 import unittest
 
-from simulate import diffdrive, gen_model, physical, simulate, spin_ratio
+from simulate import diffdrive, physical, simulate, spin_ratio
 from worldfiles import world_copy
 
-from urc import terrains  # noqa: E402  (worldfiles puts sim/ on the path)
+import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+from rover_config import ROVER  # noqa: E402
+from urc import terrains  # noqa: E402
 
-P = gen_model.Params()
 STEP = 0.10
 BLOCK_UNDER_FL = f"""
     <model name="block">
       <static>true</static>
-      <pose>{P.wheel_dx} {P.pivot_y} {STEP / 2} 0 0 0</pose>
+      <pose>{ROVER.wheel.dx} {ROVER.rocker.pivot_y} {STEP / 2} 0 0 0</pose>
       <link name="link">
         <collision name="collision"><geometry><box><size>0.4 0.3 {STEP}</size></box></geometry></collision>
       </link>
@@ -38,11 +38,11 @@ class Suspension(unittest.TestCase):
         # The left rocker pitches front-up by atan(step / wheelbase); the
         # differential puts the body halfway, so each rocker sees half of it.
         self.assertLess(abs(q_l + q_r), 0.005)
-        self.assertAlmostEqual(q_l, -math.atan(STEP / (2 * P.wheel_dx)) / 2, delta=0.01)
+        self.assertAlmostEqual(q_l, -math.atan(STEP / (2 * ROVER.wheel.dx)) / 2, delta=0.01)
         # A rigid chassis would leave one wheel in the air.
         ground = {"wheel_fl": STEP, "wheel_fr": 0.0, "wheel_rl": 0.0, "wheel_rr": 0.0}
         for wheel, height in ground.items():
-            self.assertAlmostEqual(s.poses[wheel][2], height + P.wheel_radius, delta=0.02, msg=wheel)
+            self.assertAlmostEqual(s.poses[wheel][2], height + ROVER.wheel.radius, delta=0.02, msg=wheel)
 
 
 class DiffDriveRover(unittest.TestCase):
@@ -74,39 +74,39 @@ class Topics(unittest.TestCase):
         from gz.msgs10.model_pb2 import Model
         from gz.msgs10.odometry_pb2 import Odometry
 
-        topics = [(gen_model.IMU_TOPIC, IMU), (gen_model.JOINT_STATE_TOPIC, Model),
-                  (gen_model.ODOM_TOPIC, Odometry), (gen_model.GROUND_TRUTH_TOPIC, Odometry)]
+        topics = [(rover_config.IMU_TOPIC, IMU), (rover_config.JOINT_STATE_TOPIC, Model),
+                  (rover_config.ODOM_TOPIC, Odometry), (rover_config.GROUND_TRUTH_TOPIC, Odometry)]
         s = simulate(1.0, subscribe=topics)
         for topic, _ in topics:
             self.assertTrue(s.messages[topic], f"nothing on {topic}")
-        imu = s.messages[gen_model.IMU_TOPIC][-1]
+        imu = s.messages[rover_config.IMU_TOPIC][-1]
         self.assertEqual(frame_id(imu.header), "base_link")
         a = imu.linear_acceleration
         self.assertAlmostEqual(math.sqrt(a.x**2 + a.y**2 + a.z**2), 9.8, delta=0.3)
-        joints = {j.name for j in s.messages[gen_model.JOINT_STATE_TOPIC][-1].joint}
+        joints = {j.name for j in s.messages[rover_config.JOINT_STATE_TOPIC][-1].joint}
         self.assertEqual(joints, {"rocker_left_joint", "rocker_right_joint", "wheel_fl_joint",
                                   "wheel_rl_joint", "wheel_fr_joint", "wheel_rr_joint",
-                                  gen_model.PAN_JOINT, gen_model.TILT_JOINT})
+                                  rover_config.PAN_JOINT, rover_config.TILT_JOINT})
 
 
 class PhysicalRover(unittest.TestCase):
-    """The rover with the physical drivetrain (the default, DriveParams mode
-    "physical", plugins/rover_drivetrain.cpp) on the flat ground of these
+    """The rover with the physical drivetrain (the default, sim.yaml's
+    drivetrain mode physical, plugins/rover_drivetrain.cpp) on the flat ground of these
     tests: a plane, ground of the drivetrain's default surface
     (terrains.TYPES). Its calibration against the design spec is
     test_drivetrain.py."""
 
     PARAMS = physical()
-    GROUND = terrains.TYPES[PARAMS.drive.default_surface].traction
+    GROUND = terrains.TYPES[PARAMS.sim.contact.default_surface].traction
 
     def test_rests_level_with_all_wheels_down(self):
         s = simulate(2.0, extra=BLOCK_UNDER_FL, spawn_z=STEP + 0.02, params=self.PARAMS)
         q_l, q_r = s.rockers["rocker_left_joint"], s.rockers["rocker_right_joint"]
         self.assertLess(abs(q_l + q_r), 0.005)
-        self.assertAlmostEqual(q_l, -math.atan(STEP / (2 * P.wheel_dx)) / 2, delta=0.01)
+        self.assertAlmostEqual(q_l, -math.atan(STEP / (2 * ROVER.wheel.dx)) / 2, delta=0.01)
         ground = {"wheel_fl": STEP, "wheel_fr": 0.0, "wheel_rl": 0.0, "wheel_rr": 0.0}
         for wheel, height in ground.items():
-            self.assertAlmostEqual(s.poses[wheel][2], height + P.wheel_radius, delta=0.02, msg=wheel)
+            self.assertAlmostEqual(s.poses[wheel][2], height + ROVER.wheel.radius, delta=0.02, msg=wheel)
 
     def test_drives_straight(self):
         s = simulate(4.0, cmd=(0.5, 0.0), params=self.PARAMS)
@@ -118,7 +118,8 @@ class PhysicalRover(unittest.TestCase):
     def test_turns_in_place_as_its_ground_allows(self):
         """Skid-steer turning in place: the closed-form yaw ratio of the default
         surface (design spec 5.6), not DiffDrive's 0.89."""
-        s = simulate(6.0, cmd=[(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)], params=physical(dig=False), trace_every=10)
+        s = simulate(6.0, cmd=[(0.0, 0.0, 0.0), (0.5, 0.0, 1.0)], params=physical(contact={"dig": False}),
+                     trace_every=10)
         rate = s.trace[s.trace[:, 0] >= 3.0, 7].mean()
         self.assertAlmostEqual(rate, spin_ratio(self.GROUND), delta=0.04)
         x, y = s.poses["base_link"][:2]
@@ -128,18 +129,18 @@ class PhysicalRover(unittest.TestCase):
         from gz.msgs10.odometry_pb2 import Odometry
         from gz.msgs10.stringmsg_pb2 import StringMsg
 
-        topics = [(gen_model.ODOM_TOPIC, Odometry), (gen_model.DRIVETRAIN_TOPIC, StringMsg)]
+        topics = [(rover_config.ODOM_TOPIC, Odometry), (rover_config.DRIVETRAIN_TOPIC, StringMsg)]
         s = simulate(1.0, cmd=(0.3, 0.0), subscribe=topics, params=self.PARAMS)
-        odom = s.messages[gen_model.ODOM_TOPIC][-1]
+        odom = s.messages[rover_config.ODOM_TOPIC][-1]
         self.assertEqual(frame_id(odom.header), "odom")
         self.assertGreater(odom.pose.position.x, 0.05)
-        state = json.loads(s.messages[gen_model.DRIVETRAIN_TOPIC][-1].data)
+        state = json.loads(s.messages[rover_config.DRIVETRAIN_TOPIC][-1].data)
         self.assertEqual(state["cmd"], [0.3, 0.0])
-        self.assertEqual({w["surface"] for w in state["wheels"].values()}, {self.PARAMS.drive.default_surface})
+        self.assertEqual({w["surface"] for w in state["wheels"].values()}, {self.PARAMS.sim.contact.default_surface})
 
     def test_loads_in_rover_test(self):
         """The test ground, with its particle-emitter system (idle: the rover has
-        dust emitters only with DriveParams.dust, off by default)."""
+        dust emitters only with sim.yaml dust on, off by default)."""
         with world_copy("rover_test") as world:
             s = simulate(1.0, world=world, params=self.PARAMS)
         _, _, z, roll, pitch, _ = s.poses["base_link"]
@@ -147,7 +148,7 @@ class PhysicalRover(unittest.TestCase):
         self.assertLess(max(abs(roll), abs(pitch)), math.radians(1))
 
     def test_tyre_compliance_rests_and_drives(self):
-        params = dataclasses.replace(self.PARAMS, tire_compliance=True)
+        params = self.PARAMS.replace(tyre_compliance={"enabled": True})
         s = simulate(4.0, cmd=(0.5, 0.0), params=params)
         x, _, z, roll, pitch, _ = s.poses["base_link"]
         self.assertTrue(1.6 <= x <= 2.1, f"x = {x}")
