@@ -189,6 +189,15 @@ class SensorBridge(unittest.TestCase):
                               "/ground_truth/odom"}, names)
         self.assertEqual(names & {"/cmd_vel", "/odom", "/joint_states", "/tf"}, set())
 
+    def test_the_camera_is_bridged_only_while_a_ros_node_reads_it(self):
+        """The camera's entries are lazy: the bridge subscribes to Gazebo's camera topics only while a ROS node
+        subscribes to its, so the camera does not render, and 1280x720 images and point clouds are not converted, for
+        nobody (the bridge runs in every sim.launch.py). The other entries are not: /clock must flow from the start."""
+        lazy = {entry["ros_topic_name"]: entry.get("lazy", False)
+                for entry in yaml.safe_load((SIM_DIR / "bridge.yaml").read_text())}
+        self.assertEqual({name for name, on in lazy.items() if on},
+                         {"/camera/image", "/camera/depth", "/camera/points", "/camera/camera_info"})
+
 
 class SmokeTest(unittest.TestCase):
     """sim.launch.py headless on rover_test (gui:=false sensors:=false: no GPU needed, as on CI's Linux runner), in this

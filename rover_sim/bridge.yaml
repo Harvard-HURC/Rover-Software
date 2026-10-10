@@ -23,7 +23,9 @@
   ros_type_name: std_msgs/msg/String
   gz_type_name: gz.msgs.StringMsg
   direction: GZ_TO_ROS
-# Sensors for the URC missions (rover_sim/urdf/rover_sim.urdf.xacro).
+# Sensors for the URC missions (rover_sim/urdf/rover_sim.urdf.xacro). The camera's topics are lazy: the bridge
+# subscribes to Gazebo's only while a ROS node subscribes to its, so the camera renders and the bridge converts
+# 1280x720 images and point clouds only for a reader (a camera renders only while its topic has subscribers).
 - ros_topic_name: /gps/fix
   gz_topic_name: /model/rover/navsat
   ros_type_name: sensor_msgs/msg/NavSatFix
@@ -34,21 +36,25 @@
   ros_type_name: sensor_msgs/msg/Image
   gz_type_name: gz.msgs.Image
   direction: GZ_TO_ROS
+  lazy: true
 - ros_topic_name: /camera/depth
   gz_topic_name: /model/rover/camera/depth_image
   ros_type_name: sensor_msgs/msg/Image
   gz_type_name: gz.msgs.Image
   direction: GZ_TO_ROS
+  lazy: true
 - ros_topic_name: /camera/points
   gz_topic_name: /model/rover/camera/points
   ros_type_name: sensor_msgs/msg/PointCloud2
   gz_type_name: gz.msgs.PointCloudPacked
   direction: GZ_TO_ROS
+  lazy: true
 - ros_topic_name: /camera/camera_info
   gz_topic_name: /model/rover/camera/camera_info
   ros_type_name: sensor_msgs/msg/CameraInfo
   gz_type_name: gz.msgs.CameraInfo
   direction: GZ_TO_ROS
+  lazy: true
 # Status LED (rule 1.e.ii): publish "red", "blue", "green" (flashing) or "off".
 - ros_topic_name: /led
   gz_topic_name: /model/rover/led
