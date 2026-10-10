@@ -2,6 +2,8 @@
   "source": "USGS 3DEP Original Product Resolution (OPR) DEM, project UT_StateWide_2018_A18 / UT_Southern_QL1_2018 (lidar flown 2018-04-27; QL1: >= 8 pulses/m2, RMSEz <= 10 cm; tiles 0.5 m, NAD83(2011) UTM 12N + NAVD88 GEOID12B)",
   "license": "public domain (USGS)",
   "fetched": "2026-10-06",
+  "recipe": "mdrs_area",
+  "rebuilt": "2026-10-10: tools/usgs_lidar.py (recipe mdrs_area) makes this raster from the files listed here with its content_sha256 in rasters.json, on osx-arm64 with GDAL 3.13.3, PROJ 9.8.1, OpenCV 4.13.0, numpy 2.5.3, laspy 2.7.0",
   "found_via": "https://tnmaccess.nationalmap.gov/api/v1/products?datasets=Original Product Resolution (OPR) Digital Elevation Model (DEM)&bbox=-110.81,38.39,-110.764,38.432",
   "source_tiles": [
     {

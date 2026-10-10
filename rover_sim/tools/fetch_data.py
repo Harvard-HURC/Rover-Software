@@ -61,7 +61,7 @@ TRIES = 5  # per download: the ImageServers answer HTTP 500 now and then, rockyw
 # (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
 CONNECTIONS = 6
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
-LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+LINK = "link it from a clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 STATS_BLOCKS = 16  # blocks per side of a raster's stats
 # How far the stats of a lidar rebuild that is not bit-identical may be from the manifest's: 1 mm for the DEMs, a
 # thousandth of a code for the source map. Rounding differences between platforms (OpenCV's blur, GDAL's bilinear

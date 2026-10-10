@@ -33,7 +33,7 @@ from urc.missions import COURSES, MISSIONS, autonomy  # noqa: E402
 MANIFEST = json.loads((fetch_data.DATA_DIR / fetch_data.MANIFEST).read_text())
 STEP = 0.001  # [deg] the made-up raster's pixel
 TRANSFORM = (-110.79, STEP, 0.0, 38.43, 0.0, -STEP)  # its corner and pixel (GDAL geotransform)
-LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+LINK = "link it from a clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 
 
 def raster_bytes(bands, transform):
@@ -86,7 +86,7 @@ def case(directory, bands):
 
 def add_unofficial(data, name, worlds, required=True):
     """Adds to the manifest in data a raster dem/<name>.tif that fetch-data cannot rebuild (its provenance lists
-    tiles, not exportImage requests), read by `worlds`. Returns its bytes, as a teammate's clone would have it."""
+    tiles, not exportImage requests), read by `worlds`. Returns its bytes, as another clone would have it."""
     body = raster_bytes(dem_band() + 7.0, TRANSFORM)
     (data / "dem" / f"{name}.json").write_text(json.dumps({"source_tiles": ["https://example.test/lidar.tif"]}))
     manifest = json.loads((data / fetch_data.MANIFEST).read_text())
@@ -162,17 +162,44 @@ class Manifest(unittest.TestCase):
         for path in (*dem.SITE_DEMS, farfield.FAR_DEM, farfield.FAR_IMAGERY, autonomy.DEM_PATH, autonomy.NAIP_PATH):
             self.assertIn(f"{Path(path).parent.name}/{Path(path).name}", required)
 
-    def test_each_raster_has_its_provenance_and_an_official_one_its_requests(self):
+    def test_each_raster_has_its_provenance_and_an_official_one_its_source(self):
+        """An official raster's .json lists its exportImage requests, or names the recipe of tools/usgs_lidar.py that
+        makes it and lists every file that recipe reads with its size and SHA-256; a lidar rebuild has its stats."""
         for e in MANIFEST["rasters"]:
             with self.subTest(e["path"]):
                 provenance = json.loads((fetch_data.DATA_DIR / e["provenance"]).read_text())
                 requests = fetch_data.requests_of(provenance)
-                self.assertEqual(bool(requests) and all("exportImage" in url for url in requests), e["official"])
+                recipe = fetch_data.recipe_of(provenance)
+                exported = bool(requests) and all("exportImage" in url for url in requests)
+                self.assertEqual(exported or recipe is not None, e["official"])
+                self.assertEqual(recipe is not None, "stats" in e)
+                if recipe is not None:
+                    self.assertIn(e["path"], recipe.outputs)
+                    for tile in fetch_data.inputs_of(provenance):
+                        self.assertRegex(tile["sha256"], "^[0-9a-f]{64}$")
+                        self.assertGreater(tile["size_bytes"], 0)
+
+    def test_the_lidar_comes_from_usgs(self):
+        """The recipes read USGS's own files only: the OPR DEM tiles on The National Map's S3 bucket and the point
+        clouds on rockyweb (the user, 2026-10-09: no data release; the lidar DEMs rebuilt from USGS's public lidar)."""
+        usgs = ("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/",
+                "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/"
+                "UT_StatewideSouth_2020_A20/")
+        counts = {}
+        for e in MANIFEST["rasters"]:
+            provenance = json.loads((fetch_data.DATA_DIR / e["provenance"]).read_text())
+            if fetch_data.recipe_of(provenance) is not None:
+                tiles = fetch_data.inputs_of(provenance)
+                counts[e["path"]] = len(tiles)
+                for tile in tiles:
+                    self.assertTrue(tile["url"].startswith(usgs), tile["url"])
+        self.assertEqual(counts, {"dem/mdrs_area_lidar2018_0p5m.tif": 11, "dem/route_area_lidar_0p5m.tif": 11,
+                                  "dem/route_area_lidar_0p5m_source.tif": 11})
 
     def test_the_rasters_it_cannot_rebuild_name_their_worlds_and_what_is_planned(self):
-        """A raster that is not official has no copy to fetch, only a
-        teammate's clone: the manifest says which worlds need it (the
-        required ones, read by the simulation) and what is planned."""
+        """A raster that is not official has no copy to fetch, only another
+        clone: the manifest says which worlds need it (the required ones,
+        read by the simulation) and what is planned. None is listed today."""
         self.assertNotIn("mirror", MANIFEST)
         names = {f"urc_{key}" for key in MISSIONS} | set(COURSES)
         for e in MANIFEST["rasters"]:
@@ -183,9 +210,9 @@ class Manifest(unittest.TestCase):
                 self.assertTrue(set(e["worlds"]) <= names, e["worlds"])
                 self.assertEqual(bool(e["worlds"]), e["required"])
                 self.assertTrue(e["rebuild"])
+        self.assertEqual([e["path"] for e in MANIFEST["rasters"] if not e["official"]], [])  # none, since the lidar
         lidar = fetch_data.entry_of(autonomy.DEM_PATH)
-        self.assertEqual((lidar["official"], lidar["worlds"]), (False, ["urc_autonomy"]))
-        self.assertIn("USGS lidar", lidar["rebuild"])
+        self.assertEqual((lidar["official"], lidar["required"]), (True, True))
 
     def test_the_rasters_here_are_the_manifests(self):
         here = [e for e in MANIFEST["rasters"] if (fetch_data.DATA_DIR / e["path"]).exists()]
@@ -212,9 +239,8 @@ class DryRun(unittest.TestCase):
             self.assertIn("dem/route_area_3dep.tif: missing, would fetch from the official source, 1 request(s)", lines)
             self.assertIn("imagery/route_area_naip2024.tif: missing, would fetch from the official source, "
                           "9 request(s)", lines)
-            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, urc_autonomy needs it; fetch-data cannot rebuild it "
-                          "from official sources yet (a script that rebuilds it from the USGS lidar its provenance "
-                          f"lists is planned); {LINK}", lines)
+            self.assertIn("dem/route_area_lidar_0p5m.tif: missing, would rebuild it from the USGS lidar, 11 file(s), "
+                          "371 MB", lines)
 
 
 class Fetch(unittest.TestCase):
@@ -309,7 +335,7 @@ class CannotRebuild(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(lines[1:], [self.line])
 
-    def test_from_a_teammates_clone_it_is_present_and_verified(self):
+    def test_from_another_clone_it_is_present_and_verified(self):
         (self.data / "dem" / "lidar.tif").write_bytes(self.lidar)
         (self.data / "dem" / "made_up.tif").write_bytes(raster_bytes(dem_band(), TRANSFORM))
         self.assertEqual(run(self.data, Server({})), (0, ["dem/made_up.tif: present", "dem/lidar.tif: present"]))

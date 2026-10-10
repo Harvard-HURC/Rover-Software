@@ -11,10 +11,9 @@ regenerating its own worlds): they build under a shared lock and prune
 under an exclusive one (lock).
 
 The terrain rasters are git-ignored (pixi run fetch-data). A world whose
-raster fetch-data cannot rebuild yet (tools/fetch_data.py: the Autonomy
-world's 0.5 m lidar DEM) is skipped when it is not here, saying how to get
-it; the run fails if that world was named, or if any other raster is
-missing.
+raster fetch-data cannot rebuild (rasters.json: not official; none is
+listed today) is skipped when it is not here, saying how to get it; the
+run fails if that world was named, or if any other raster is missing.
 """
 import argparse
 import contextlib
