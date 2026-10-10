@@ -26,13 +26,13 @@
 - The Bash tool stops foreground commands after 10 minutes: run `pixi run test` and the baseline suite in the background (`run_in_background`) with the output in a log under `$T`, and wait for them.
 - Disk: about 23 GB free. Keep `$T` small (logs and patches); no Docker; one pixi environment, the one in SRC.
 - Style: the repository's (PR 1's plan, `rover_sim/README.md`): short declarative sentences, units in brackets, numbers with their source label (A) assumed, (M) measured or tuned, (R) from a reference, and dated user decisions; Python in `rover_sim` at 120 columns; Python in `rover_description` passes the team's linters (`ament_flake8`: 99 columns, single quotes, Google import order; `ament_pep257`).
-- **Patches.** Tasks 11, 12, 13 and 16 change many existing files in small ways. Each gives the exact change as a unified diff, made from a dry run of this plan on a copy of the branch. The dry run passed the equivalence and drive tests, `check_urdf`, `rover_description`'s colcon tests and linters, the full simulation suite and the byte-for-byte worlds; it could not run `pixi install` (it resolved the lock only), `rover_control`'s and the plugins' colcon tests, or the view launch with joint_state_publisher (not yet in the environment), so those expectations come from the dry lock and PR 1's counts. Save the diff exactly as shown to the file the step names (the Write tool keeps it byte for byte), then apply it with `git apply`; it applies only to the tree the earlier tasks left, so a hunk that does not apply means an earlier task differs from this plan: find the difference instead of forcing the patch.
+- **Patches.** Tasks 11, 12, 13 and 16 change many existing files in small ways. Each gives the exact change as a unified diff, made from a dry run of this plan on a copy of the branch. The dry run passed the equivalence and drive tests, `check_urdf`, `rover_description`'s colcon tests and linters, the full simulation suite and the byte-for-byte worlds; it could not run `pixi install` (it resolved the lock only), `rover_control`'s and the plugins' colcon tests, or the view launch with joint_state_publisher (not yet in the environment), so those expectations come from the dry lock and PR 1's counts. The critic reran it (2026-10-10) on an export of the branch, with this plan's files written, its patches applied in order (all applied cleanly) and xacro 2.1.1 from the rattler cache on `PYTHONPATH`: the ten models with zero differences, `Drives` bit for bit, `check_urdf` on both expansions run from another directory, `rover_description`'s 10 tests and its four linters, and the simulation suite, 546 tests with 9 skips and 2 expected failures (one `test_fly_camera.MapTool` failure came from the export's symlinked worlds, not from this plan). Save the diff exactly as shown to the file the step names (the Write tool keeps it byte for byte), then apply it with `git apply`; it applies only to the tree the earlier tasks left, so a hunk that does not apply means an earlier task differs from this plan: find the difference instead of forcing the patch.
 
 ## Decisions this plan makes
 
 The spec and the task leave these open; each is final for PR 2 and stated in the commit or document that implements it.
 
-1. **The worlds keep including `model://rover`; that model is now generated from the description.** Spec 9.2 row 2 says the simulation spawns from the description, and 6.1 that worlds stop including the rover once `sim.launch.py` spawns it from `robot_description`. Spawning through ROS needs the launch file and `gz_ros2_control`, which are PR 3. In PR 2 the description is the source of `rover_sim/models/rover/model.sdf` (`xacro` -> URDF -> `gz sdf -p` -> post-processing), so the worlds, the station, the referee and every test keep loading the rover as they do, and the worlds and mission sheets regenerate byte for byte (Task 14).
+1. **The worlds keep including `model://rover`; that model is now generated from the description.** Spec 9.2 row 2 says the simulation spawns from the description, and 6.1 that worlds stop including the rover once `sim.launch.py` spawns it from `robot_description`. Spawning through ROS needs the launch file and `gz_ros2_control`, which are PR 3. In PR 2 the description is the source of `rover_sim/models/rover/model.sdf` (`xacro` -> URDF -> `gz sdf -p` -> post-processing), so the worlds, the station, the referee and every test keep loading the rover as they do, and the worlds and mission sheets regenerate byte for byte (Task 14). What PR 3 spawns must be this post-processed model (or `gen_rover.build_sdf`'s output), not Gazebo's own conversion of `/robot_description`: that conversion is the same sdformat parser without `postprocess`, and on the default rover it writes the colours as rgb / 0.8 clipped at 1 (the chassis 1, 0.6875, 0.1875: the camera images change), names the LED's visual `base_link_fixed_joint_lump__led_visual_4` (the referee sets `rover::base_link::led_visual`), and keeps the `<frame>`s and the infinite wheel stops (the critic's raw `gz sdf -p` run, 2026-10-10). PR 3 either spawns the generated file or moves those fixes into the description and the wrapper, and points the equivalence test at what it spawns. `rover_sim` installs only `launch/` today; `urdf/` and `config/` are read from the source tree in PR 2 (`gen_rover.py`, `rover_config.py`), and PR 3's `sim.launch.py` installs them.
 2. **What goes where** (spec 5): a physical fact of the rover goes into `rover_description/config/rover.yaml`; how the simulation models the rover and the world goes into `rover_sim/config/sim.yaml`. The table below sorts every field of `gen_model.Params`, `DriveParams` and `TrackParams` and every number written inline in `gen_model.py`.
 3. **The PI speed loop's gains (`kp`, `ki`) and its speed filter go into `sim.yaml`, not `rover.yaml`.** They tune the motor controller the simulation stands in for against the simulation's own motor model (design 6.9: a turn reaches 90 % within 60 ms). The real motor controller is not chosen; its gains will be tuned on the hardware and live with its driver (PR 3 and later), so these numbers are not facts of the rover. The motor itself (voltage, kt, ke, resistance, gear, efficiency, current limit, rotor inertia, free current, output friction) and the driveline (stiffness, damping, backlash) are physical and go into `rover.yaml`, which the simulation's motor model reads.
 4. **Sensor frames are links on fixed joints, which the conversion merges into their parents.** The description has the frames `imu`, `gnss`, `camera` and `led` for ROS (robot_state_publisher publishes them); `gz sdf -p` merges them into `base_link` and `camera_tilt_link`, moving the sensors that `rover_sim.urdf.xacro` attaches to them (`<gazebo reference="imu">`) with their poses, which is the frozen model's layout: no link needs `preserveFixedJoint`. `tools/gen_rover.py` post-processes the converter's output, each step named in its docstring and checked by the equivalence test: it drops the `<frame>` elements the merge adds, gives the shapes back their names (`<link>_fixed_joint_lump__<name>_visual` -> `<name>_visual`), restores the URDF colours (the converter writes rgb / 0.8), gives links their model-frame poses and joints none, restores the URDF's order of links and joints, writes the wheels' stops as +-1e16 instead of infinity, writes plugin numbers with 9 significant digits, drops the default ODE limits the converter puts into joints a `<gazebo>` block names (anything else there is an error), and points the tread mesh at `model://rover/meshes`. URDF needs no closed loop: the differential stays the RockerDifferential spring plugin.
@@ -124,6 +124,9 @@ Every field (`spacing`, `chunk`, `max_segments`, `berm_base`, `berm_gain`, `berm
 | DiffDrive's `odom_publish_frequency` 50 | `sim.yaml` `drivetrain.odom_rate` (50 Hz: one number for both drives now) |
 | the tyres' isotropic mu 1.0 under the physical drivetrain | `sim.yaml` `drivetrain.tyre_mu` |
 | DiffDrive's `fdir1` (0, 0, 1) | `rover_sim.urdf.xacro` (the axle in the collision frame, not a number to tune) |
+| the dust emitter's fixed settings (`emitting` false, `rate` 0, `scale_rate` 1, the white `diffuse`, the sprite's URI) and its placement (box / 4 behind the tyre's rear edge, `wheel.dx + wheel.radius + dust.box / 4`; its centre box / 2 above the ground, `wheel.dz - wheel.radius + dust.box / 2`; pitched `dust.pitch` up, yaw pi: facing back) | `rover_sim.urdf.xacro` (what the emitter is: idle until the drivetrain sets its rate, at the ground behind the rear wheel; not numbers to tune) |
+| the LED's emissive 0 0 0 1 (off: no glow) | `rover_sim.urdf.xacro` (`<gazebo reference="led">`) |
+| the pan joint's start 0; the lens' rotation (0, pi / 2, 0); the rockers' effort and velocity limits -1 (none) | `rover_sim.urdf.xacro` (`head_controller`); `rover.urdf.xacro` (a cylinder turned onto x; a passive pivot) |
 | the hubs' inertia 1e-4 | `sim.yaml` `tyre_compliance.hub_inertia` |
 | the wheel joints' stops +-1e16 | `sim.yaml` `continuous_stops` (the description's wheel joints are continuous) |
 | `urc.sdf.inertial`'s floor of 1e-6 on every moment | dropped: no moment of the rover is near it (the smallest, the tilt link's iyy, is 5.3e-6) |
@@ -173,7 +176,7 @@ cd /Users/alarion239/Desktop/hurc_ws/src && git status --porcelain && git rev-pa
   && git merge-base --is-ancestor 9208047 HEAD && echo "has import/simulation" && git log --oneline 9208047..HEAD
 ```
 
-Expected: no status lines, `pr2/rover-description`, `has import/simulation`, and one commit: this plan's (`Plan PR 2: ...`). The branch was fast-forwarded to `import/simulation` (9208047, PR 1 with the no-data-release fix) when this plan was written. If `import/simulation` has moved since (`git rev-parse import/simulation` is not 9208047), stop and ask the user: the frozen models of Task 6 must come from the `gen_model.py` the branch has.
+Expected: no status lines, `pr2/rover-description`, `has import/simulation`, and two commits: this plan's (`Plan PR 2: the rover description, ...`) and its critic's fixes (`Plan PR 2: critic fixes`). The branch was fast-forwarded to `import/simulation` (9208047, PR 1 with the no-data-release fix) when this plan was written. If `import/simulation` has moved since (`git rev-parse import/simulation` is not 9208047), stop and ask the user: the frozen models of Task 6 must come from the `gen_model.py` the branch has.
 
 - [ ] **Step 2: Build, generate the worlds and render the maps (GPU, about 3 minutes)**
 
@@ -215,7 +218,7 @@ wc -l < "$T/tests_before.txt"; grep -c '^test_gen_model\.' "$T/tests_before.txt"
 "$T/worlds_sha.sh" /Users/alarion239/Desktop/hurc_ws/src > "$T/worlds_before.sha"; wc -l < "$T/worlds_before.sha"
 ```
 
-Expected: `525`, `44`, and about 958 hashed files (five worlds, their sheets and the models and media they reference).
+Expected: `525` (the critic counted 525 on this branch, 2026-10-10; a lower count elsewhere, such as 510, predates PR 1's review fixes: PR 1's plan, amended 2026-10-09, has 525), `44`, and about 958 hashed files (five worlds, their sheets and the models and media they reference).
 
 - [ ] **Step 4: The baseline suite (about 15 minutes, in the background)**
 
@@ -289,7 +292,7 @@ win-64 ros2-joint-state-publisher-2.4.3-np2py312hf80f32c_21.conda
 win-64 ros2-joint-state-publisher-gui-2.4.3-np2py312hf80f32c_21.conda
 win-64 ros2-xacro-2.1.1-np2py312hf80f32c_21.conda
 ```
-If other packages change (a newer build on the channel), check that none of the simulation's pinned packages (gz-sim8, gz-rendering8, gz-physics, dartsim, ogre-next, python, numpy) moves; if one does, stop and tell the user.
+If other packages change (a newer build on the channel), check that none of the simulation's pinned packages (gz-sim8, gz-rendering8, gz-physics, dartsim, ogre-next, python, numpy) moves; if one does, stop and tell the user. Such builds exist: the channel has `ros2-xacro-2.1.1-np2py312h3d3361c_25` (it is in this machine's rattler cache, 2026-10-09), which needs `ros2-distro-mutex 0.19.0 jazzy_25`, while the lock holds `ros2-distro-mutex 0.16.0 jazzy_21`; the dry lock kept the locked mutex and took the `_21` builds listed above. If it moves `ros2-distro-mutex` instead (every ROS package would change), stop and tell the user rather than accepting the new lock.
 
 - [ ] **Step 3: The tools are there**
 
@@ -945,9 +948,10 @@ Three things in it are on purpose. The tyre's collision is named `<wheel>_tire` 
 - [ ] **Step 5: Run the test to see it pass**
 
 ```bash
+T=/private/tmp/claude-502/rover-pr2
 cd /Users/alarion239/Desktop/hurc_ws/src/rover_description/test && /Users/alarion239/.pixi/bin/pixi run python -m unittest -v test_description 2>&1 | tail -3
-cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run xacro rover_description/urdf/rover.urdf.xacro > /tmp/pr2_rover.urdf \
-  && /Users/alarion239/.pixi/bin/pixi run check_urdf /tmp/pr2_rover.urdf | head -3; rm -f /tmp/pr2_rover.urdf
+cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run xacro rover_description/urdf/rover.urdf.xacro > "$T/rover.urdf" \
+  && /Users/alarion239/.pixi/bin/pixi run check_urdf "$T/rover.urdf" | head -3; rm -f "$T/rover.urdf"
 ```
 
 Expected: `Ran 7 tests`, `OK`; then `robot name is: rover`, `---------- Successfully Parsed XML ---------------`, `root Link: base_link has 6 child(ren)`.
@@ -1013,6 +1017,7 @@ Replace `rover_description/package.xml` with:
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>xacro</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
@@ -3079,8 +3084,8 @@ rover and the variants the tests use are the frozen models gen_model.py wrote (t
 """
 import dataclasses
 import functools
+import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -3330,17 +3335,29 @@ def write_dust_sprite(path, alpha=SIM.dust.alpha):
     textures.dust_puff(path, terrains.DUST_RGB, alpha)
 
 
+def write_if_changed(path, data):
+    """Write `data` (text or bytes) to `path` unless it holds those bytes already, through a hidden file and a rename:
+    main() reads config/surfaces.yaml right after writing it, and two runs at once (pixi run test beside pixi run
+    drive, both run sim-model) must never read a half-written file."""
+    data = data.encode() if isinstance(data, str) else data
+    if path.is_file() and path.read_bytes() == data:
+        return
+    partial = path.with_name(f".{path.name}.{os.getpid()}")
+    partial.write_bytes(data)
+    partial.replace(path)
+
+
 def main():
-    SURFACES_YAML.write_text(surfaces_text())
+    write_if_changed(SURFACES_YAML, surfaces_text())
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     out = MODEL_DIR / "model.sdf"
-    out.write_text(build_sdf(Variant()))
+    write_if_changed(out, build_sdf(Variant()))
     sprite = MODEL_DIR / DUST_SPRITE
     sprite.parent.mkdir(parents=True, exist_ok=True)
     write_dust_sprite(sprite)
     wheel = MODEL_DIR / WHEEL_MESH
     wheel.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(DESCRIPTION_MESH, wheel)
+    write_if_changed(wheel, DESCRIPTION_MESH.read_bytes())
     print(f"wrote {SURFACES_YAML.relative_to(SIM_DIR)}, {out.relative_to(SIM_DIR)}, "
           f"{sprite.relative_to(MODEL_DIR)} and {wheel.relative_to(MODEL_DIR)}")
     import viewers  # here: the station's cameras are the simulation's own models
@@ -3390,8 +3407,9 @@ Expected: `Ran 10 tests`, `OK`. A difference prints as lines like `model/link[wh
 - [ ] **Step 7: The wrapper expands without the generator too**
 
 ```bash
-cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run xacro rover_sim/urdf/rover_sim.urdf.xacro description_dir:=$PWD/rover_description > /tmp/pr2_rover_sim.urdf \
-  && /Users/alarion239/.pixi/bin/pixi run check_urdf /tmp/pr2_rover_sim.urdf | head -3 && grep -c "<gazebo" /tmp/pr2_rover_sim.urdf; rm -f /tmp/pr2_rover_sim.urdf
+T=/private/tmp/claude-502/rover-pr2
+cd /Users/alarion239/Desktop/hurc_ws/src && /Users/alarion239/.pixi/bin/pixi run xacro rover_sim/urdf/rover_sim.urdf.xacro description_dir:=$PWD/rover_description > "$T/rover_sim.urdf" \
+  && /Users/alarion239/.pixi/bin/pixi run check_urdf "$T/rover_sim.urdf" | head -3 && grep -c "<gazebo" "$T/rover_sim.urdf"; rm -f "$T/rover_sim.urdf"
 ```
 
 Expected: `robot name is: rover`, `Successfully Parsed XML`, `root Link: base_link has 6 child(ren)`, then `14` (`<gazebo>` blocks: three sensors, the LED, four tyres, two head controllers, the differential, the drivetrain, the joint state and ground-truth publishers).
@@ -4434,7 +4452,7 @@ wrote .../rover_sim/models/fly_camera/model.sdf
  M rover_sim/models/rover/model.sdf
 ```
 
-(`surfaces.yaml`, the dust sprite and the three cameras' `model.sdf` are written again with the same bytes; `model.config` names the new generator.)
+(`surfaces.yaml` keeps its bytes, so `write_if_changed` leaves it alone; the dust sprite and the three cameras' `model.sdf` are written again with the same bytes; `model.config` names the new generator.)
 
 - [ ] **Step 4: Run the tests to see them pass**
 
@@ -6339,7 +6357,7 @@ git branch -vv | grep pr2/rover-description; git ls-remote --heads origin pr2/ro
 cd /Users/alarion239/Desktop/Rover && git status --porcelain | wc -l
 ```
 
-Expected: a clean tree; the plan's commit and the thirteen commits of Tasks 2 to 13 and 16 (pixi; rover_description x3; fixtures; comparison; sim.yaml; the wrapper and generator; the drive test; sim-model; the tests' variants; the consumers; the documents); `pr2/rover-description` without an upstream; `0` (not on GitHub); the Rover repository untouched (`0`).
+Expected: a clean tree; the plan's two commits and the thirteen commits of Tasks 2 to 13 and 16 (pixi; rover_description x3; fixtures; comparison; sim.yaml; the wrapper and generator; the drive test; sim-model; the tests' variants; the consumers; the documents); `pr2/rover-description` without an upstream; `0` (not on GitHub); the Rover repository untouched (`0`).
 
 - [ ] **Step 2: Remove the temporary files**
 
@@ -6351,7 +6369,7 @@ Expected: `0`. The workspace keeps its environment, `build/`, `install/`, `log/`
 
 - [ ] **Step 3: Report to the user**
 
-Report: the commits; the baseline and final counts (Task 1 Step 4, Task 15 Step 2) and the test-id diff (Task 15 Step 1); the equivalence result (ten models, zero differences; the drive test bit for bit); the worlds byte for byte (Task 14); the view launch check and why the windows were not opened (Task 5 Step 5); Decision 1 (the worlds still include `model://rover`, now generated from the description; spawning from `robot_description` comes with PR 3's `sim.launch.py`) and Decision 10 (four `urc/` comments still name `gen_model`); and the decision that needs the user: the push of `pr2/rover-description` and its pull request, which builds on PR 1 (`import/simulation`) and should be opened after PR 1 merges, or against `import/simulation` until then.
+Report: the commits; the baseline and final counts (Task 1 Step 4, Task 15 Step 2) and the test-id diff (Task 15 Step 1); the equivalence result (ten models, zero differences; the drive test bit for bit); the worlds byte for byte (Task 14); the view launch check and why the windows were not opened (Task 5 Step 5); Decision 1 (the worlds still include `model://rover`, now generated from the description; spawning from `robot_description` comes with PR 3's `sim.launch.py`, which must spawn the post-processed model or move its fixes into the description) and Decision 10 (four `urc/` comments still name `gen_model`); and the decision that needs the user: the push of `pr2/rover-description` and its pull request, which builds on PR 1 (`import/simulation`) and should be opened after PR 1 merges, or against `import/simulation` until then.
 
 ---
 
@@ -6386,4 +6404,5 @@ Report: the commits; the baseline and final counts (Task 1 Step 4, Task 15 Step 
 | The view launch file's windows are not exercised in CI or by the implementing agent | Its launch description is tested with and without a display; the headless launch is run in Task 5; the user sees the windows with `ros2 launch rover_description view.launch.py` |
 | `rover_control`'s `config.hpp` keeps a second copy of the placeholder geometry | Unchanged until PR 3's tank kinematics read `rover.yaml` (spec 5: "`kRover` and `config.hpp` go away"); `rover_description/README.md` says so |
 | PR 2 builds on PR 1, which is pushed but not merged | Task 17's report: open PR 2 after PR 1 merges, or against `import/simulation` until then |
+| PR 3 spawns the rover from `/robot_description`, which Gazebo converts without `gen_rover.postprocess` (other colours, the LED's visual renamed, frames and infinite stops kept: Decision 1) | Decision 1 says what PR 3 must spawn; Task 17's report names it, so that PR 3's plan starts from it |
 | The user's other workload slows the machine during the suites | Task 1 records the baseline on the same machine; a failing timing test is rerun alone before it counts as a regression |
