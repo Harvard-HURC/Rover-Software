@@ -1,6 +1,6 @@
 """The rover's numbers for the simulation's Python, read once: rover_description/config/rover.yaml, the physical
 rover (ROVER), and rover_sim/config/sim.yaml, how the simulation models it (SIM), as read-only trees with attribute
-access (ROVER.wheel.radius, SIM.drivetrain.accel; YAML lists become tuples). Variant is a rover with some of those
+access (ROVER.wheel.radius, SIM.wheel_cmd.accel; YAML lists become tuples). Variant is a rover with some of those
 numbers changed, which tools/gen_rover.py builds (the tests drive such variants). The names of the rover's Gazebo
 interface (topics, joints, files in its model) are here too.
 

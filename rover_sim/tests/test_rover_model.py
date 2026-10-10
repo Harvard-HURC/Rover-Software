@@ -257,19 +257,21 @@ class PhysicalVariant(unittest.TestCase):
     def test_drivetrain_replaces_diffdrive(self):
         self.assertIsNone(self.model.find("plugin[@name='gz::sim::systems::DiffDrive']"))
         self.assertEqual(self.plugin.get("filename"), "RoverDrivetrain")
-        expect = {"topic": rover_config.CMD_VEL_TOPIC, "odom_topic": rover_config.ODOM_TOPIC,
+        expect = {"setpoint_topic": rover_config.WHEEL_CMD_TOPIC, "odom_topic": rover_config.ODOM_TOPIC,
                   "tf_topic": rover_config.TF_TOPIC, "state_topic": rover_config.DRIVETRAIN_TOPIC,
                   "frame_id": "odom", "child_frame_id": "base_link", "cmd_timeout_clock": "wall"}
         for tag, value in expect.items():
             self.assertEqual(self.plugin.findtext(tag), value, tag)
         numbers = {"cmd_timeout": 0.5, "track": 2 * ROVER.rocker.pivot_y, "radius": ROVER.wheel.radius,
-                   "track_multiplier": 1.0, "motor/gear": 50.0, "motor/efficiency": 0.8,
+                   "motor/gear": 50.0, "motor/efficiency": 0.8,
                    "motor/current_limit": 20.0, "motor/voltage": 48.0, "driveline/backlash": ROVER.driveline.backlash,
-                   "controller/kp": 4.0, "controller/ki": 160.0, "controller/accel": SIM.drivetrain.accel,
+                   "controller/kp": 4.0, "controller/ki": 160.0,
                    "controller/max_speed": ROVER.wheel.top_speed, "contact/v_stribeck": SIM.contact.v_stribeck,
                    "contact/stick_perp_ratio": 0.3, "contact/perp_ratio": 0.0}
         for tag, value in numbers.items():
             self.assertAlmostEqual(float(self.plugin.findtext(tag)), value, msg=tag)
+        for gone in ("topic", "track_multiplier", "controller/accel"):  # the drive controller's since PR 3
+            self.assertIsNone(self.plugin.find(gone), gone)
         self.assertEqual(self.plugin.findtext("contact/dig"), "true")
         self.assertEqual(self.plugin.findtext("contact/default_surface"), "regolith")
         self.assertEqual(self.plugin.findtext("contact/object_surface"), "manmade")

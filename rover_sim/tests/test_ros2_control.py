@@ -22,10 +22,12 @@ from simulate import physical, world_sdf
 
 import gen_rover  # noqa: E402  (worldfiles, through simulate, puts sim/ and sim/tools on the path)
 import rover_config  # noqa: E402
+import wheel_cmd  # noqa: E402
 from rover_config import ROVER  # noqa: E402
 from urc import sdf  # noqa: E402
 
 from geometry_msgs.msg import TwistStamped  # noqa: E402
+from gz.msgs10.double_v_pb2 import Double_V  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 
@@ -76,6 +78,7 @@ class RoverSimSystemInGazebo(unittest.TestCase):
         cls.states = []
         node = Node()
         node.subscribe(StringMsg, rover_config.DRIVETRAIN_TOPIC, lambda m: cls.states.append(json.loads(m.data)))
+        cls.wheel_cmd = node.advertise(rover_config.WHEEL_CMD_TOPIC, Double_V)  # early: it connects meanwhile
         logs = [tmp / name for name in ("gz.log", "rsp.log", "bridge.log", "spawner.log")]
         processes = [
             rosstack.start(["gz", "sim", "-s", "-r", world], logs[0]),
@@ -100,7 +103,11 @@ class RoverSimSystemInGazebo(unittest.TestCase):
 
     @classmethod
     def drive(cls, probe):
-        probe.drive_for(*DRIVE, sim_seconds=3.0)
+        probe.drive_for(*DRIVE, sim_seconds=1.5)
+        for _ in range(3):  # the ROS-free setpoint topic, while ros2_control drives the wheels
+            cls.wheel_cmd.publish(wheel_cmd.message((5.0,) * 4))
+            probe.drive_for(*DRIVE, sim_seconds=0.1)
+        probe.drive_for(*DRIVE, sim_seconds=1.2)
         probe.drive_for(0.0, 0.0, sim_seconds=1.5)
 
     @classmethod
@@ -159,6 +166,12 @@ class RoverSimSystemInGazebo(unittest.TestCase):
             drawn += max(abs(g) for g in got) > 1.0
         self.assertGreater(pinned, 50)
         self.assertGreater(drawn, 0, "the motors drew current")
+
+    def test_the_setpoint_topic_is_ignored(self):
+        """While ros2_control drives the wheels RoverDrivetrain ignores its ROS-free setpoint topic, and says so once:
+        the 5 rad/s sent there in the middle of the drive reach no motor."""
+        self.assertEqual(self.log.count("is ignored: ros2_control's RoverSimSystem drives the wheels"), 1)
+        self.assertEqual([s["t"] for s in self.states for w in WHEELS if abs(s["wheels"][w]["sp"] - 5.0) < 0.05], [])
 
 
 if __name__ == "__main__":

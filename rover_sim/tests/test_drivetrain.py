@@ -263,21 +263,22 @@ class Response(unittest.TestCase):
 
     def test_with_the_ramp(self):
         """rise = setpoint / accel +- 20 %, 0.33 s at wz 1 (plumbing: the ramp
-        is the controller's, an assumption, design spec 6.3)."""
+        is the setpoints' helper's, sim.yaml wheel_cmd accel, as the drive
+        controller's; an assumption, design spec 6.3)."""
         rise, _ = self.times(physical(contact={"dig": False}))
         setpoint = 1.0 * C / ROVER.wheel.radius  # [rad/s] each wheel
-        self.assertAlmostEqual(rise, setpoint / SIM.drivetrain.accel, delta=0.2 * setpoint / SIM.drivetrain.accel)
+        self.assertAlmostEqual(rise, setpoint / SIM.wheel_cmd.accel, delta=0.2 * setpoint / SIM.wheel_cmd.accel)
 
     def test_stop_without_the_ramp(self):
         """The motor, contact and tyre model alone stop the turn in < 40 ms (physics)."""
-        self.assertLess(self.times(physical(contact={"dig": False}, drivetrain={"accel": 0.0}))[1], 0.040)
+        self.assertLess(self.times(physical(contact={"dig": False}, wheel_cmd={"accel": 0.0}))[1], 0.040)
 
     def test_rise_without_the_ramp(self):
         """Without the ramp the turn rises to 90 % in < 60 ms (physics; design
         spec 6.9). The PI's integral supplies the motors' IR drop under load:
         with the prototype's ki 40 (integral time kp / ki = 0.1 s) it took
         118 ms, with ki 160 (25 ms) 53 ms (measured 2026-10-07)."""
-        self.assertLess(self.times(physical(contact={"dig": False}, drivetrain={"accel": 0.0}))[0], 0.060)
+        self.assertLess(self.times(physical(contact={"dig": False}, wheel_cmd={"accel": 0.0}))[0], 0.060)
 
 
 class SlowTurn(unittest.TestCase):
@@ -286,7 +287,7 @@ class SlowTurn(unittest.TestCase):
 
     @staticmethod
     def judder(ground, tire_compliance=False):
-        params = physical(contact={"dig": False}, drivetrain={"accel": 4.0},
+        params = physical(contact={"dig": False}, wheel_cmd={"accel": 4.0},
                           tyre_compliance={"enabled": tire_compliance})
         run = drive(9.0, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.15)], ground, trace_every=1, params=params)
         rate = run.window(3.0, 9.0)[:, 7]
@@ -693,7 +694,7 @@ class Interfaces(unittest.TestCase):
 
     def test_odometry_overreports_a_spin(self):
         """Odometry yaw / true yaw while spinning = 1 / ratio of the ground +- 15 %
-        (plumbing; with track_multiplier 1, as a real rover's odometry, design spec 6.8)."""
+        (plumbing; the drivetrain's no-slip odometry with the geometric track, as a real rover's, design spec 6.8)."""
         run = drive(6.0, SPIN, "regolith", subscribe=[(rover_config.ODOM_TOPIC, Odometry)])
         odom = [m.twist.angular.z for m in run.state.messages[rover_config.ODOM_TOPIC]
                 if 3.0 <= m.header.stamp.sec + m.header.stamp.nsec * 1e-9 < 6.0]
@@ -716,16 +717,16 @@ class Interfaces(unittest.TestCase):
         self.assertTrue(90 <= len(run.states) <= 101, len(run.states))
 
     def test_command_timeout(self):
-        """A command older than cmd_timeout counts as zero (0.5 s, the user's
-        decision); cmd_timeout 0 holds the last command, as Gazebo's GUI Teleop
-        needs. Sim clock here; the default clock is wall time."""
+        """A setpoint older than cmd_timeout counts as zero (0.5 s, the user's
+        decision); cmd_timeout 0 holds the last one. Sim clock here; the
+        default clock is wall time. Watchdog has it to the step."""
         cmd = [(0.0, 0.0, 0.0), (0.2, 0.5, 0.0)]
         stops = drive(4.0, cmd, "rock", publish_until=1.0)
         holds = drive(4.0, cmd, "rock", publish_until=1.0,
                       params=physical(contact={"dig": False}, drivetrain={"cmd_timeout": 0.0}))
         self.assertEqual(stops.states[-1]["cmd"], [0.0, 0.0])
         self.assertEqual(holds.states[-1]["cmd"], [0.5, 0.0])
-        self.assertLess(stops.state.poses["base_link"][0], 0.75)  # 1.0 s + 0.5 s of the last command, the ramps
+        self.assertLess(stops.state.poses["base_link"][0], 0.75)  # 1.0 s + 0.5 s of the last setpoint, the ramp up
         self.assertGreater(holds.state.poses["base_link"][0], 1.6)
 
     def test_ground_map_lookup(self):
@@ -832,6 +833,32 @@ class Interfaces(unittest.TestCase):
         """The same run twice gives the same poses."""
         first, second = (drive(3.0, [(0.0, 0.0, 0.0), (0.5, 0.4, 0.6)], "sand", params=physical()) for _ in range(2))
         self.assertEqual(first.state.poses, second.state.poses)
+
+
+class Watchdog(unittest.TestCase):
+    """The motor controller's watchdog (sim.yaml drivetrain cmd_timeout, 0.5 s; design spec 2026-10-09, 6.1): a wheel
+    setpoint older than cmd_timeout counts as zero, at once; cmd_timeout 0 holds the last one. Setpoints come from the
+    ROS-free topic (simulate's wheel_cmd.Driver) until 1.0 s, the last in the step that ends at 1.000 s; the
+    drivetrain's state of every step (sim clock) holds them through 1.500 s and has zero from 1.501 s."""
+
+    @staticmethod
+    def states(params):
+        s = simulate(2.0, cmd=(0.5, 0.0), publish_until=1.0, params=params,
+                     subscribe=[(rover_config.DRIVETRAIN_TOPIC, StringMsg)])
+        states = [json.loads(m.data) for m in s.messages[rover_config.DRIVETRAIN_TOPIC]]
+        return {round(state["t"] * 1000): state for state in states}
+
+    def test_a_stale_setpoint_is_zero_at_once(self):
+        states = self.states(physical(drivetrain={"state_rate": 1000.0}))
+        for w in WHEELS:
+            self.assertAlmostEqual(states[1500]["wheels"][w]["sp"], 0.5 / ROVER.wheel.radius, delta=1e-4)
+            self.assertEqual(states[1501]["wheels"][w]["sp"], 0.0)
+        self.assertEqual(states[1501]["cmd"], [0.0, 0.0])
+
+    def test_cmd_timeout_zero_holds_the_last_setpoint(self):
+        states = self.states(physical(drivetrain={"state_rate": 1000.0, "cmd_timeout": 0.0}))
+        for w in WHEELS:
+            self.assertAlmostEqual(states[1999]["wheels"][w]["sp"], 0.5 / ROVER.wheel.radius, delta=1e-4)
 
 
 @contextlib.contextmanager

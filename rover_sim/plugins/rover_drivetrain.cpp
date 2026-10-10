@@ -3,11 +3,14 @@
 // port of the validated prototype sim/data/research/drive/prototype/cpp/rover_drive.cpp).
 //
 // Every 1 ms step:
-// - each wheel's speed setpoint: its joint's WheelSetpoint component (rover_components.hh) when it has one, which
-//   ros2_control's RoverSimSystem (ros2_control/rover_sim_system.cpp) writes, clamped to <controller><max_speed> and
-//   zero once older than <cmd_timeout> (the motor controller's watchdog); otherwise cmd_vel (vx, wz) ->
-//   (vx -+ wz track track_multiplier / 2) / radius, left -, right +, through a ramp (gz::math::SpeedLimiter), a
-//   command older than <cmd_timeout> counting as zero. Each motor's current goes into its joint's WheelMotorCurrent.
+// - each wheel's speed setpoint from its joint's WheelSetpoint component (rover_components.hh): ros2_control's
+//   RoverSimSystem (ros2_control/rover_sim_system.cpp) writes it at the start of every step, or this plugin from the
+//   newest message of its ROS-free topic <setpoint_topic> (gz.msgs.Double_V, one value per <wheel> in their order,
+//   rad/s; ignored, saying so once, while ros2_control drives the wheels). A setpoint older than <cmd_timeout>
+//   counts as zero (the motor controller's watchdog), and every one is clamped to <controller><max_speed>. The
+//   twist-to-wheel kinematics and the ramp are the drive controller's (rover_control/config/controllers.yaml), or
+//   wheel_cmd.py's for the ROS-free tools (design spec 2026-10-09, 6.1). Each motor's current goes into its joint's
+//   WheelMotorCurrent.
 // - each wheel's DC motor, gearbox, driveline and PI speed controller (rover_drivetrain.hh) give a torque,
 //   applied as the wheel joint's force. Gazebo's DiffDrive must not be in the same model: it makes each wheel a
 //   velocity servo and overrides the torque (D2, D22).
@@ -51,11 +54,11 @@
 //
 // SDF: see urdf/rover_sim.urdf.xacro, which writes every element from rover.yaml and config/sim.yaml; units SI.
 
+#include <gz/msgs/double_v.pb.h>
 #include <gz/msgs/odometry.pb.h>
 #include <gz/msgs/particle_emitter.pb.h>
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/msgs/stringmsg.pb.h>
-#include <gz/msgs/twist.pb.h>
 
 #include <array>
 #include <chrono>
@@ -75,7 +78,6 @@
 #include <gz/common/Console.hh>
 #include <gz/math/DiffDriveOdometry.hh>
 #include <gz/math/Pose3.hh>
-#include <gz/math/SpeedLimiter.hh>
 #include <gz/msgs/Utility.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Conversions.hh>
@@ -156,8 +158,7 @@ struct Wheel {
   std::vector<gz::sim::Entity> collisions;
   double mass = 0.0;
   gz::math::Quaterniond joint_frame;  // the joint's frame in the wheel's
-  gz::math::SpeedLimiter ramp;
-  double setpoint = 0.0;  // [rad/s] after the ramp
+  double setpoint = 0.0;  // [rad/s] the motor follows this step: the fresh WheelSetpoint, clamped (0 when stale)
   std::chrono::steady_clock::duration cmd_time = std::chrono::steady_clock::duration::min();  // stamp last seen
   Clock::time_point cmd_wall{};  // when that stamp was first seen (the wall-clock watchdog)
   drive::WheelMotor motor;
@@ -197,7 +198,7 @@ class RoverDrivetrain : public gz::sim::System,
     };
     cmd_timeout_ = get("cmd_timeout", cmd_timeout_);
     wall_timeout_ = text("cmd_timeout_clock", "wall") == "wall";
-    track_ = get("track", track_) * get("track_multiplier", 1.0);
+    track_ = get("track", track_);  // the odometry's and the state's "cmd"
     radius_ = get("radius", radius_);
     odom_period_ = 1.0 / get("odom_publish_frequency", 50.0);
     state_period_ = 1.0 / get("state_rate", 50.0);
@@ -223,7 +224,6 @@ class RoverDrivetrain : public gz::sim::System,
     m.ki = Child(sdf, "controller", "ki", m.ki);
     m.speed_filter = Child(sdf, "controller", "speed_filter", m.speed_filter);
     m.substeps = std::max(1, static_cast<int>(Child(sdf, "controller", "substeps", m.substeps)));
-    accel_ = Child(sdf, "controller", "accel", 8.0);
     max_speed_ = Child(sdf, "controller", "max_speed", 10.0);
 
     drive::ContactParams& c = contact_;
@@ -274,12 +274,6 @@ class RoverDrivetrain : public gz::sim::System,
         wheels_.clear();
         return;
       }
-      w.ramp.SetMinVelocity(-max_speed_);
-      w.ramp.SetMaxVelocity(max_speed_);
-      if (accel_ > 0) {
-        w.ramp.SetMinAcceleration(-accel_);
-        w.ramp.SetMaxAcceleration(accel_);
-      }
       if (const auto inertial = ecm.Component<gz::sim::components::Inertial>(w.link.Entity())) {
         w.mass = inertial->Data().MassMatrix().Mass();
       }
@@ -311,7 +305,8 @@ class RoverDrivetrain : public gz::sim::System,
     ConfigureSink(sdf, ecm);
 
     odometry_.SetWheelParams(track_, radius_, radius_);
-    node_.Subscribe(text("topic", "/model/rover/cmd_vel"), &RoverDrivetrain::OnCmd, this);
+    setpoint_topic_ = text("setpoint_topic", "/model/rover/wheel_cmd");
+    node_.Subscribe(setpoint_topic_, &RoverDrivetrain::OnSetpoints, this);
     odom_pub_ = node_.Advertise<gz::msgs::Odometry>(text("odom_topic", "/model/rover/odometry"));
     tf_pub_ = node_.Advertise<gz::msgs::Pose_V>(text("tf_topic", "/model/rover/tf"));
     state_pub_ = node_.Advertise<gz::msgs::StringMsg>(text("state_topic", "/model/rover/drivetrain"));
@@ -335,16 +330,7 @@ class RoverDrivetrain : public gz::sim::System,
     if (!world_ready_) FindGround(ecm);
     ClassifyCollisions(ecm);
 
-    double vx, wz, age;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      sim_time_ = t;
-      vx = cmd_[0];
-      wz = cmd_[1];
-      age = wall_timeout_ ? Seconds(Clock::now() - cmd_wall_) : t - cmd_sim_;
-    }
-    if (cmd_timeout_ > 0 && age > cmd_timeout_) vx = wz = 0.0;
-    applied_cmd_ = {vx, wz};
+    TakeTopicSetpoints(info, ecm);
 
     for (auto& w : wheels_) {
       w.last = w.current;
@@ -360,14 +346,7 @@ class RoverDrivetrain : public gz::sim::System,
       w.angle = angle && !angle->empty() ? (*angle)[0] : 0.0;
       w.spin += dt / (motor_.speed_filter + dt) * (w.speed - w.spin);
 
-      if (ecm.Component<components::WheelSetpoint>(w.joint.Entity())) {
-        w.setpoint = Setpoint(w, ecm, t);
-      } else {
-        double target = (vx - w.side * wz * track_ / 2) / radius_;
-        w.ramp.LimitVelocity(target);
-        w.ramp.LimitAcceleration(target, w.setpoint, info.dt);
-        w.setpoint = target;
-      }
+      w.setpoint = Setpoint(w, ecm, t);
       w.joint.SetForce(ecm, {w.motor.Step(motor_, w.setpoint, w.speed, dt)});
       if (auto* current = ecm.Component<components::WheelMotorCurrent>(w.joint.Entity())) {
         current->Data() = w.motor.current;
@@ -424,11 +403,15 @@ class RoverDrivetrain : public gz::sim::System,
   void Reset(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) override {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      cmd_ = {0.0, 0.0};
+      topic_fresh_ = false;
     }
     for (auto& w : wheels_) {
       w.setpoint = w.spin = 0.0;
       w.cmd_time = std::chrono::steady_clock::duration::min();
+      // A setpoint held from before the reset (cmd_timeout 0) must not drive the rover again: zero, stamped now.
+      if (auto* cmd = ecm.Component<components::WheelSetpoint>(w.joint.Entity())) {
+        cmd->Data() = components::Setpoint{0.0, info.simTime, cmd->Data().ros2_control};
+      }
       w.motor.Reset();
       w.dig = drive::Dig();
       w.load = 0.0;
@@ -445,11 +428,65 @@ class RoverDrivetrain : public gz::sim::System,
   }
 
  private:
-  void OnCmd(const gz::msgs::Twist& msg) {
+  /// The setpoint topic's callback (on gz-transport's thread, or the publisher's for one in this process): keeps the
+  /// newest message for the next PreUpdate, with the sim time it came at; one of another length is refused.
+  void OnSetpoints(const gz::msgs::Double_V& msg) {
     std::lock_guard<std::mutex> lock(mutex_);
-    cmd_ = {msg.linear().x(), msg.angular().z()};
-    cmd_sim_ = sim_time_;
-    cmd_wall_ = Clock::now();
+    if (static_cast<size_t>(msg.data_size()) != wheels_.size()) {
+      if (!size_refused_) {
+        gzerr << "RoverDrivetrain: " << setpoint_topic_ << " needs " << wheels_.size()
+              << " setpoints (one per <wheel>, in their order), not " << msg.data_size() << "; refused\n";
+        size_refused_ = true;
+      }
+      return;
+    }
+    topic_values_.assign(msg.data().begin(), msg.data().end());
+    topic_time_ = sim_time_;
+    topic_fresh_ = true;
+  }
+
+  /// The setpoint topic's newest message, if one came since the last step, into the wheels' WheelSetpoint
+  /// components, stamped with the sim time it came at (the watchdog counts from then); dropped, saying so once,
+  /// while ros2_control (RoverSimSystem) drives the wheels. At Gazebo's error level: `gz sim` prints nothing less at
+  /// its default verbosity.
+  void TakeTopicSetpoints(const gz::sim::UpdateInfo& info, gz::sim::EntityComponentManager& ecm) {
+    std::vector<double> values;
+    std::chrono::steady_clock::duration received{};
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      sim_time_ = info.simTime;
+      if (!topic_fresh_) return;
+      topic_fresh_ = false;
+      values.swap(topic_values_);
+      received = topic_time_;
+    }
+    if (RosControlled(ecm)) {
+      if (!topic_ignored_) {
+        // The sentence in one operand: Gazebo's console colours each operand apart, which splits it in a log.
+        gzerr << "RoverDrivetrain: " << setpoint_topic_
+              << " is ignored: ros2_control's RoverSimSystem drives the wheels\n";
+        topic_ignored_ = true;
+      }
+      return;
+    }
+    for (size_t k = 0; k < wheels_.size(); ++k) {
+      const components::Setpoint setpoint{values[k], received, false};
+      const auto joint = wheels_[k].joint.Entity();
+      if (auto* cmd = ecm.Component<components::WheelSetpoint>(joint)) {
+        cmd->Data() = setpoint;
+      } else {
+        ecm.CreateComponent(joint, components::WheelSetpoint(setpoint));
+      }
+    }
+  }
+
+  /// Whether ros2_control drives the wheels: a wheel's setpoint says RoverSimSystem wrote it.
+  bool RosControlled(const gz::sim::EntityComponentManager& ecm) const {
+    for (const auto& w : wheels_) {
+      const auto* cmd = ecm.Component<components::WheelSetpoint>(w.joint.Entity());
+      if (cmd && cmd->Data().ros2_control) return true;
+    }
+    return false;
   }
 
   /// The setpoint a wheel's motor follows this step, from its WheelSetpoint component: zero once it is older than
@@ -692,8 +729,17 @@ class RoverDrivetrain : public gz::sim::System,
   /// deepest contact ("" in the air).
   void PublishState(double t) {
     std::ostringstream json;
-    json << std::setprecision(6) << "{\"t\": " << t << ", \"cmd\": [" << applied_cmd_[0] << ", " << applied_cmd_[1]
-         << "], \"wheels\": {";
+    // "cmd": the twist the setpoints in effect amount to, without slip (each side's mean; the odometry's track and
+    // radius): what the motors are asked, whoever asks.
+    double left = 0, right = 0, nl = 0, nr = 0;
+    for (const auto& w : wheels_) {
+      (w.side > 0 ? left : right) += w.setpoint;
+      (w.side > 0 ? nl : nr) += 1;
+    }
+    left /= std::max(nl, 1.0);
+    right /= std::max(nr, 1.0);
+    json << std::setprecision(6) << "{\"t\": " << t << ", \"cmd\": [" << radius_ * (left + right) / 2 << ", "
+         << radius_ * (right - left) / track_ << "], \"wheels\": {";
     for (size_t k = 0; k < wheels_.size(); ++k) {
       const Wheel& w = wheels_[k];
       const Contact& c = w.last;
@@ -830,7 +876,7 @@ class RoverDrivetrain : public gz::sim::System,
   bool enabled_ = false, world_ready_ = false, classified_ = false;
   double cmd_timeout_ = 0.5;
   bool wall_timeout_ = true;
-  double track_ = 0.8, radius_ = 0.15, accel_ = 8.0, max_speed_ = 10.0, rr_speed_ = 0.03;
+  double track_ = 0.8, radius_ = 0.15, max_speed_ = 10.0, rr_speed_ = 0.03;
   double odom_period_ = 0.02, state_period_ = 0.02, dust_period_ = 0.1;
   double last_odom_ = -std::numeric_limits<double>::infinity();
   double last_state_ = -std::numeric_limits<double>::infinity();
@@ -853,9 +899,8 @@ class RoverDrivetrain : public gz::sim::System,
   std::unordered_map<gz::sim::Entity, const Traction*> surfaces_;
   std::unordered_set<gz::sim::Entity> planes_;
   Vector3d gravity_{0, 0, -9.80665};
-  std::deque<Wheel> wheels_;  // in place: SpeedLimiter cannot be copied or moved
+  std::deque<Wheel> wheels_;
   gz::math::DiffDriveOdometry odometry_;
-  std::array<double, 2> applied_cmd_{};
 
   gz::transport::Node node_;
   gz::transport::Node::Publisher odom_pub_, tf_pub_, state_pub_;
@@ -863,10 +908,12 @@ class RoverDrivetrain : public gz::sim::System,
   std::unique_ptr<tracks::TrackSystem> tracks_;  // with <tracks>
   std::vector<tracks::WheelInput> track_input_;
   std::unordered_map<const Traction*, uint8_t> track_grounds_;
-  std::mutex mutex_;  // the command, written by gz-transport's thread
-  std::array<double, 2> cmd_{};
-  double sim_time_ = 0.0, cmd_sim_ = 0.0;
-  Clock::time_point cmd_wall_ = Clock::now();
+  std::string setpoint_topic_;
+  bool topic_ignored_ = false;  // said that ros2_control drives the wheels
+  std::mutex mutex_;  // the setpoint topic's newest message, written by gz-transport's thread
+  std::vector<double> topic_values_;
+  std::chrono::steady_clock::duration sim_time_{}, topic_time_{};  // the latest PreUpdate's sim time; the message's
+  bool topic_fresh_ = false, size_refused_ = false;
 };
 
 }  // namespace rover_sim

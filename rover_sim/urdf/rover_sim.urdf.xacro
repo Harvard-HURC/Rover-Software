@@ -299,7 +299,7 @@
   <xacro:if value="${physical}">
     <gazebo>
       <plugin filename="RoverDrivetrain" name="rover_sim::RoverDrivetrain">
-        <topic>${topics.cmd_vel}</topic>
+        <setpoint_topic>${topics.wheel_cmd}</setpoint_topic>
         <cmd_timeout>${drive.cmd_timeout}</cmd_timeout>
         <cmd_timeout_clock>${drive.cmd_timeout_clock}</cmd_timeout_clock>
         <odom_topic>${topics.odometry}</odom_topic>
@@ -314,7 +314,6 @@
         </xacro:if>
         <track>${2 * rover.rocker.pivot_y}</track>
         <radius>${rover.wheel.radius}</radius>
-        <track_multiplier>${drive.track_multiplier}</track_multiplier>
         <xacro:drivetrain_wheel name="fl" side="left"/>
         <xacro:drivetrain_wheel name="rl" side="left"/>
         <xacro:drivetrain_wheel name="fr" side="right"/>
@@ -339,7 +338,6 @@
           <kp>${drive.kp}</kp>
           <ki>${drive.ki}</ki>
           <speed_filter>${drive.speed_filter}</speed_filter>
-          <accel>${drive.accel}</accel>
           <max_speed>${rover.wheel.top_speed}</max_speed>
           <substeps>${drive.substeps}</substeps>
         </controller>
