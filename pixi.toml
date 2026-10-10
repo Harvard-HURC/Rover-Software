@@ -8,8 +8,11 @@ version = "0.1.0"
 # Run from this folder, the workspace's src/. The colcon tasks run in the workspace root above it (cwd ".."), where
 # the README's colcon build runs: build/, install/ and log/ land there.
 [tasks]
+# The colcon tasks first check that this folder is a workspace's src/ (README, Setup): in a clone anywhere else,
+# colcon would search, and write build/, install/ and log/ into, whatever folder holds it.
+_workspace = '''python -c "import os, sys; os.path.basename(os.environ['PIXI_PROJECT_ROOT']) == 'src' or sys.exit('clone this repository into a folder called src in your workspace (README, Setup): the colcon tasks run in the folder above it')"'''
 # Every package (on Windows without the tests, see the target below), after the simulation's patched media.
-build = { cmd = "colcon build", cwd = "..", depends-on = ["sim-media"] }
+build = { cmd = "colcon build", cwd = "..", depends-on = ["_workspace", "sim-media"] }
 # The C++ tests: rover_control's (GoogleTest, rover_state, viz.py) and rover_sim's three plugin test programs.
 colcon-test = { cmd = "colcon test --packages-select rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
 # The C++ tests and the simulation's suite. The rendering tests skip where there is no GPU and say why.
@@ -21,7 +24,7 @@ fetch-data = "python rover_sim/tools/fetch_data.py"
 control-viz = { cmd = "python rover_control/tools/viz.py", env = { ROVER_STATE_EXE = "$PIXI_PROJECT_ROOT/../build/rover_control/rover_state" }, depends-on = ["build"] }
 # The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
 sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
-sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["sim-media"] }
+sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["_workspace", "sim-media"] }
 sim-model = "python rover_sim/gen_model.py"
 sim-relief = { cmd = "python rover_sim/tools/make_relief_swatches.py", inputs = ["rover_sim/tools/make_relief_swatches.py", "rover_sim/urc/dem.py", "rover_sim/urc/landscape.py", "rover_sim/urc/terrain.py", "rover_sim/data/dem/*_0p5m*", "rover_sim/data/research/mdrs_terrain_measurements.json"], outputs = ["rover_sim/data/relief/*.npz"] }
 sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/gen_model.py", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
@@ -44,7 +47,7 @@ sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "ro
 [target.win-64.tasks]
 # Windows builds the rover's packages without their tests (rover_sim configures to nothing there); the simulation
 # and the tests run on macOS and Linux (on Windows in WSL2, README, Platforms).
-build = { cmd = "colcon build --cmake-args -DBUILD_TESTING=OFF", cwd = ".." }
+build = { cmd = "colcon build --cmake-args -DBUILD_TESTING=OFF", cwd = "..", depends-on = ["_workspace"] }
 
 [target.osx-arm64.activation.env]
 GZ_TRANSPORT_LOCALHOST_ONLY="1"
