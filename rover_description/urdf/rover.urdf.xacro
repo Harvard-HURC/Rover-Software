@@ -6,7 +6,8 @@
      Gazebo's parts.
 
      Arguments:
-       rover_yaml           the numbers (default config/rover.yaml beside this folder)
+       rover_yaml           the numbers (default config/rover.yaml beside this folder; xacro reads a relative path
+                            from this folder, so give another file's absolute path)
        ros2_control         true: add the ros2_control block (ros2_control.xacro)
        ros2_control_plugin  its hardware interface (default rover_control's real-hardware stub, which PR 3 adds)
      Properties a file that includes this one may set first (xacro:property default): wheel_effort_limit and

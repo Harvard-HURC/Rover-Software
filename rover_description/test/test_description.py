@@ -172,6 +172,24 @@ class ViewLaunch(unittest.TestCase):
                              ['robot_state_publisher', 'joint_state_publisher_gui',
                               'joint_state_publisher', 'rviz2'])
 
+    def test_a_relative_rover_yaml_is_from_the_current_folder(self):
+        # xacro would read it from urdf/; an absolute path stays as it is.
+        from launch import LaunchContext
+        from launch.substitutions import LaunchConfiguration
+        here = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                folder, path = os.getcwd(), self.view.from_cwd(LaunchConfiguration('rover_yaml'))
+            finally:
+                os.chdir(here)
+        context = LaunchContext()
+        for given, expected in (('my_rover.yaml', os.path.join(folder, 'my_rover.yaml')),
+                                ('./my_rover.yaml', os.path.join(folder, 'my_rover.yaml')),
+                                (str(ROVER_YAML), str(ROVER_YAML))):
+            context.launch_configurations['rover_yaml'] = given
+            self.assertEqual(path.perform(context), expected)
+
 
 if __name__ == '__main__':
     unittest.main()

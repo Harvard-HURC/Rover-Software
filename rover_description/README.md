@@ -32,7 +32,7 @@ source install/local_setup.bash        # local_setup.zsh in zsh
 ros2 launch rover_description view.launch.py
 ```
 
-The sliders move the joints. Arguments: `gui:=false` (no sliders), `rviz:=false`, `rover_yaml:=<file>` (another set of numbers). Without a display (Linux without `DISPLAY` or `WAYLAND_DISPLAY`) `gui` and `rviz` default to false and the launch says so. `robot_state_publisher` warns that KDL does not support a root link with an inertia; the warning is harmless, and a massless root link would rename the simulated rover's links.
+The sliders move the joints. Arguments: `gui:=false` (no sliders), `rviz:=false`, `rover_yaml:=<file>` (another set of numbers; a relative path is from the folder you launch in). Without a display (Linux without `DISPLAY` or `WAYLAND_DISPLAY`) `gui` and `rviz` default to false and the launch says so. `robot_state_publisher` warns that KDL does not support a root link with an inertia; the warning is harmless, and a massless root link would rename the simulated rover's links.
 
 ### Use it from another package
-`xacro $(ros2 pkg prefix rover_description)/share/rover_description/urdf/rover.urdf.xacro` expands it; the arguments are `rover_yaml` (default the package's `config/rover.yaml`), `ros2_control` (`true` or `false`) and `ros2_control_plugin`.
+`xacro $(ros2 pkg prefix rover_description)/share/rover_description/urdf/rover.urdf.xacro` expands it; the arguments are `rover_yaml` (default the package's `config/rover.yaml`; give another file's absolute path, as xacro reads a relative one from the package's `urdf/`), `ros2_control` (`true` or `false`) and `ros2_control_plugin`.

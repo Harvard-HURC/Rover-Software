@@ -11,7 +11,9 @@
        rover_yaml       the rover's numbers (default: the description's config/rover.yaml)
        sim_yaml         the simulation's (default config/sim.yaml beside this folder)
        surfaces_yaml    the drivetrain's ground surfaces (default config/surfaces.yaml, written from urc/terrains.py)
-       ros2_control     the description's ros2_control block: false until PR 3 brings gz_ros2_control -->
+       ros2_control     the description's ros2_control block: false until PR 3 brings gz_ros2_control
+     xacro reads a relative path from the folder of the file that loads it (rover_yaml: the description's urdf/;
+     sim_yaml and surfaces_yaml: this folder), so give other files' absolute paths. -->
 <robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="description_dir" default="$(find rover_description)"/>
   <xacro:arg name="sim_yaml" default="../config/sim.yaml"/>

@@ -8,9 +8,9 @@ opens with rviz/view.rviz:
     ros2 launch rover_description view.launch.py
 
 Arguments: gui (the sliders; false: joint_state_publisher without a window), rviz, and
-rover_yaml (the numbers, default config/rover.yaml). Where there is no display (Linux without
-DISPLAY or WAYLAND_DISPLAY: a CI runner, a shell over SSH) gui and rviz default to false, and the
-launch says so.
+rover_yaml (the numbers, default config/rover.yaml; a relative path is from the folder the launch
+runs in). Where there is no display (Linux without DISPLAY or WAYLAND_DISPLAY: a CI runner, a
+shell over SSH) gui and rviz default to false, and the launch says so.
 """
 import os
 import sys
@@ -19,7 +19,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -32,13 +32,22 @@ def headless(platform=None, environ=None):
                                                  environ.get('WAYLAND_DISPLAY'))
 
 
+def from_cwd(path):
+    """
+    Return the substitution `path` as an absolute path, a relative one from the current folder.
+
+    xacro reads a relative rover_yaml from the folder of the xacro file, the package's urdf/.
+    """
+    return PathJoinSubstitution([os.getcwd(), path])
+
+
 def generate_launch_description():
     share = get_package_share_directory('rover_description')
     windows = 'false' if headless() else 'true'
     gui, rviz = LaunchConfiguration('gui'), LaunchConfiguration('rviz')
     description = ParameterValue(
         Command(['xacro ', os.path.join(share, 'urdf', 'rover.urdf.xacro'),
-                 ' rover_yaml:=', LaunchConfiguration('rover_yaml')]),
+                 ' rover_yaml:=', from_cwd(LaunchConfiguration('rover_yaml'))]),
         value_type=str)
     actions = [
         DeclareLaunchArgument('gui', default_value=windows,
@@ -46,7 +55,8 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value=windows, description='open rviz2'),
         DeclareLaunchArgument('rover_yaml',
                               default_value=os.path.join(share, 'config', 'rover.yaml'),
-                              description="the rover's numbers"),
+                              description="the rover's numbers (a relative path: from the "
+                                          'current folder)'),
         Node(package='robot_state_publisher', executable='robot_state_publisher',
              parameters=[{'robot_description': description}], output='screen'),
         Node(package='joint_state_publisher_gui', executable='joint_state_publisher_gui',
