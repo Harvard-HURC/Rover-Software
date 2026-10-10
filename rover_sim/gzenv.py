@@ -25,6 +25,9 @@ the tools start Gazebo with environment().
   on the loopback interface); ROS_DOMAIN_ID and
   ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST: only when asked (the tests and the
   launcher's worlds take private_ros_domain()).
+
+private_ros_home() gives a ROS 2 run a ROS_HOME of its own for its lock files
+(the controller spawner's: sim.launch.py, the tests).
 """
 import argparse
 import os
@@ -48,6 +51,17 @@ def private_ros_domain(seed):
     worlds), from `seed` (a process id): 50-99, inside the 0-101 that keeps DDS's ports below the ephemeral ranges of
     Linux, macOS and Windows."""
     return 50 + seed % 50
+
+
+def private_ros_home(directory, base=None):
+    """ROS_HOME and ROS_LOG_DIR for a ROS 2 run whose lock files must not be another run's: ROS_HOME `directory`, and
+    ROS_LOG_DIR where the logs went before (`base`'s, default os.environ: its ROS_LOG_DIR, else its ROS_HOME's log,
+    else ~/.ros/log), so that only the locks move. ros2_control's spawner holds a lock in $ROS_HOME/locks while it
+    waits for its controller manager, the same file for every spawner on the machine whatever its ROS domain, and
+    gives up after some 115 s: one stack loading a big world would make another's spawner fail."""
+    env = os.environ if base is None else base
+    logs = env.get("ROS_LOG_DIR") or str(Path(env.get("ROS_HOME") or Path.home() / ".ros").expanduser() / "log")
+    return {"ROS_HOME": str(directory), "ROS_LOG_DIR": logs}
 
 
 def environment(build_dir=None, *, partition=None, ip=None, base=None, ros_domain=None, install_dir=None):

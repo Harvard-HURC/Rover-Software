@@ -3,12 +3,14 @@
 the world's copy with the rover swapped for the one with ros2_control, the sensor bridge's topics, and (SmokeTest) a
 run of it headless."""
 import importlib.util
+import logging
 import re
 import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import yaml
@@ -95,7 +97,7 @@ class WorldCopy(unittest.TestCase):
         """The server on the copy, robot_state_publisher, the controllers and the bridge; the GUI and the station
         only when asked, the station attached to the world by its name."""
         from launch import LaunchContext
-        from launch.actions import ExecuteProcess, IncludeLaunchDescription
+        from launch.actions import ExecuteProcess, GroupAction, IncludeLaunchDescription, SetEnvironmentVariable
         from launch_ros.actions import Node
         module = load()
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,9 +124,60 @@ class WorldCopy(unittest.TestCase):
                 self.assertEqual(processes["gz_server"], ["gz", "sim", "-s", "-r", str(run / "rover_test.sdf")])
                 self.assertEqual([a.node_executable for a in actions if isinstance(a, Node)],
                                  ["robot_state_publisher", "parameter_bridge"])
-                self.assertEqual(len([a for a in actions if isinstance(a, IncludeLaunchDescription)]), 1)
+                groups = [a for a in actions if isinstance(a, GroupAction)]
+                self.assertEqual(len(groups), 1)  # the controllers, their spawner's ROS_HOME this launch's own
+                inside = groups[0].get_sub_entities()
+                self.assertEqual(len([a for a in inside if isinstance(a, IncludeLaunchDescription)]), 1)
+                ros_home = {text(a.name): text(a.value) for a in inside if isinstance(a, SetEnvironmentVariable)}
+                self.assertEqual(ros_home["ROS_HOME"], str(run / "ros_home"))
                 if station == "true":
                     self.assertEqual(processes["station"][-4:], ["--world-name", "rover_test", "--wait", "120"])
+
+
+class Controllers(unittest.TestCase):
+    """The controllers after a world reset, which reloads gz_ros2_control (it does not implement Gazebo's reset), and
+    a spawner that fails."""
+
+    LINE = (b"[INFO] [1791666490.415934000] [controller_manager.hardware_component.system.rover]: RoverSimSystem: "
+            b"8 joints, 4 wheels driven through RoverDrivetrain's motor model\n")
+
+    def test_the_line_they_wait_for_is_rover_sim_systems(self):
+        source = (SIM_DIR / "ros2_control" / "rover_sim_system.cpp").read_text()
+        self.assertIn(load().HARDWARE_UP.decode(), source)
+
+    def test_they_are_spawned_again_each_time_the_hardware_comes_up_after_the_first(self):
+        spawned = []
+        respawn = load().RespawnAfterReset(lambda: spawned.append("spawn") or "spawn")
+
+        def output(text, stdout=False):
+            return respawn(SimpleNamespace(from_stdout=stdout, text=text))
+
+        self.assertEqual(output(self.LINE), [])  # the start: controllers.launch.py's spawner is on its way
+        self.assertEqual(output(b"[gz_server-1] [INFO] Loading controller_manager\n"), [])
+        actions = output(self.LINE[:40]) + output(b"[some gz line on stdout]\n", stdout=True) + output(self.LINE[40:])
+        self.assertEqual(actions[-1], "spawn")  # a reset, its line in two pieces of the server's output
+        self.assertEqual(output(self.LINE)[-1], "spawn")  # another reset
+        self.assertEqual(spawned, ["spawn", "spawn"])
+
+    def test_a_spawner_that_fails_stops_the_launch_and_says_why(self):
+        from launch.actions import Shutdown
+        module = load()
+
+        def exited(executable, code, stopping=False):
+            event = SimpleNamespace(action=SimpleNamespace(node_executable=executable), returncode=code)
+            return module.stop_if_a_spawner_fails(event, SimpleNamespace(is_shutdown=stopping))
+
+        quiet = logging.getLogger("test_sim_launch.spawner")  # launch's own logger would print it in the suite
+        with mock.patch.object(module.launch.logging, "get_logger", lambda name: quiet), \
+                self.assertLogs(quiet, "ERROR") as logs:
+            actions = exited("spawner", 1)
+        self.assertEqual([type(a) for a in actions], [Shutdown])
+        self.assertIn("the controllers did not start", logs.output[0])
+        self.assertIsNone(exited("spawner", 0))
+        self.assertIsNone(exited("spawner", -9, stopping=True))  # killed while the launch stops
+        self.assertIsNone(exited("robot_state_publisher", 1))
+        self.assertIsNone(module.stop_if_a_spawner_fails(SimpleNamespace(action=object(), returncode=1),
+                                                         SimpleNamespace(is_shutdown=False)))  # Gazebo's server
 
 
 class SensorBridge(unittest.TestCase):
@@ -140,8 +193,11 @@ class SensorBridge(unittest.TestCase):
 class SmokeTest(unittest.TestCase):
     """sim.launch.py headless on rover_test (gui:=false sensors:=false: no GPU needed, as on CI's Linux runner), in this
     process's private gz partition and ROS domain (design spec 2026-10-09, 8: the smoke test): a /cmd_vel command moves
-    /odom, the topic contract's topics are there, the drive controller's timeout brakes the rover, and SIGINT stops it
-    all."""
+    /odom, the topic contract's topics are there, the drive controller's timeout brakes the rover, after a world reset
+    (which reloads gz_ros2_control) the launch spawns the controllers again and /cmd_vel drives again, and SIGINT stops
+    it all."""
+
+    ACTIVATED = "Configured and activated drive_controller"  # the spawner's line
 
     def test_cmd_vel_moves_odom(self):
         with tempfile.TemporaryDirectory(prefix="rover_smoke_") as tmp:
@@ -160,6 +216,16 @@ class SmokeTest(unittest.TestCase):
                 probe.drive_for(0.0, 0.0, sim_seconds=2.0, timeout=60, publish=False)
                 coasting = probe.messages["/odom"][-1].twist.twist.linear.x
                 topics = probe.topics()
+                reset = subprocess.run(["gz", "service", "-s", "/world/rover_test/control", "--reqtype",
+                                        "gz.msgs.WorldControl", "--reptype", "gz.msgs.Boolean", "--timeout", "10000",
+                                        "--req", "reset: {all: true}"], capture_output=True, text=True, timeout=60)
+                probe.wait(lambda: log.read_text(errors="replace").count(self.ACTIVATED) == 2, 120,
+                           "drive controller spawned again after the reset", [log])
+                count = len(probe.messages["/odom"])  # the new drive controller's odometry, from the origin
+                probe.wait(lambda: len(probe.messages["/odom"]) > count, 30, "/odom after the reset", [log])
+                start_again = probe.messages["/odom"][-1].pose.pose.position.x
+                probe.drive_for(0.5, 0.0, sim_seconds=3.0, timeout=60)
+                driven_again = probe.messages["/odom"][-1].pose.pose.position.x - start_again
             finally:
                 probe.close()
                 rosstack.stop(launch)
@@ -169,6 +235,9 @@ class SmokeTest(unittest.TestCase):
         self.assertGreater(driven, 1.5, text[-3000:])  # 0.5 m/s for 5 s of sim time, less the ramp and the slip
         self.assertLess(abs(coasting), 0.05)
         self.assertLessEqual(CONTRACT, topics)
+        self.assertIn("data: true", reset.stdout, reset.stdout + reset.stderr)
+        self.assertIn("the world was reset: gz_ros2_control started a new controller manager", text)
+        self.assertGreater(driven_again, 0.8, text[-3000:])  # 0.5 m/s for 3 s, less the ramp and the slip
         self.assertNotEqual(subprocess.run(["pgrep", "-f", copy.group(1)], capture_output=True).returncode, 0,
                             "Gazebo's server still runs")
 

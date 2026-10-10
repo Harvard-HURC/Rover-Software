@@ -13,7 +13,11 @@ starts
 - the controllers of rover_control's config/controllers.yaml in the controller manager that gz_ros2_control runs
   inside Gazebo (rover_control's launch/controllers.launch.py): joint_state_broadcaster (/joint_states) and the drive
   controller (controller:=<name>), which takes /cmd_vel (geometry_msgs/TwistStamped) and publishes /odom and
-  odom -> base_link;
+  odom -> base_link. The spawner gets a ROS_HOME of this launch's own for its lock file (gzenv.private_ros_home). A
+  world reset (the GUI's button, the world's control service) reloads gz_ros2_control, which does not implement
+  Gazebo's reset, and its new controller manager starts without controllers: they are spawned again each time
+  RoverSimSystem comes up after the first. A spawner that fails stops everything, saying so: the rover could not be
+  driven;
 - the bridge of the sensors and of the simulation's own topics (bridge.yaml): /imu, /gps/fix, /camera/*, /clock,
   /ground_truth/odom and more (docs/topics.md);
 - with station:=true the driver station, attached to the world (pixi run drive starts this launch itself, as its
@@ -34,10 +38,11 @@ import sys
 from pathlib import Path
 from tempfile import mkdtemp
 
+import launch.logging
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, LogInfo, OpaqueFunction,
-                            RegisterEventHandler, Shutdown)
-from launch.event_handlers import OnProcessExit, OnShutdown
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription, LogInfo,
+                            OpaqueFunction, RegisterEventHandler, SetEnvironmentVariable, Shutdown)
+from launch.event_handlers import OnProcessExit, OnProcessIO, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -65,6 +70,9 @@ ROVER_URI = "<uri>model://rover</uri>"
 SENSORS = re.compile(r'<plugin filename="gz-sim-sensors-system".*?</plugin>', re.S)
 CONTROLLERS_LAUNCH = rover_config.CONTROL_DIR / "launch" / "controllers.launch.py"
 STATION_WAIT = 120  # [s] for the world to come up before an attached station gives up (a big world loads slowly)
+# RoverSimSystem's line once the controller manager has initialized it (ros2_control/rover_sim_system.cpp, on_init),
+# in the server's log: once at the start, and again after every world reset.
+HARDWARE_UP = b"wheels driven through RoverDrivetrain's motor model"
 
 
 def headless(platform=None, environ=None):
@@ -113,6 +121,54 @@ def prepare(world, sensors, directory):
     return copy, urdf
 
 
+def controllers(controller, ros_home):
+    """rover_control's controllers.launch.py with the drive controller `controller`, its spawner in a ROS_HOME of its
+    own, `ros_home` (gzenv.private_ros_home: in ~/.ros its lock file would be every spawner's on the machine)."""
+    return GroupAction([
+        *(SetEnvironmentVariable(name, value) for name, value in gzenv.private_ros_home(ros_home).items()),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(str(CONTROLLERS_LAUNCH)), launch_arguments={
+            "controller": controller, "controllers": str(rover_config.CONTROLLERS_YAML)}.items()),
+    ])
+
+
+class RespawnAfterReset:
+    """The handler of the server's output that spawns the controllers again, spawn(), each time RoverSimSystem comes
+    up (HARDWARE_UP) after the first time. gz_ros2_control 1.2.19 does not implement Gazebo's reset (ISystemReset), so
+    a world reset unloads and loads it again: its new controller manager loads the rover's hardware but no
+    controllers, and the spawner of the start has exited."""
+
+    def __init__(self, spawn):
+        self.spawn = spawn
+        self.seen = 0
+        self.rest = {}  # stream -> the end of its output after the last newline
+
+    def __call__(self, event):
+        stream = "stdout" if event.from_stdout else "stderr"
+        *lines, self.rest[stream] = (self.rest.get(stream, b"") + event.text).split(b"\n")
+        actions = []
+        for line in lines:
+            if HARDWARE_UP in line:
+                self.seen += 1
+                if self.seen > 1:
+                    actions += [LogInfo(msg="the world was reset: gz_ros2_control started a new controller manager, "
+                                            "so the controllers are spawned again"), self.spawn()]
+        return actions
+
+
+def stop_if_a_spawner_fails(event, context):
+    """A controller spawner that exits with an error (the controller manager did not come up, or could not load the
+    rover's hardware) leaves a world nothing can drive: say so and stop. Not while the launch is stopping anyway."""
+    action = event.action
+    if context.is_shutdown or event.returncode == 0 or getattr(action, "node_executable", None) != "spawner":
+        return None
+    reason = (f"the controllers did not start (the spawner exited with code {event.returncode}), so nothing can "
+              "drive the rover: the lines above say why. Start the simulation again; gz_ros2_control's 'Could not "
+              "load library ... dlclose(0x0): invalid handle' is a rare race in ROS 2's library loader on macOS "
+              "(docs/sim/manual.md, Known limitations)")
+    launch.logging.get_logger("sim.launch").error(reason)
+    return [Shutdown(reason=reason)]
+
+
 def launch_setup(context):
     def arg(name):
         return LaunchConfiguration(name).perform(context)
@@ -122,16 +178,19 @@ def launch_setup(context):
     copy, urdf = prepare(world, arg("sensors") == "true", directory)
     env = gzenv.environment()
     server = ExecuteProcess(cmd=["gz", "sim", "-s", "-r", str(copy)], env=env, output="screen", name="gz_server")
+    controller, ros_home = arg("controller"), directory / "ros_home"
+    respawn = RespawnAfterReset(lambda: controllers(controller, ros_home))
     actions = [
         LogInfo(msg=f"world: {copy} (a copy of {world}, the rover with ros2_control)"),
         server,
         RegisterEventHandler(OnProcessExit(target_action=server, on_exit=[Shutdown(reason="Gazebo's server exited")])),
+        RegisterEventHandler(OnProcessIO(target_action=server, on_stdout=respawn, on_stderr=respawn)),
+        RegisterEventHandler(OnProcessExit(on_exit=stop_if_a_spawner_fails)),
         RegisterEventHandler(OnShutdown(on_shutdown=[OpaqueFunction(
             function=lambda _: shutil.rmtree(directory, ignore_errors=True))])),
         Node(package="robot_state_publisher", executable="robot_state_publisher", output="screen",
              parameters=[{"robot_description": urdf, "use_sim_time": True}]),
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(str(CONTROLLERS_LAUNCH)), launch_arguments={
-            "controller": arg("controller"), "controllers": str(rover_config.CONTROLLERS_YAML)}.items()),
+        controllers(controller, ros_home),
         Node(package="ros_gz_bridge", executable="parameter_bridge", output="screen",
              parameters=[{"config_file": str(SIM_DIR / "bridge.yaml"), "use_sim_time": True}]),
     ]
