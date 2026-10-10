@@ -1,8 +1,9 @@
 # C++ unit tests of the plugins' parts that need no running Gazebo (sim/CMakeLists.txt adds this directory):
 # the drivetrain's motor, dig-in, friction, hub-force, dust and tyre-sink rules (rover_drivetrain.hh), the ground
-# map reader (terrain_ground.hh) and the ruts' layer and geometry (rover_tracks.hh).
+# map reader (terrain_ground.hh), the ruts' layer and geometry (rover_tracks.hh) and the rover's ECM components
+# (rover_components.hh).
 # Run: ctest --test-dir <build directory> --output-on-failure
-foreach(name test_rover_drivetrain test_terrain_ground test_rover_tracks)
+foreach(name test_rover_drivetrain test_terrain_ground test_rover_tracks test_rover_components)
   add_executable(${name} ${name}.cpp)
   target_include_directories(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(${name} PRIVATE gz-sim8::gz-sim8 gz-common5::geospatial)

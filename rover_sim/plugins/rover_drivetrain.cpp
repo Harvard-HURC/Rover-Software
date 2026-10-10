@@ -3,8 +3,11 @@
 // port of the validated prototype sim/data/research/drive/prototype/cpp/rover_drive.cpp).
 //
 // Every 1 ms step:
-// - cmd_vel (vx, wz) -> wheel-speed setpoints (vx -+ wz track track_multiplier / 2) / radius, left -, right +,
-//   through a ramp (gz::math::SpeedLimiter); a command older than <cmd_timeout> counts as zero.
+// - each wheel's speed setpoint: its joint's WheelSetpoint component (rover_components.hh) when it has one, which
+//   ros2_control's RoverSimSystem (ros2_control/rover_sim_system.cpp) writes, clamped to <controller><max_speed> and
+//   zero once older than <cmd_timeout> (the motor controller's watchdog); otherwise cmd_vel (vx, wz) ->
+//   (vx -+ wz track track_multiplier / 2) / radius, left -, right +, through a ramp (gz::math::SpeedLimiter), a
+//   command older than <cmd_timeout> counting as zero. Each motor's current goes into its joint's WheelMotorCurrent.
 // - each wheel's DC motor, gearbox, driveline and PI speed controller (rover_drivetrain.hh) give a torque,
 //   applied as the wheel joint's force. Gazebo's DiffDrive must not be in the same model: it makes each wheel a
 //   velocity servo and overrides the torque (D2, D22).
@@ -95,6 +98,7 @@
 #include <sdf/Element.hh>
 #include <sdf/Geometry.hh>
 
+#include "rover_components.hh"
 #include "rover_drivetrain.hh"
 #include "rover_tracks_render.hh"
 #include "terrain_ground.hh"
@@ -154,6 +158,8 @@ struct Wheel {
   gz::math::Quaterniond joint_frame;  // the joint's frame in the wheel's
   gz::math::SpeedLimiter ramp;
   double setpoint = 0.0;  // [rad/s] after the ramp
+  std::chrono::steady_clock::duration cmd_time = std::chrono::steady_clock::duration::min();  // stamp last seen
+  Clock::time_point cmd_wall{};  // when that stamp was first seen (the wall-clock watchdog)
   drive::WheelMotor motor;
   drive::Dig dig;
   // This step's kinematics (PreUpdate), read by the contact callback.
@@ -281,6 +287,7 @@ class RoverDrivetrain : public gz::sim::System,
       w.joint.EnablePositionCheck(ecm, true);
       w.joint.EnableVelocityCheck(ecm, true);
       w.joint.EnableTransmittedWrenchCheck(ecm, true);
+      ecm.CreateComponent(w.joint.Entity(), components::WheelMotorCurrent(0.0));
       w.link.EnableVelocityChecks(ecm, true);
       for (const auto collision : w.link.Collisions(ecm)) {
         w.collisions.push_back(collision);
@@ -353,11 +360,18 @@ class RoverDrivetrain : public gz::sim::System,
       w.angle = angle && !angle->empty() ? (*angle)[0] : 0.0;
       w.spin += dt / (motor_.speed_filter + dt) * (w.speed - w.spin);
 
-      double target = (vx - w.side * wz * track_ / 2) / radius_;
-      w.ramp.LimitVelocity(target);
-      w.ramp.LimitAcceleration(target, w.setpoint, info.dt);
-      w.setpoint = target;
+      if (ecm.Component<components::WheelSetpoint>(w.joint.Entity())) {
+        w.setpoint = Setpoint(w, ecm, t);
+      } else {
+        double target = (vx - w.side * wz * track_ / 2) / radius_;
+        w.ramp.LimitVelocity(target);
+        w.ramp.LimitAcceleration(target, w.setpoint, info.dt);
+        w.setpoint = target;
+      }
       w.joint.SetForce(ecm, {w.motor.Step(motor_, w.setpoint, w.speed, dt)});
+      if (auto* current = ecm.Component<components::WheelMotorCurrent>(w.joint.Entity())) {
+        current->Data() = w.motor.current;
+      }
 
       const Vector3d normal = w.last.touched ? w.last.normal : Vector3d::UnitZ;
       const double hub_speed = (w.velocity - normal * w.velocity.Dot(normal)).Length();
@@ -414,6 +428,7 @@ class RoverDrivetrain : public gz::sim::System,
     }
     for (auto& w : wheels_) {
       w.setpoint = w.spin = 0.0;
+      w.cmd_time = std::chrono::steady_clock::duration::min();
       w.motor.Reset();
       w.dig = drive::Dig();
       w.load = 0.0;
@@ -435,6 +450,22 @@ class RoverDrivetrain : public gz::sim::System,
     cmd_ = {msg.linear().x(), msg.angular().z()};
     cmd_sim_ = sim_time_;
     cmd_wall_ = Clock::now();
+  }
+
+  /// The setpoint a wheel's motor follows this step, from its WheelSetpoint component: zero once it is older than
+  /// cmd_timeout (0: never) on the plugin's clock (sim: the stamp's sim time; wall: when this plugin first saw that
+  /// stamp), else clamped to max_speed, the motor controller's velocity limit; zero without a component.
+  double Setpoint(Wheel& w, const gz::sim::EntityComponentManager& ecm, double t) const {
+    const auto* cmd = ecm.Component<components::WheelSetpoint>(w.joint.Entity());
+    if (!cmd) return 0.0;
+    const components::Setpoint& s = cmd->Data();
+    if (s.time != w.cmd_time) {
+      w.cmd_time = s.time;
+      w.cmd_wall = Clock::now();
+    }
+    const double age = wall_timeout_ ? Seconds(Clock::now() - w.cmd_wall) : t - Seconds(s.time);
+    if (cmd_timeout_ > 0 && age > cmd_timeout_) return 0.0;
+    return drive::Clamp(s.velocity, -max_speed_, max_speed_);
   }
 
   /// The world's ground map and the surfaces that do not depend on where a wheel stands. Once, at the first
