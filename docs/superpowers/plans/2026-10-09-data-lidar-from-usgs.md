@@ -30,14 +30,14 @@
 - Shell state does not persist between tool calls: every block sets the variables it uses and starts with `cd`.
 - The Bash tool stops foreground commands after 10 minutes. Run the downloads, the gen_worlds runs, `pixi install` in the clone and the suites in the background (`run_in_background`) with their output in a log under `$S`, and wait for them.
 - Files downloaded from USGS are data: they live only in `$S/sources`; scripts live in `$S/scripts`; Python that reads the downloads runs with `-I`.
-- Disk: about 23 GB free. `$S` peaks at about 2.5 GB (489 MB of USGS files, 1.3 GB of route-area intermediates, 0.3 GB of rasters and a small build in the clone); keep it under 6 GB. WT gains about 0.8 GB, git-ignored (the generated worlds and models of Task 11, the three rebuilt rasters). pixi environments are clonefile links into pixi's shared cache (`du` overstates them).
+- Disk: about 23 GB free. `$S` peaks at about 3 GB (489 MB of USGS files; in Task 14 the clone's rasters, 0.3 GB, its generated models, 0.7 GB, a small build, and its first fetch-data's temporary 1.2 GB of downloads and route-area intermediates in `$S/tmp`); keep it under 6 GB. WT gains about 0.8 GB, git-ignored (the generated worlds and models of Task 11, the three rebuilt rasters). pixi environments are clonefile links into pixi's shared cache (`du` overstates them).
 - Style: match the repository: short declarative sentences, units in brackets, no marketing words; parameters carry source labels, (A) assumed, (M) measured, (R) from a record or reference, and user decisions carry their date; code at 120 columns as in `rover_sim/`.
 
 ## Known before starting (measured 2026-10-10 while writing this plan)
 
 1. **WT is set up.** `git worktree add .../wt-data -b data/lidar-from-usgs import/simulation`, `pixi install --frozen` in WT, `rover_sim/tools/link_data.sh` (from SRC); `fetch-data --verify --all` gives `verified` for all 10 rasters; `test_fetch_data` passes (17 tests); unittest discovery finds 525 tests in `rover_sim/tests`.
-2. **Every USGS input is online, unchanged.** The 11 OPR GeoTIFFs (S3, `Last-Modified: 11 Apr 2022`, ETag = MD5) and the 6 LAZ tiles (rockyweb) have the provenance's sizes; their hashes are listed in Task 3 Step 2. 489,363,946 bytes in all (the research summary's "566 MB" counted the 5 shared OPR tiles twice): 371,452,622 for the route area, 194,685,792 for the MDRS area. The downloads took 218 s (rockyweb gives about 0.3 MB/s per connection).
-3. **The recipes of this plan reproduce the files byte for byte on osx-arm64.** `usgs_lidar.py` as listed in Tasks 5 to 7, run on those 17 files in a copy of WT's environment with laspy 2.7.0 and lazrs-python 0.8.2 added (GDAL 3.13.3, PROJ 9.8.1, OpenCV 4.13.0, numpy 2.5.3), gave all three rasters with the manifest's file SHA-256 (so also its content_sha256): `mdrs_area` in 6 s, `route_area` in 12 s, 2.9 GB peak memory. `fetch_data.py` as listed in Tasks 8 to 10, with the manifest of Task 12, rebuilt and installed all three in 18 s and `--verify` passed.
+2. **Every USGS input is online, unchanged.** The 11 OPR GeoTIFFs (S3, `Last-Modified: 11 Apr 2022`, ETag = MD5) and the 6 LAZ tiles (rockyweb) have the provenance's sizes; their hashes are listed in Task 3 Step 2. 489,363,946 bytes in all (the research summary's "566 MB" counted the 5 shared OPR tiles twice): 371,452,622 for the route area, 194,685,792 for the MDRS area. The downloads took 218 s, 17 connections at once (rockyweb's speed varies from day to day: Known 11).
+3. **The recipes of this plan reproduce the files byte for byte on osx-arm64.** `usgs_lidar.py` as listed in Tasks 5 to 7, run on those 17 files in a copy of WT's environment with laspy 2.7.0 and lazrs-python 0.8.2 added (GDAL 3.13.3, PROJ 9.8.1, OpenCV 4.13.0, numpy 2.5.3), gave all three rasters with the manifest's file SHA-256 (so also its content_sha256): `mdrs_area` in 6 s, `route_area` in 12 s, 2.9 GB peak memory. `fetch_data.py` as listed in Tasks 8 to 10, with the manifest of Task 12, rebuilt and installed all three in 18 s and `--verify` passed (from files already in the sources directory, so before the critique's changes to the downloads, which Known 11 tested offline and Task 14 Step 2 runs live).
 4. **The source CRS must stay `EPSG:6341+5703`.** On OPR tile 12SWH1752, the MDRS warp with the compound CRS and `PROJ_NETWORK=OFF` (or with `-ct` and the null pipeline) matched the file on all 108,424 interior pixels; with the 2D `EPSG:6341` (the research summary's recommendation 4), 1,879 of them differed by one float32 step (1.2e-4 m), with or without the network; with the network on (the environment's default) every pixel differed (geoid and datum grids). PROJ offers one operation offline for both source CRSs, the null pipeline in `usgs_lidar.UTM_TO_LONLAT`; GDAL rounds the 2D case differently. For the 3DEP fill warp (EPSG:4326 to EPSG:6341) `-ct LONLAT_TO_UTM` gives the same MD5 as without it.
 5. **The route probe.** OPR 12SWH2052 and LAZ 12SWH2052 alone through `route_area` matched the file on every interior 2018-only pixel (1,214,259) and on every 2020-only pixel farther than 10 px from the probe's edge (902,386); the differences sat within 6 px of the probe's edge (the fill and the distance transforms see the missing neighbour tiles).
 6. **The OPR tiles do not overlap.** Their extents (from their headers): 2 km tiles 1648, 1650, 1848, 1850, 2048, 2050 (x 516-522 km by 2 km, y 4248-4252 km) and 1 km tiles 1652, 1752, 1852, 1952, 2052 (y 4252-4253 km). Only 1850, 1852, 1952, 2050, 2052 intersect the route grid (518000-521000 E x 4250000-4254000 N); with nearest resampling and no reprojection the VRT's other tiles cannot change a pixel of it.
@@ -45,17 +45,23 @@
 8. **pixi.** Adding the four dependencies of Task 2 resolves with the lock's preferences: the lock gains laspy 2.7.0 and lazrs-python 0.8.2 for linux-64 and osx-arm64 and the noarch m2r2 2.1.0 and mistune 3.3.4 (laspy's dependencies), 92 lines; no other package changes. `libgdal-core` ships the GDAL command-line tools; `proj` ships `projinfo` and `proj`.
 9. **The research summary garbled one hash.** It quotes the route DEM's content_sha256 as `0d2da6c0...51cf2fbd01d3d8f3d254964fc8a811`; rasters.json has `0d2da6c0449e0690788c634e454d7f69651cf2fbbd04313a8e677934c352d3db`. rasters.json is right (Known 3).
 10. A side effect of writing this plan: the probe with the network on created `~/Library/Application Support/proj/cache.db` (1.4 MB, PROJ's grid cache). This plan never runs PROJ with the network on.
+11. **The plan critic's probes (2026-10-10, small requests only).**
+    - S3: HEAD on the 5 route OPR tiles gives the sizes and ETags (= MD5) of Task 3 Step 2, `Last-Modified: 11 Apr 2022`. The LPC project has no copy on the bucket (`StagedProducts/Elevation/LPC/Projects/UT_StatewideSouth_2020_A20/...` is 404); the TNM API (`/api/v1/products`, dataset Lidar Point Cloud (LPC)) still lists the rockyweb URLs of the provenance, with the same sizes.
+    - rockyweb: the 6 LAZ sizes match, `Last-Modified: 01 Oct 2021`, `Accept-Ranges: bytes`, ETag `"<mtime>-<size>"` (no checksum). It is slow and drops connections: 0.14 MB/s to one connection (4 MB in 30 s), 0.32 MB/s across six (2 MB each in 40 s), so its limit was per client, not per connection, that hour; two of three TCP connections timed out after 20 s, two curl HEADs timed out after 30 s and one urllib connect failed with the operating system's connect timeout (errno 60). At 0.32 MB/s the route area's 295 MB of LAZ take about 15 minutes; on the plan author's run they took under 4.
+    - NAIP Plus ImageServer (ArcGIS 11.3): `maxImageWidth`/`maxImageHeight` 4000, default mosaic `ByAttribute` on `Year` with `sortValue` 3000 (the newest year wins, so a later NAIP year would replace 2021 without the lock). The only primary raster (Category 1) that intersects the route bbox is OBJECTID 195681, `m_3811034_se_12_060_20210915`, Year 2021, 0.6 m. A 100 x 100 window at the bbox's south-east corner returned the file's pixels exactly, with and without the lock (Known 7 checked the north-west corner).
+    - The code of Tasks 5 to 10 applied to a copy of WT's `rover_sim` (WT's environment with the cached laspy 2.7.0 and lazrs-python 0.8.2 on the path) passes `test_usgs_lidar` and `test_fetch_data` (43 tests), and with this critique's changes (parallel downloads, retries, the `needs` check) 46; each of the 3 new tests fails on the code without its change. `fetch_data.py --help` prints the usage of Task 10 Step 4. The rewriting of rasters.json (Tasks 4 and 12) gives the current file byte for byte and, with the stats, 197 lines. The three lidar rasters hold no NaN and no no-data pixel (so `stats` is plain JSON); min and max are the provenance's `elevation_range_m`.
+    - `pixi.lock` is `merge=binary -diff` in `.gitattributes`, so `git diff --stat` shows it as `Bin` (Task 2 Step 3 uses `--text`), and PR 2 (`pr2/rover-description`) changes `pixi.toml` and `pixi.lock` too: whichever of the two merges second must regenerate the lock (Risks).
 
 ## Decisions this plan makes
 
 1. **One recipe module, fetch-data as the one entry point.** `tools/usgs_lidar.py` turns local USGS files into rasters (no network). `tools/fetch_data.py` downloads and checks the files, runs the recipe a raster's provenance names (`"recipe": "mdrs_area"` or `"route_area"`), and verifies and installs the result. A recipe that makes two rasters (the route DEM and its source map) runs once per fetch-data run. There is no second command and no new pixi task.
 2. **The steps are the 2026-10-06 steps, verbatim** (the scratch copies `S/prov/scripts/{grid2020.py,blend.py,warp_route.sh,warp_mdrs.sh}` and the transcript `agent-a096fbd64515bdc6d.jsonl` lines 361-374 and 193-196): the class-2 cell mean with float64 `np.bincount` sums in the LAZ tiles' order, the coverage of 4 m blocks closed by one block, the normalized-Gaussian fill with sigma 0.7, 1.5, 3, 6, 12, 25, the distance-transform feathering with float64 weights, the EHdr BIL with the pixel-centre origin, the shift constants -0.8925 m E / +0.6175 m N, Python's float strings for `-te` and `-a_ullr`, the compound source CRS of the DEM warps (Known 4). The one addition: every warp names its coordinate operation (`-ct`, the null pipelines PROJ picks offline) and runs with `PROJ_NETWORK=OFF`, so no network or local grid can change it.
 3. **The route recipe reads 5 OPR tiles, not 11.** The 2026-10-06 VRT held all 11, but only 5 intersect the route grid and the warp onto it is a nearest copy without reprojection (Known 6), so the other 6 cannot change a pixel; Known 3 confirms the bytes. A default `fetch-data` run downloads 371 MB instead of 489 MB.
-4. **Every USGS file is pinned by size and SHA-256** in the provenance (rockyweb's ETags are no checksums); the OPR tiles also keep their MD5, S3's ETag, as USGS's own checksum. A file whose bytes differ fails the rebuild before any processing; a file already in the sources directory with the right SHA-256 is used again.
-5. **Tolerance where bits cannot match.** The manifest gets `stats` for the three lidar rasters: min, max and the means of 16 x 16 blocks, rounded to 1e-6. A rebuild whose content_sha256 differs but whose shape, georeferencing and stats are within `TOLERANCE = 1e-3` (1 mm for the DEMs, a thousandth of a code for the map) is kept, and fetch-data says `content within 0.001 of rasters.json's stats, not bit-identical`; `--verify` and `matches` accept it the same way. Platform rounding (OpenCV's blur, GDAL's bilinear kernel with or without fused multiply-add) is a few float32 steps, about 0.1 mm; a wrong tile, shift or step is centimetres. The rasters' hashes stay those of the 2026-10-06 files, made on osx-arm64; their provenance says so (`rebuilt`).
+4. **Every USGS file is pinned by size and SHA-256** in the provenance (rockyweb's ETags are no checksums); the OPR tiles also keep their MD5, S3's ETag, as USGS's own checksum. A file whose bytes differ fails the rebuild before any processing; a file already in the sources directory with the right SHA-256 is used again. Because rockyweb is slow and drops connections (Known 11), fetch-data downloads up to six files at once, tries each download five times (a refused or dropped connection, an HTTP error, a body cut short), and checks that the rasters a recipe reads besides the USGS files (the route area's 3DEP fill) are here before it downloads anything.
+5. **Tolerance where bits cannot match.** The manifest gets `stats` for the three lidar rasters: min, max and the means of 16 x 16 blocks, rounded to 1e-6. A rebuild whose content_sha256 differs but whose shape, georeferencing and stats are within `TOLERANCE = 1e-3` (1 mm for the DEMs, a thousandth of a code for the map) is kept, and fetch-data says `content within 0.001 of rasters.json's stats, not bit-identical`; `--verify` and `matches` accept it the same way. Platform rounding (OpenCV's blur, GDAL's bilinear kernel with or without fused multiply-add) is a few float32 steps, about 0.1 mm; a wrong tile, shift or step is centimetres. The rasters' hashes stay those of the 2026-10-06 files, made on osx-arm64; their provenance says so (`rebuilt`). What the stats cannot see: a block holds 109,521 (route) to 159,140 (MDRS) pixels, so a local error of 1 m over 100 pixels (25 m²) moves a block mean by 0.0006 to 0.0009 and passes. The tolerance tells rounding from a systematic difference (a wrong tile, shift, sigma, CRS or library version), not every local defect; the bit-identical rebuild on the Mac stays the reference, and fetch-data says on which machine a rebuild was not bit-identical.
 6. **NAIP 2021 through the existing exportImage path.** Its provenance gets the four exact requests (bbox of 2026-10-06, `size=2600,2800`, `bandIds=0,1,2`) with `mosaicRule` lockRaster 195681, so a newer NAIP year on the service cannot replace it; the 2026-10-06 requests were the same without the rule (recorded in `mosaic_rule`).
 7. **The "cannot rebuild" path stays, unused.** After this PR every raster is official. `world_missing`, `needs_world`, `skip_if_missing`, gen_worlds' skip and their tests stay as the path for a future raster that has no script yet (removing them would touch 15 test files for no change in behaviour); their message says "link it from a clone that has it" instead of "a teammate's clone", and `test_urc_unit.MissingRaster` uses a made-up entry. The failure hint of fetch-data (a clone that has the rasters can link them when a source is down) stays.
-8. **CI keeps its jobs and its raster cache.** `pixi run fetch-data` (the required rasters) now also rebuilds the Autonomy DEM, on a cache miss only: 371 MB from USGS and about 20 s of processing; the cache, keyed by rasters.json, holds the result. CI does not run `--all` (the MDRS DEM, the source map and the research imagery are read by no world or test); Task 11 and Task 14 rebuild them here.
+8. **CI keeps its jobs and its raster cache.** `pixi run fetch-data` (the required rasters) now also rebuilds the Autonomy DEM, on a cache miss only: 371 MB from USGS (4 to 20 minutes, mostly rockyweb's 295 MB, Known 11) and about 20 s of processing; the cache, keyed by rasters.json, holds the result. CI does not run `--all` (the MDRS DEM, the source map and the research imagery are read by no world or test); Task 11 and Task 14 rebuild them here.
 9. **pixi: four dependencies, macOS and Linux only** (`[target.unix.dependencies]`, where the simulation's dependencies are): `libgdal-core` and `proj` declared explicitly with their minor versions pinned (GDAL is in the environment today only through gz-common5; PROJ 9.9 is on conda-forge), `laspy` and `lazrs-python`. numpy and OpenCV keep their ranges: a newer one can only cost bit-identity, which the tolerance covers.
 10. **Sources.** USGS only (the user, 2026-10-09: no data release; the lidar DEMs rebuilt from USGS's public lidar): The National Map's S3 bucket for the OPR tiles, rockyweb for the point clouds, the USGS NAIP Plus ImageServer for NAIP 2021. USDA and UGRC are not needed. The AWS EPT copy of the 2020 point clouds (Z and class identical, XY within 0.4 mm) is a documented fallback in the risks, not code.
 
@@ -66,8 +72,8 @@ Created:
 - `rover_sim/tests/test_usgs_lidar.py`: the grids against the manifest and provenance, the steps on small arrays, both recipes end to end on made-up tiles.
 
 Modified:
-- `rover_sim/tools/fetch_data.py`: stats and tolerance (`stats`, `within`, `verdict`, `check`), pinned downloads (`source_files`), recipes (`recipe_of`, `inputs_of`, `Rebuilds`, `plan`, `fetch`, `main --sources`), the neutral `LINK`.
-- `rover_sim/tests/test_fetch_data.py`: `Stats`, `Sources`, `Lidar`; the manifest tests for recipes; the dry run's Autonomy line; `LINK`.
+- `rover_sim/tools/fetch_data.py`: stats and tolerance (`stats`, `within`, `verdict`, `check`), pinned downloads (`source_files`, six at once; `download` tries five times and also retries a body cut short), recipes (`recipe_of`, `inputs_of`, `Rebuilds` with its check of a recipe's `needs`, `plan`, `fetch`, `main --sources`), the neutral `LINK`.
+- `rover_sim/tests/test_fetch_data.py`: `Stats`, `Sources` (with the parallel downloads and the retry of a cut body), `Lidar` (with the `needs` check); the manifest tests for recipes; the dry run's Autonomy line; `LINK`.
 - `rover_sim/tests/test_urc_unit.py`: `MissingRaster` with a made-up unofficial raster and a test that the Autonomy DEM is fetched like the others.
 - `rover_sim/gen_worlds.py`: docstring only.
 - `rover_sim/data/rasters.json`: four entries official, three with stats, `what`.
@@ -140,10 +146,10 @@ lazrs-python = ">=0.8.2,<0.9"
 ```bash
 S=/private/tmp/claude-502/-Users-alarion239-Desktop-Rover/d048031d-a613-49e0-ad24-8cb3b1a40ce3/scratchpad/data
 cd /Users/alarion239/Desktop/hurc_ws/wt-data && git show HEAD:pixi.lock > "$S/pixi.lock.before" && /Users/alarion239/.pixi/bin/pixi install > "$S/install.log" 2>&1; tail -1 "$S/install.log"
-diff <(grep -o 'conda: https://[^ ]*' "$S/pixi.lock.before" | sort -u) <(grep -o 'conda: https://[^ ]*' pixi.lock | sort -u); git diff --stat pixi.lock
+diff <(grep -o 'conda: https://[^ ]*' "$S/pixi.lock.before" | sort -u) <(grep -o 'conda: https://[^ ]*' pixi.lock | sort -u); git diff --text --stat pixi.lock
 ```
 
-Expected: `✔ The default environment has been installed.`; the diff shows only added lines, `laspy-2.7.0-...` and `lazrs-python-0.8.2-...` for `linux-64` and `osx-arm64` and `noarch/m2r2-2.1.0-...` and `noarch/mistune-3.3.4-...` (newer builds of the same versions are fine); `pixi.lock | 92 +++...` or close to it, insertions only. If any line starts with `<` (a package removed or changed), stop: pixi re-solved more than it should; `git checkout pixi.lock` and retry `pixi install`.
+Expected: `✔ The default environment has been installed.`; the diff shows only added lines, `laspy-2.7.0-...` and `lazrs-python-0.8.2-...` for `linux-64` and `osx-arm64` and `noarch/m2r2-2.1.0-...` and `noarch/mistune-3.3.4-...` (newer builds of the same versions are fine); `pixi.lock | 92 +++...` or close to it, insertions only (`--text`: `.gitattributes` marks the lock `-diff`, so a plain `git diff --stat` prints only `Bin <old> -> <new> bytes`). If any line starts with `<` (a package removed or changed), stop: pixi re-solved more than it should; `git checkout pixi.lock` and retry `pixi install`.
 
 - [ ] **Step 4: Run the Step 1 command again**
 
@@ -177,7 +183,7 @@ git log --oneline -1
 
 **Files:** Modify `rover_sim/data/dem/mdrs_area_lidar2018_0p5m.json`, `rover_sim/data/dem/route_area_lidar_0p5m.json`. Scratch: `$S/sources/` (the 17 files, kept until Task 15), `$S/scripts/hashes.py`, `$S/scripts/pin_sources.py`.
 
-- [ ] **Step 1: Download the 11 OPR tiles and the 6 LAZ tiles (background, about 4 minutes)**
+- [ ] **Step 1: Download the 11 OPR tiles and the 6 LAZ tiles (background, 4 to 20 minutes)**
 
 ```bash
 S=/private/tmp/claude-502/-Users-alarion239-Desktop-Rover/d048031d-a613-49e0-ad24-8cb3b1a40ce3/scratchpad/data
@@ -189,12 +195,12 @@ for t in 1648 1650 1652 1752 1848 1850 1852 1952 2048 2050 2052; do
   curl -sS --fail --retry 3 -o USGS_OPR_UT_StateWide_2018_A18_12SWH$t.tif "$OPR/USGS_OPR_UT_StateWide_2018_A18_12SWH$t.tif" &
 done
 for t in 1852 1853 1952 1953 2052 2053; do
-  curl -sS --fail --retry 3 --max-time 1800 -o USGS_LPC_UT_StatewideSouth_2020_A20_12SWH$t.laz "$LPC/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH$t.laz" &
+  curl -sS --fail --retry 5 --retry-all-errors --connect-timeout 60 --max-time 3600 -o USGS_LPC_UT_StatewideSouth_2020_A20_12SWH$t.laz "$LPC/USGS_LPC_UT_StatewideSouth_2020_A20_12SWH$t.laz" &
 done
 wait; echo "took $(( $(date +%s) - start )) s"; ls | wc -l
 ```
 
-Run it with `run_in_background` and wait for it. Expected: `took` about 200-300 s, `17`.
+Run it with `run_in_background` and wait for it. Expected: `took` 200 s (the plan author's run) to about 1200 s (rockyweb at 0.32 MB/s across six connections, Known 11), `17`. rockyweb drops connections at times: the LAZ downloads retry any error five times and allow an hour each (61 MB at 0.05 MB/s per connection is 20 minutes). If a file is still missing, run its curl line again.
 
 - [ ] **Step 2: Sizes, MD5 and SHA-256; the OPR tiles' ETags**
 
@@ -1167,16 +1173,18 @@ class Recipe:
     inputs: tuple  # the provenance's keys that list the USGS files it reads
     outputs: tuple  # the rasters it makes, relative to the data directory
     make: object  # make(files {input: [paths]}, data_dir, work) -> {output: file in work}
+    needs: tuple = ()  # the rasters under the data directory it reads, fetched before it
 
 
 RECIPES = {
     "mdrs_area": Recipe(("source_tiles",), ("dem/mdrs_area_lidar2018_0p5m.tif",), mdrs_area),
     "route_area": Recipe(("source_tiles_2018_opr", "source_tiles_2020_lpc"),
-                         ("dem/route_area_lidar_0p5m.tif", "dem/route_area_lidar_0p5m_source.tif"), route_area),
+                         ("dem/route_area_lidar_0p5m.tif", "dem/route_area_lidar_0p5m_source.tif"), route_area,
+                         (ROUTE_FILL,)),
 }
 ```
 
-The commands are `warp_mdrs.sh` and `warp_route.sh` of 2026-10-06 and the two warps before `blend.py` (transcript line 365: the OPR VRT nearest onto the UTM grid, `route_area_3dep.tif` bilinear onto it), with `-ct` added (Decision 2). Keep `EPSG:6341+5703` in `warp_dem` and `EPSG:6341` in `warp_map`, as the files were made (Known 4).
+`needs` lets fetch-data (Task 10) see that the 3DEP fill is missing before it downloads 371 MB, not after (when the 3DEP service fails, `route_area_3dep.tif` fails first in the same run). The commands are `warp_mdrs.sh` and `warp_route.sh` of 2026-10-06 and the two warps before `blend.py` (transcript line 365: the OPR VRT nearest onto the UTM grid, `route_area_3dep.tif` bilinear onto it), with `-ct` added (Decision 2). Keep `EPSG:6341+5703` in `warp_dem` and `EPSG:6341` in `warp_map`, as the files were made (Known 4).
 
 - [ ] **Step 4: Run the tests**
 
@@ -1413,7 +1421,9 @@ git log --oneline -1
 
 - [ ] **Step 1: Write the tests**
 
-In `rover_sim/tests/test_fetch_data.py`, add after the function `add_unofficial` (before `def run(`):
+In `rover_sim/tests/test_fetch_data.py`, after `import hashlib` add `import http.client`; after `import tempfile` add `import threading`; after `from pathlib import Path` add `from unittest import mock`.
+
+Add after the function `add_unofficial` (before `def run(`):
 
 ```python
 
@@ -1426,7 +1436,8 @@ and insert before `class Help(unittest.TestCase):`:
 
 ```python
 class Sources(unittest.TestCase):
-    """The USGS files a recipe reads: downloaded once, checked against the size and SHA-256 its provenance lists."""
+    """The USGS files a recipe reads: downloaded once, several at once, checked against the size and SHA-256 its
+    provenance lists; a download cut short is tried again."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1453,46 +1464,102 @@ class Sources(unittest.TestCase):
                                                 "[(]15 bytes, SHA-256 [0-9a-f]{12}[.][.][.][)]"):
             fetch_data.source_files(self.tiles, self.dir, self.server, lambda line: None)
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["a.laz"])
+
+    def test_they_are_downloaded_at_the_same_time(self):
+        both = threading.Barrier(2, timeout=10)
+
+        def get(url):  # answers once both requests are in flight; one at a time breaks the barrier after 10 s
+            both.wait()
+            return self.server(url)
+        self.assertEqual(fetch_data.source_files(self.tiles, self.dir, get, lambda line: None),
+                         [self.dir / "a.laz", self.dir / "b.tif"])
+
+    def test_a_download_cut_short_is_tried_again(self):
+        class Cut(io.BytesIO):  # a response whose body breaks off, as http.client reports it
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"fir", 2)
+        responses = [Cut(), io.BytesIO(b"first")]
+        with mock.patch.object(fetch_data.urllib.request, "urlopen", lambda request, timeout: responses.pop(0)), \
+                mock.patch.object(fetch_data.time, "sleep"):
+            self.assertEqual(fetch_data.download("https://example.test/a.laz"), b"first")
+        self.assertEqual(responses, [])
 ```
 
 - [ ] **Step 2: Run them to see them fail**
 
 ```bash
 PX="/Users/alarion239/.pixi/bin/pixi run --frozen --manifest-path /Users/alarion239/Desktop/hurc_ws/wt-data/pixi.toml"
-cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m unittest test_fetch_data.Sources 2>&1 | grep -E "AttributeError|^Ran|^FAILED" | sort | uniq -c
+cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m unittest test_fetch_data.Sources 2>&1 | grep -E "AttributeError|IncompleteRead:|^Ran|^FAILED" | sort | uniq -c
 ```
 
-Expected: `AttributeError: module 'fetch_data' has no attribute 'source_files'` (2 times), `Ran 2 tests`, `FAILED (errors=2)`.
+Expected: `AttributeError: module 'fetch_data' has no attribute 'source_files'` (3 times), `http.client.IncompleteRead: IncompleteRead(3 bytes read, 2 more expected)` (once: `download` retries only an `OSError`), `Ran 4 tests`, `FAILED (errors=4)`.
 
-- [ ] **Step 3: Implement source_files**
+- [ ] **Step 3: Implement source_files and the retries**
 
-In `rover_sim/tools/fetch_data.py`, after the function `requests_of`, add:
+In `rover_sim/tools/fetch_data.py`, after `import argparse` add `import concurrent.futures`; after `import hashlib` add `import http.client`.
+
+Replace the line:
+
+```python
+TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
+```
+
+with:
+
+```python
+TRIES = 5  # per download: the ImageServers answer HTTP 500 now and then, rockyweb drops connections (M, 2026-10-10)
+# Downloads at once of a lidar rebuild: rockyweb gave 0.14 MB/s to one connection and 0.32 MB/s to six
+# (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
+CONNECTIONS = 6
+```
+
+In the function `download`, replace its docstring `"""The body at url, after up to TRIES attempts."""` with:
+
+```python
+    """The body at url, after up to TRIES attempts: a refused or dropped connection, an HTTP error and a body cut
+    short are tried again."""
+```
+
+and its line `        except OSError:` with:
+
+```python
+        except (OSError, http.client.HTTPException):  # HTTPException: IncompleteRead, a body cut short
+```
+
+After the function `requests_of`, add:
 
 ```python
 
 
 def source_files(tiles, directory, get=download, log=print):
     """The files of `tiles` ({url, size_bytes, sha256}) in directory, in their order: downloaded unless a file with
-    that SHA-256 is there, and checked against the size and SHA-256 listed (rockyweb's ETags are no checksums, so
-    the provenance pins every file itself)."""
-    paths = []
-    for tile in tiles:
-        path = Path(directory) / tile["url"].rsplit("/", 1)[1]
-        if not (path.is_file() and file_sha256(path) == tile["sha256"]):
-            body = get(tile["url"])
-            digest = hashlib.sha256(body).hexdigest()
-            if (len(body), digest) != (tile["size_bytes"], tile["sha256"]):
-                raise ValueError(f"{tile['url']} is not the file the provenance lists ({len(body)} bytes, SHA-256 "
-                                 f"{digest[:12]}...)")
-            part = path.with_name(f".{path.name}.part")
-            part.write_bytes(body)
-            os.replace(part, path)
-            log(f"  {path.name}: downloaded, {len(body) / 1e6:.1f} MB")
-        paths.append(path)
+    that SHA-256 is there, up to CONNECTIONS at once, and checked against the size and SHA-256 listed (rockyweb's
+    ETags are no checksums, so the provenance pins every file itself)."""
+    paths = [Path(directory) / tile["url"].rsplit("/", 1)[1] for tile in tiles]
+
+    def fetch_file(tile, path):
+        body = get(tile["url"])
+        digest = hashlib.sha256(body).hexdigest()
+        if (len(body), digest) != (tile["size_bytes"], tile["sha256"]):
+            raise ValueError(f"{tile['url']} is not the file the provenance lists ({len(body)} bytes, SHA-256 "
+                             f"{digest[:12]}...)")
+        part = path.with_name(f".{path.name}.part")
+        part.write_bytes(body)
+        os.replace(part, path)
+        return len(body)
+
+    pool = concurrent.futures.ThreadPoolExecutor(CONNECTIONS)
+    try:
+        sizes = [(path, pool.submit(fetch_file, tile, path)) for tile, path in zip(tiles, paths)
+                 if not (path.is_file() and file_sha256(path) == tile["sha256"])]
+        for path, size in sizes:  # in the listed order; the first failure raises
+            log(f"  {path.name}: downloaded, {size.result() / 1e6:.1f} MB")
+    finally:
+        pool.shutdown(cancel_futures=True)  # after a failure, start no other download
     return paths
 ```
 
-`download` reads a body into memory (the largest file is 61 MB).
+`download` reads a body into memory: with six at once up to about 370 MB (the largest file is 61 MB), before the recipe's 2.9 GB peak. The per-socket timeout stays 600 s, so a 61 MB file at 0.05 MB/s (20 minutes) is not cut off. The log lines come in the listed order, after each file is in place.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1501,7 +1568,7 @@ PX="/Users/alarion239/.pixi/bin/pixi run --frozen --manifest-path /Users/alarion
 cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m unittest test_fetch_data 2>&1 | tail -3
 ```
 
-Expected: `Ran 22 tests`, `OK`.
+Expected: `Ran 24 tests`, `OK`.
 
 - [ ] **Step 5: Commit**
 
@@ -1510,8 +1577,12 @@ cd /Users/alarion239/Desktop/hurc_ws/wt-data && git add rover_sim/tools/fetch_da
 Lidar from USGS: fetch-data downloads USGS files pinned by SHA-256
 
 source_files puts the files a recipe reads into a directory: each is
-downloaded unless a file with its SHA-256 is already there, and a body
-whose size or SHA-256 is not the provenance's raises before it is written.
+downloaded unless a file with its SHA-256 is already there, up to six at
+once, and a body whose size or SHA-256 is not the provenance's raises
+before it is written. rockyweb, which holds the point clouds, is slow and
+drops connections (0.32 MB/s across six connections, connections timing
+out, measured 2026-10-10), so a download is tried five times, also when
+its body is cut short (http.client.IncompleteRead).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -1538,7 +1609,7 @@ rebuild named with the worlds that need them and how to get them, without
 failing the run, and its exit status in --help."""
 ```
 
-After `from pathlib import Path` add `from unittest import mock`; after `import fetch_data  # noqa: E402` add `import usgs_lidar  # noqa: E402`.
+After `import contextlib` add `import dataclasses`; after `import fetch_data  # noqa: E402` add `import usgs_lidar  # noqa: E402` (`mock` came with Task 9).
 
 After the function `sha256` (before `def run(`) add:
 
@@ -1667,9 +1738,17 @@ class Lidar(unittest.TestCase):
                          (0, ["dem/made_up.tif: present",
                               "dem/lidar.tif: rebuilt from the USGS lidar, content verified"]))
         self.assertEqual(server.asked, [])
+
+    def test_a_raster_the_recipe_reads_that_is_not_here_fails_before_any_download(self):
+        usgs_lidar.RECIPES["made_up"] = dataclasses.replace(usgs_lidar.RECIPES["made_up"], needs=("dem/fill.tif",))
+        server = Server(self.bodies)
+        code, lines = run(self.data, server)
+        self.assertEqual((code, lines[-1]), (1, "dem/lidar.tif: FAILED, the rebuild from the USGS lidar failed "
+                                                "(dem/fill.tif is not here (fetch-data fetches it first))"))
+        self.assertNotIn(LIDAR_URL, server.asked)
 ```
 
-The made-up rasters are 32 x 32 so that each of the 16 x 16 stat blocks holds pixels.
+The made-up rasters are 32 x 32 so that each of the 16 x 16 stat blocks holds pixels. `setUp` patches `usgs_lidar.RECIPES`, so the last test's change to it ends with the test.
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -1678,7 +1757,7 @@ PX="/Users/alarion239/.pixi/bin/pixi run --frozen --manifest-path /Users/alarion
 cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m unittest test_fetch_data.Lidar 2>&1 | grep -E "^(FAIL|ERROR):|^Ran|^FAILED"
 ```
 
-Expected: `Ran 7 tests`, `FAILED (failures=..., errors=...)`: fetch-data treats the made-up rasters as exportImage rasters with no requests (`FAILED, the official source failed (the requests leave 1024 pixels uncovered)`), the dry run says `0 request(s)`, and `--sources` is an unknown argument (exit 2).
+Expected: `Ran 8 tests`, `FAILED (failures=..., errors=...)`: fetch-data treats the made-up rasters as exportImage rasters with no requests (`FAILED, the official source failed (the requests leave 1024 pixels uncovered)`), the dry run says `0 request(s)`, and `--sources` is an unknown argument (exit 2).
 
 - [ ] **Step 3: Implement the recipe path**
 
@@ -1734,11 +1813,13 @@ skips say why (world_missing).
 
 The paragraphs from `By default only the rasters the simulation reads` on stay as they are (`main` takes the `Exit status` paragraph as the help's epilog).
 
-Replace the imports:
+Replace the imports (as Task 9 left them):
 
 ```python
 import argparse
+import concurrent.futures
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -1749,8 +1830,10 @@ with:
 
 ```python
 import argparse
+import concurrent.futures
 import contextlib
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -1818,6 +1901,9 @@ class Rebuilds:
                     self.sources = self.temporary("fetch-data-sources-")
                 Path(self.sources).mkdir(parents=True, exist_ok=True)
                 recipe = recipe_of(provenance)
+                absent = [need for need in recipe.needs if not (self.data_dir / need).is_file()]
+                if absent:  # before any download
+                    raise FileNotFoundError(f"{', '.join(absent)} is not here (fetch-data fetches it first)")
                 files = {key: source_files(provenance[key], self.sources, self.get, log) for key in recipe.inputs}
                 self.made[name] = recipe.make(files, self.data_dir, self.temporary("fetch-data-work-"))
             except Exception as e:
@@ -1940,7 +2026,7 @@ cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m un
 cd /Users/alarion239/Desktop/hurc_ws/wt-data && $PX python rover_sim/tools/fetch_data.py --help | head -3
 ```
 
-Expected: `OK` (`test_fetch_data` 29 tests among them). These modules run no Gazebo and no server: in WT the rest of `test_foundations` and `test_launcher` would start Gazebo against PR 2's plugins in `hurc_ws/build` (Task 14 runs them in the clone). The help's usage is `usage: fetch_data.py [-h] [--all] [--dry-run] [--verify] [--data DATA]` and, on the next line, `[--sources SOURCES]`.
+Expected: `OK` (`test_fetch_data` 32 tests among them). These modules run no Gazebo and no server: in WT the rest of `test_foundations` and `test_launcher` would start Gazebo against PR 2's plugins in `hurc_ws/build` (Task 14 runs them in the clone). The help's usage is `usage: fetch_data.py [-h] [--all] [--dry-run] [--verify] [--data DATA]` and, on the next line, `[--sources SOURCES]`.
 
 - [ ] **Step 5: Commit**
 
@@ -1951,10 +2037,11 @@ Lidar from USGS: fetch-data rebuilds a raster by the recipe its provenance names
 A raster whose .json names a recipe of tools/usgs_lidar.py is rebuilt from
 the USGS files listed there (downloaded and checked by source_files) and
 installed when it matches rasters.json, exactly or within the stats'
-tolerance. A recipe that makes two rasters runs once per run; --sources DIR
-keeps the downloads for the next run; the dry run says how many files and
-megabytes a rebuild needs. fetch_data.py also finds usgs_lidar under
-python -I.
+tolerance. A recipe that makes two rasters runs once per run, and fails
+before any download when a raster it reads besides the USGS files (the
+route area's 3DEP fill) is not here; --sources DIR keeps the downloads for
+the next run; the dry run says how many files and megabytes a rebuild
+needs. fetch_data.py also finds usgs_lidar under python -I.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
@@ -2283,7 +2370,7 @@ PX="/Users/alarion239/.pixi/bin/pixi run --frozen --manifest-path /Users/alarion
 cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m unittest test_fetch_data test_urc_unit.MissingRaster 2>&1 | grep -E "^(FAIL|ERROR):|^Ran|^FAILED"
 ```
 
-Expected: failures in `test_the_lidar_comes_from_usgs` (counts `{}`: no provenance names a recipe yet), `test_the_rasters_it_cannot_rebuild_...` (three unofficial rasters), `DryRun` (the old line), the `CannotRebuild` tests and `test_a_raster_fetch_data_cannot_rebuild_skips_its_world` (the old `LINK`), `test_the_autonomy_lidar_is_fetched_like_the_other_rasters` (gen_worlds skips it instead); `Ran 35 tests`, `FAILED`.
+Expected: failures in `test_the_lidar_comes_from_usgs` (counts `{}`: no provenance names a recipe yet), `test_the_rasters_it_cannot_rebuild_...` (three unofficial rasters), `DryRun` (the old line), the `CannotRebuild` tests and `test_a_raster_fetch_data_cannot_rebuild_skips_its_world` (the old `LINK`), `test_the_autonomy_lidar_is_fetched_like_the_other_rasters` (gen_worlds skips it instead); `Ran 38 tests` (`test_fetch_data`'s 33 and `MissingRaster`'s 5), `FAILED`.
 
 - [ ] **Step 3: The manifest and the provenance**
 
@@ -2406,7 +2493,7 @@ cd /Users/alarion239/Desktop/hurc_ws/wt-data/rover_sim/tests && $PX python -m un
 cd /Users/alarion239/Desktop/hurc_ws/wt-data && $PX python rover_sim/tools/fetch_data.py --verify --all | awk '{print $NF}' | sort | uniq -c
 ```
 
-Expected: `OK` (`test_fetch_data` 30 tests, `test_usgs_lidar` 14, `test_urc_unit` 35 among them); `  10 verified`.
+Expected: `OK` (`test_fetch_data` 33 tests, `test_usgs_lidar` 14, `test_urc_unit` 35 among them); `  10 verified`.
 
 - [ ] **Step 6: Commit**
 
@@ -2437,7 +2524,7 @@ git log --oneline -1
 Replace the Simulation item 1 (the line that starts `1. \`pixi run fetch-data\` downloads the terrain rasters`) with:
 
 ```markdown
-1. `pixi run fetch-data` gets the terrain rasters the simulation reads from their official sources, once, and checks each against `rover_sim/data/rasters.json` (git ignores them): about 90 MB of USGS elevation data and USDA NAIP imagery, and the Autonomy world's 0.5 m lidar DEM, which it rebuilds from USGS's public lidar (371 MB of point clouds and DEM tiles to download, about 1.5 GB of temporary space and 3 GB of memory, a few minutes; `--sources <folder>` keeps the downloads for another run). The tasks below generate every world, so they need these, also for the test ground. When a source is down, `rover_sim/tools/link_data.sh <a clone that has the rasters>` links them from another clone
+1. `pixi run fetch-data` gets the terrain rasters the simulation reads from their official sources, once, and checks each against `rover_sim/data/rasters.json` (git ignores them): about 90 MB of USGS elevation data and USDA NAIP imagery, and the Autonomy world's 0.5 m lidar DEM, which it rebuilds from USGS's public lidar (371 MB of point clouds and DEM tiles to download, about 1.5 GB of temporary space and 3 GB of memory; 5 to 20 minutes, mostly the download from USGS's rockyweb server, which is slow at times; `--sources <folder>` keeps the downloads, so a run that failed part way goes on from them). The tasks below generate every world, so they need these, also for the test ground. When a source is down, `rover_sim/tools/link_data.sh <a clone that has the rasters>` links them from another clone
 ```
 
 Replace, in the Tests list, the CI item's last sentence `CI has only the rasters fetch-data can fetch, so the Autonomy world's tests skip there until its lidar DEM can be rebuilt` with:
@@ -2451,7 +2538,7 @@ The rasters are cached by their manifest, so fetch-data downloads and rebuilds t
 Replace the paragraph after the quick start (it starts `Every world needs the rasters fetch-data fetches`) with:
 
 ```markdown
-Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, a few minutes); like every raster it is checked against `data/rasters.json`.
+Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, 5 to 20 minutes; `--sources <folder>` keeps the downloads); like every raster it is checked against `data/rasters.json`.
 ```
 
 In the Layout table's `tools/`, `patches/` row, replace `Fetching the rasters, the patched rendering media` with ``Fetching the rasters (the lidar DEMs rebuilt from USGS lidar by `usgs_lidar.py`), the patched rendering media``.
@@ -2523,7 +2610,7 @@ with:
 - **`gen_worlds.py` cannot read a raster** (`route_area_naip2024.tif`,
   `route_area_lidar_0p5m.tif`, ...): the rasters are git-ignored. `pixi run
   fetch-data` fetches the missing ones from their official sources (the
-  lidar DEMs: rebuilt from USGS lidar, a few minutes) and checks them
+  lidar DEMs: rebuilt from USGS lidar, 5 to 20 minutes) and checks them
   against `data/rasters.json` (each raster's `.json` says where it came
   from); `--all` also the research's rasters. It exits 1 when one was not
   fetched (`--help`). When a source is down, or in a git worktree, link the
@@ -2591,9 +2678,9 @@ with:
 
 ```yaml
       # fetch-data gets every raster the simulation reads from its official source and fails if one fails; the
-      # Autonomy world's 0.5 m lidar DEM it rebuilds from USGS lidar (371 MB of downloads). Off the Mac that made
-      # rasters.json the rebuild may round differently in the last bits: fetch-data then keeps it within the
-      # tolerance of the manifest's stats and says that it is not bit-identical.
+      # Autonomy world's 0.5 m lidar DEM it rebuilds from USGS lidar (371 MB of downloads, 5 to 20 minutes, on a
+      # cache miss only). Off the Mac that made rasters.json the rebuild may round differently in the last bits:
+      # fetch-data then keeps it within the tolerance of the manifest's stats and says that it is not bit-identical.
 ```
 
 - [ ] **Step 6: Check the wording and the files**
@@ -2646,30 +2733,41 @@ Run the install in the background. Expected: the clone's last commit is Task 13'
 
 - [ ] **Step 2: fetch-data on the fresh clone**
 
-The ImageServer rasters are downloaded (about 90 MB); the lidar files come from `$S/sources` (`--sources`), so nothing is downloaded from rockyweb again.
+The first run is what CI does on a cache miss: no `--sources`, so fetch-data downloads the route area's 11 USGS files itself (371 MB, six at once, into a temporary directory under `$S/tmp` that it removes) and the ImageServer rasters (about 90 MB). This is the one live run of `source_files` and `download` against S3 and rockyweb; Tasks 3 and 11 used curl and the files already here. The `--all` run then takes the MDRS area's tiles from `$S/sources` (`--sources`), so nothing is downloaded from USGS twice.
 
 ```bash
 S=/private/tmp/claude-502/-Users-alarion239-Desktop-Rover/d048031d-a613-49e0-ad24-8cb3b1a40ce3/scratchpad/data
 cd "$S/ws/src" && /Users/alarion239/.pixi/bin/pixi run fetch-data --dry-run | grep lidar
-{ TMPDIR="$S/tmp" /Users/alarion239/.pixi/bin/pixi run fetch-data --sources "$S/sources"; echo "exit $?"
+{ start=$(date +%s); TMPDIR="$S/tmp" /Users/alarion239/.pixi/bin/pixi run fetch-data; echo "exit $? after $(( $(date +%s) - start )) s"
   TMPDIR="$S/tmp" /Users/alarion239/.pixi/bin/pixi run fetch-data --all --sources "$S/sources"; echo "exit $?"
   /Users/alarion239/.pixi/bin/pixi run fetch-data --all --verify; echo "exit $?"; } > "$S/ws_fetch.log" 2>&1
 cat "$S/ws_fetch.log"; ls "$S/tmp" | wc -l
 ```
 
-Run the second block in the background. Expected: the dry run says `dem/route_area_lidar_0p5m.tif: missing, would rebuild it from the USGS lidar, 11 file(s), 371 MB`; then
+Run the second block in the background (the first run takes 4 to 20 minutes, Known 11). Expected: the dry run says `dem/route_area_lidar_0p5m.tif: missing, would rebuild it from the USGS lidar, 11 file(s), 371 MB`; then
 
 ```
 dem/far_dem_3dep_60km.tif: fetched from its official source, content verified
 dem/mdrs_area_3dep.tif: fetched from its official source, content verified
 dem/route_area_3dep.tif: fetched from its official source, content verified
+  USGS_OPR_UT_StateWide_2018_A18_12SWH1850.tif: downloaded, 32.3 MB
+  USGS_OPR_UT_StateWide_2018_A18_12SWH1852.tif: downloaded, 2.5 MB
+  USGS_OPR_UT_StateWide_2018_A18_12SWH1952.tif: downloaded, 3.6 MB
+  USGS_OPR_UT_StateWide_2018_A18_12SWH2050.tif: downloaded, 33.6 MB
+  USGS_OPR_UT_StateWide_2018_A18_12SWH2052.tif: downloaded, 4.8 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1852.laz: downloaded, 46.6 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1853.laz: downloaded, 61.4 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1952.laz: downloaded, 37.3 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH1953.laz: downloaded, 60.9 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH2052.laz: downloaded, 27.5 MB
+  USGS_LPC_UT_StatewideSouth_2020_A20_12SWH2053.laz: downloaded, 61.0 MB
 dem/route_area_lidar_0p5m.tif: rebuilt from the USGS lidar, content verified
 imagery/naip2021_far_60km.tif: fetched from its official source, content verified
 imagery/route_area_naip2024.tif: fetched from its official source, content verified
-exit 0
+exit 0 after <seconds> s
 ```
 
-then the `--all` run: the six `present`, `dem/mdrs_area_lidar2018_0p5m.tif` and `dem/route_area_lidar_0p5m_source.tif` `rebuilt from the USGS lidar, content verified`, `imagery/mdrs_area_naip2024.tif` and `imagery/naip2021_route_area.tif` `fetched from its official source, content verified`, `exit 0`; then ten `verified`, `exit 0`; `0` (no temporary directory left). If a 3DEP or NAIP 2024 raster says `FAILED, the official source now returns other pixels`, that is PR 1's path and a change at the service, not this PR's: report it, and link that raster from WT (`ln -s`) to go on.
+then the `--all` run: the six `present`, `dem/mdrs_area_lidar2018_0p5m.tif` and `dem/route_area_lidar_0p5m_source.tif` `rebuilt from the USGS lidar, content verified` (no `downloaded` line), `imagery/mdrs_area_naip2024.tif` and `imagery/naip2021_route_area.tif` `fetched from its official source, content verified`, `exit 0`; then ten `verified`, `exit 0`; `0` (no temporary directory left). Note the first run's seconds for the report. If the first run fails on rockyweb after its five tries (`FAILED, the rebuild from the USGS lidar failed (<urlopen error ...>)`), run it again once; if it fails again, report it and run it with `--sources "$S/sources"` to go on. If a 3DEP or NAIP 2024 raster says `FAILED, the official source now returns other pixels`, that is PR 1's path and a change at the service, not this PR's: report it, and link that raster from WT (`ln -s`) to go on.
 
 - [ ] **Step 3: The full suites (background, about 20 minutes)**
 
@@ -2687,7 +2785,7 @@ grep -o "skipped '[^']*'" "$S/ws_test.log" | sort | uniq -c
 grep -c "is not here" "$S/ws_test.log"
 ```
 
-Expected: colcon's summary with every package finished and its tests passed; `Ran 553 tests` (525 + 14 in `test_usgs_lidar` + 13 in `test_fetch_data` + 1 in `test_urc_unit`), `OK` with the skips of a Mac with a GPU (the opt-in performance and slow tests) and PR 1's 2 expected failures, `exit 0`; no skip reason that says a raster or world `is not here` (`0`). A failure here: run that test alone in the clone (`cd "$S/ws/src/rover_sim/tests" && pixi run python -m unittest -v <test id>`); if it also fails on `import/simulation` (a clone of that branch in `$S/ws_base/src`, same steps), it is not this PR's; report it.
+Expected: colcon's summary with every package finished and its tests passed; `Ran 556 tests` (525 + 14 in `test_usgs_lidar` + 16 in `test_fetch_data` + 1 in `test_urc_unit`), `OK` with the skips of a Mac with a GPU (the opt-in performance and slow tests) and PR 1's 2 expected failures, `exit 0`; no skip reason that says a raster or world `is not here` (`0`). A failure here: run that test alone in the clone (`cd "$S/ws/src/rover_sim/tests" && pixi run python -m unittest -v <test id>`); if it also fails on `import/simulation` (a clone of that branch in `$S/ws_base/src`, same steps), it is not this PR's; report it.
 
 ### Task 15: Hand-off: cleanup and report
 
@@ -2720,7 +2818,10 @@ Report: the branch and its commits; that the three lidar rasters rebuilt here ar
 
 - Linux was not run here (no Docker). CI's Ubuntu job rebuilds the Autonomy DEM on its first run: bit-identical or, if OpenCV's blur or GDAL's bilinear kernel round differently on x86-64, within the stated tolerance (fetch-data says which). The macOS job should match byte for byte.
 - The lock changes by four packages (laspy, lazrs-python and their m2r2 and mistune), insertions only.
-- CI's raster cache key changes with rasters.json, so the first run of the pull request fetches and rebuilds every raster (about 460 MB from USGS and USDA, a few minutes).
+- CI's raster cache key changes with rasters.json, so the first run of the pull request fetches and rebuilds every raster the simulation reads (about 460 MB from USGS and USDA; 5 to 20 minutes, mostly rockyweb).
+- The lock changed, so CI's environment cache (keyed by pixi.lock, saved from main only) misses on every run of this pull request: each job installs the environment from scratch, as for any pull request that changes the lock, until main saves it after the merge.
+- PR 2 changes `pixi.toml` and `pixi.lock` too, and the lock is `merge=binary`: whichever of the two pull requests merges second has a conflict in the lock. Resolve it by merging `pixi.toml` by hand, regenerating the lock with `pixi install` and checking, as in Task 2 Step 3, that against the base only the other pull request's packages and laspy, lazrs-python, m2r2 and mistune were added.
+- How long the clone's first fetch-data took (Task 14 Step 2), and that rockyweb was slow and dropped connections on 2026-10-10 (Known 11).
 - The recipe keeps the measured datum shift (-0.8925 m E, +0.6175 m N): an empirical alignment to the 3DEP and NAIP services, not a derivation.
 
 ---
@@ -2735,9 +2836,9 @@ Report: the branch and its commits; that the three lidar rasters rebuilt here ar
 | Bit-identical where realistic (macOS), else a stated tolerance against manifest stats | Task 11 Step 1 (byte for byte), Task 8, Task 10 (tolerance tests), Task 12 (stats) |
 | The downstream worlds checked | Task 11 Steps 2-4 (worlds, relief swatches, roughness targets identical), Task 14 Step 3 (the suite with the Autonomy world) |
 | pixi dependencies for osx-arm64 and linux-64 only, only what is needed | Task 2 |
-| Offline unit tests with small fixtures | Tasks 5-10, 12 (`test_usgs_lidar` 14, `test_fetch_data` +13) |
-| A live reproduction run compared with the existing files, within the disk budget | Task 11, Task 14 (`$S` under 2.5 GB) |
-| CI uses it with caching, no gigabytes per run | Decision 8, Task 13 Step 5 (cache keyed by rasters.json, 371 MB on a miss only) |
+| Offline unit tests with small fixtures | Tasks 5-10, 12 (`test_usgs_lidar` 14, `test_fetch_data` +16) |
+| A live reproduction run compared with the existing files, within the disk budget | Task 11, Task 14 (`$S` under 3 GB; Task 14 Step 2 is the live download through fetch-data) |
+| CI uses it with caching, no gigabytes per run | Decision 8, Task 13 Step 5 (cache keyed by rasters.json, 371 MB on a miss only); the pixi environment cache misses on this pull request's runs because the lock changed (Task 15) |
 | No more "link from a teammate" in the documents | Task 13 Step 6 |
 | Nothing pushed, SRC and SOURCE untouched | Rules, Task 15 Step 1 |
 
@@ -2748,9 +2849,12 @@ Report: the branch and its commits; that the three lidar rasters rebuilt here ar
 | Linux x86-64 (CI) rounds OpenCV's GaussianBlur, the distance transforms or GDAL's bilinear kernel differently, so the rebuild is not bit-identical there | The stats tolerance (Decision 5) keeps it and says so; the macOS job stays exact. If even the stats fail on Linux (more than 1 mm), look at where: a systematic difference points to a library version, not rounding. A world test that pins Autonomy numbers more tightly than the terrain's rounding would show on Linux only; it is fixed in that test |
 | PROJ's network or a local geoid grid changes the warp (the environment sets PROJ_NETWORK=ON; `projsync` or a proj-data package would add grids) | Every warp names its operation (`-ct`) and runs with PROJ_NETWORK=OFF (Decision 2, Known 4) |
 | A newer GDAL, PROJ, OpenCV, numpy or laspy changes the last bits | GDAL and PROJ pinned to their minor versions (Task 2); the others fall under the tolerance; the content check catches anything larger |
+| rockyweb is slow or unreachable (2026-10-10: 0.32 MB/s across six connections, two of three TCP connections timing out after 20 s, Known 11); a fetch-data run without `--sources` loses its downloads when it fails | Six downloads at once and five tries each, also for a body cut short (Task 9); `--sources <folder>` keeps what was downloaded for the next run (README); CI downloads only on a raster-cache miss. If rockyweb is down, fetch-data fails with the URL and the rest of the simulation's rasters are still fetched; a clone that has the raster can lend it (`link_data.sh`). A CI run whose fetch-data fails saves no cache, so every later run downloads the 371 MB again until one succeeds |
+| PR 2 changes `pixi.toml` and `pixi.lock` (xacro, joint_state_publisher_gui) and the lock is `merge=binary -diff` | Whichever pull request merges second regenerates the lock after merging `pixi.toml` (Task 15's description says how); the pins of Task 2 make the result reproducible |
+| The stats tolerance misses a local error (1 m over 100 pixels moves a block mean by under 0.001, Decision 5) | Off the Mac the tolerance separates rounding from systematic differences only; fetch-data says when a rebuild is not bit-identical, and the macOS CI job and any Mac rebuild must be byte for byte |
 | USGS changes or removes a file (rockyweb is a staging server; the LAZ tiles are not on the S3 bucket) | The SHA-256 pins fail the rebuild before processing, with the URL. Fallback (not code): the AWS EPT copy `usgs-lidar-public/UT_StatewideSouth_3_2020` holds the same points (Z and class identical, XY within 0.4 mm after a plain 2D EPSG:3857 to EPSG:6341 transform), which would give a close rebuild within the tolerance at best, not a bit-identical one |
-| The USGS NAIP Plus service is rebuilt and raster 195681 gets another id, or answers HTTP 500 | The lock in the request fails or returns other pixels, which fetch-data reports (exit 1); it retries HTTP errors three times |
-| The route recipe needs `route_area_3dep.tif` (a 3DEP ImageServer raster, a dynamic mosaic) | It is fetched first in the same run; if the 3DEP service changes, that raster fails first (PR 1's behaviour) and the lidar rebuild says the fill is not here. Its pixels reach no pixel inside the route DEM's bounds today (source map: no 3DEP code) |
+| The USGS NAIP Plus service is rebuilt and raster 195681 gets another id, or answers HTTP 500 | The lock in the request fails or returns other pixels, which fetch-data reports (exit 1); it tries each request five times (Task 9) |
+| The route recipe needs `route_area_3dep.tif` (a 3DEP ImageServer raster, a dynamic mosaic) | It is fetched first in the same run; if the 3DEP service changes, that raster fails first (PR 1's behaviour) and the lidar rebuild says the fill is not here before it downloads anything (`Recipe.needs`, Task 10). Its pixels reach no pixel inside the route DEM's bounds today (source map: no 3DEP code) |
 | Memory: the route recipe peaks at 2.9 GB (8000 x 6000 float32 and float64 grids) | Fine on the Macs and CI runners (7 GB on macOS, 16 GB on Ubuntu); stated in the README |
-| The default `fetch-data` now downloads 371 MB more and takes minutes | Said in the README; `--sources` keeps the downloads; CI caches the result |
+| The default `fetch-data` now downloads 371 MB more and takes 5 to 20 minutes | Said in the README; `--sources` keeps the downloads; CI caches the result |
 | The recovered recipe could hide a detail of 2026-10-06 that the probes did not exercise | Task 11 compares all three files byte for byte before the manifest calls them official (Known 3 already did, with this plan's code) |
