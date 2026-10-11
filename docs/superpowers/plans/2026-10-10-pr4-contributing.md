@@ -27,7 +27,7 @@
 ## Decisions this plan makes
 
 1. **The WSL2 guide is a section of `CONTRIBUTING.md`** (spec 8: "setup per platform including WSL2"), not a file of its own; the README's Windows line links to it.
-2. **The Autonomy lidar caveat stays in one place**, the README's Simulation section, which `CONTRIBUTING.md` and `rover_sim/README.md` link to. The data pull request (`data/lidar-from-usgs`, fetch-data rebuilding that raster) then changes one paragraph, not three.
+2. **`CONTRIBUTING.md` does not repeat the Autonomy lidar caveat**: it links to the README's Simulation section, which states it (as `rover_sim/README.md`'s Quick start does, unchanged here). The data pull request (`data/lidar-from-usgs`, fetch-data rebuilding that raster) then has no new copy to change.
 3. **What no one ran is marked where it is written.** No Windows or Linux machine was available (2026-10-10): `CONTRIBUTING.md` says that the Windows and WSL2 steps follow the vendors' guidance and that no team machine has run them, and that Linux is the macOS steps run by CI's Ubuntu job, whose first run is the first push. Whoever goes through them first fixes what differs.
 4. **CODEOWNERS** (the task's names; the team confirms or changes them, as the file's comment says): `*` (the root files and everything not named below: `.github/`, `docs/` outside `docs/sim/`) and `/rover_description/`, `/rover_control/` to @BeckettOBrien; `/rover_sim/` and `/docs/sim/` to @Alarion239. GitHub takes the last matching line, so the specific lines follow `*`. Owners only get review requests until an admin turns on "Require review from Code Owners" (spec 8: the user's account has no admin rights).
 5. **Merging**: a merge commit for a pull request that carries history (the integration series PR 1 to PR 4, the data pull request, any branch whose commits each say what changed); squash allowed for a small one whose commits are work in progress; never rebase-merge a history branch, because the documents cite commits by hash (`rover_sim/tests/fixtures/rover_model/README.md` cites `9208047`).
@@ -69,6 +69,43 @@ Modified: `README.md` (Setup and Contributing point at `CONTRIBUTING.md`, the Wi
 - [ ] **Step 2:** Check every relative link and every repository path in the changed Markdown files exists (a script in T: each `](path)` link and each backticked path that starts with a top-level folder, resolved against the file's folder or SRC).
 - [ ] **Step 3:** `git diff --stat pr3/ros2-control` lists only Markdown files and `.github/CODEOWNERS`. Commit `PR 4: the package READMEs and the README: tests, links, CONTRIBUTING.md`.
 
-## Verification
+## Verification (2026-10-10, on `pr4/contributing`, Apple M4, macOS 26.5.1)
 
-Filled in as the work ran (Task 2, Step 2; Task 4, Steps 2 and 3).
+Run here, each in its own `GZ_PARTITION` and `ROS_DOMAIN_ID` (71 to 79) with `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`:
+
+| What the documents say | Run | Result |
+|---|---|---|
+| `pixi install` with the committed lock | `pixi install --locked` | installed; `pixi.lock` unchanged |
+| `pixi run build` | from SRC | 3 packages finished |
+| The pixi environment's size, the generated models', the rasters' | `du` | 5.0 GB, 0.7 GB, 0.3 GB with every raster (DEMs 127 MB, imagery 178 MB) |
+| macOS needs the Command Line Tools | `clang++ -###` in the environment | `-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` |
+| `pixi run colcon-test`, `colcon test-result --verbose`, `colcon test --packages-select` | as written | rover_description 5, rover_control 19 (6.7 s), rover_sim 5 tests, all passed, 11 s in all; 35 results, 0 failures |
+| One suite module from `rover_sim/tests` | `pixi run python -m unittest test_rover_config test_launch_files` | 9 tests, OK |
+| The smoke test | `cd rover_sim/tests && pixi run python -m unittest -v test_sim_launch.SmokeTest` | OK, 17.8 s |
+| The suite's size | `unittest` discovery | 597 tests |
+| The example program, simulation | `ros2 launch rover_sim sim.launch.py world:=rover_test gui:=false sensors:=false` from a sourced `install/`, then the program | `/odom` x from 0.000 to 0.923 m (and 0.917 m in the world below) |
+| The example program, the real rover's stack | `ros2 launch rover_control rover.launch.py`, then the program | the stub logged `would send wheel_fl_joint 2.00, ...` three times, then `would send 0 to every wheel` |
+| A hand-written world | `rover_test.sdf` copied to the scratchpad as `my_course.sdf` with `<world name="my_course">`, `sim.launch.py world:=<that path>` | the controllers came up in 5 s, the program drove it |
+| `pixi run sim-worlds <name>` | `pixi run sim-worlds proving_ground` | wrote `proving_ground.sdf` in 8.4 s; no tracked file changed |
+| fetch-data's options | `pixi run fetch-data --verify`, `--dry-run`, `--help` | every raster verified / present |
+| The launch files' arguments | `ros2 launch ... --show-args` for `sim.launch.py`, `rover.launch.py`, `view.launch.py` | as the documents name them |
+| `xacro` and `check_urdf` | as in `rover_description/README.md` | parsed, root link `base_link` |
+| `pixi run drive --help` | as written | the station's options, `--released` among them |
+| `ros2 pkg create --build-type ament_cmake` | in the scratchpad, deleted after | a package skeleton |
+| Links, anchors and paths | `check_links.py` (T) over the changed Markdown files | 204 checked; the four it flags are a branch name (`docs/wsl-fixes`) and pluginlib class names (`rover_control/RoverHardwareStub`, `rover_sim/RoverSimSystem`), not paths |
+| Issue templates | YAML front matter through `yaml.safe_load` | parses |
+| Documents only | `git diff --stat pr3/ros2-control` | 10 files: Markdown and `.github/CODEOWNERS` |
+
+Not run (no Windows, Linux or rover's computer here), and marked so in the documents:
+- Linux: the macOS steps on Ubuntu 24.04, the GPU notes, the apt-ROS warning (RoboStack's). CI's Ubuntu job runs the tasks headless from the first push.
+- Windows natively: Visual Studio 2022 with C++ (RoboStack's requirement), pixi's PowerShell and winget installers (pixi's documentation), the short path, `local_setup.bat` and `.ps1`, RViz through `view.launch.py`. CI's Windows job runs `pixi run build` from the first push.
+- WSL2: every step of the guide, from Microsoft's WSL documentation (install, GUI apps, networking, `.wslconfig`), WSLg's GPU selection notes (`glxinfo -B`, `MESA_D3D12_DEFAULT_ADAPTER_NAME`) and a Gazebo contributor's WSLg announcement (2023: ogre2 renders on WSLg's GPU, `LIBGL_ALWAYS_SOFTWARE` no longer needed, WSLg not officially tested). Whether conda-forge's OpenGL in the pixi environment picks up Ubuntu's Mesa D3D12 driver is the open question.
+- The rover's computer: pixi or apt Jazzy with `rosdep install --from-paths src/rover_description src/rover_control --ignore-src -y`.
+- GitHub's side: CODEOWNERS' review requests, the templates' rendering, a stacked pull request's base changing to `main` when its base branch is deleted after the merge (GitHub's documented behaviour).
+
+## Hand-off
+
+- The owners in `.github/CODEOWNERS` are the task's proposal; the team confirms or changes them in review (spec 8).
+- The repository has no license (every `package.xml` says `TODO: License declaration`); `CONTRIBUTING.md` says the team chooses one.
+- When the data pull request (`data/lidar-from-usgs`) merges, the README's Simulation paragraph on the Autonomy lidar changes, and `rover_sim/README.md`'s Quick start paragraph with it, as before this pull request; `CONTRIBUTING.md` links to the README and needs no change (Decision 2). This branch changes neither paragraph: a trial merge with the data branch (`git merge-tree`) has exactly the conflicts `pr3/ros2-control`'s has (`ci.yml`, two README paragraphs, `pixi.toml`, `pixi.lock`), none from PR 4.
+- Whoever first runs the Windows, WSL2 or Linux steps corrects them and removes the "not run" note.
