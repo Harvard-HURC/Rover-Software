@@ -7,13 +7,16 @@ the worlds that need them and how to get them, without failing the run, and
 its exit status in --help."""
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import shutil
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -228,6 +231,74 @@ class DryRun(unittest.TestCase):
             self.assertIn("dem/route_area_lidar_0p5m.tif: missing, urc_autonomy needs it; fetch-data cannot rebuild it "
                           "from official sources yet (a script that rebuilds it from the USGS lidar its provenance "
                           f"lists is planned); {LINK}", lines)
+
+
+class Response:
+    """What urlopen returns: a context manager whose read() gives body, or raises it when it is an exception."""
+
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        if isinstance(self.body, BaseException):
+            raise self.body
+        return self.body
+
+
+def http_error(code):
+    return urllib.error.HTTPError("https://example.test/exportImage", code, "error", {}, None)
+
+
+class Download(unittest.TestCase):
+    """download(): an ImageServer's outage (the first CI run met a 504 Gateway Time-out) is waited out; a file that
+    is not there is not asked for again."""
+
+    def fetch(self, *answers):
+        """download() against urlopen answering each try in turn (bytes: the body; an exception: raised by urlopen; a
+        Response: returned as is): (the result or the exception raised, the waits between tries)."""
+        answers, waits = list(answers), []
+
+        def urlopen(request, timeout):
+            answer = answers.pop(0)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer if isinstance(answer, Response) else Response(answer)
+
+        with mock.patch.object(fetch_data.urllib.request, "urlopen", urlopen), \
+                mock.patch.object(fetch_data.time, "sleep", waits.append):
+            try:
+                result = fetch_data.download("https://example.test/exportImage")
+            except Exception as e:  # noqa: BLE001  (the test looks at what was raised)
+                result = e
+        return result, waits
+
+    def test_server_errors_and_dropped_connections_are_tried_again(self):
+        result, waits = self.fetch(http_error(504), urllib.error.URLError("connection reset"), http_error(500), b"tile")
+        self.assertEqual(result, b"tile")
+        self.assertEqual(waits, list(fetch_data.WAITS[:3]))
+
+    def test_a_body_cut_short_is_tried_again(self):
+        result, waits = self.fetch(Response(http.client.IncompleteRead(b"ti", 2)), b"tile")
+        self.assertEqual(result, b"tile")
+        self.assertEqual(len(waits), 1)
+
+    def test_it_gives_up_after_the_last_try(self):
+        result, waits = self.fetch(*[http_error(504)] * fetch_data.TRIES)
+        self.assertIsInstance(result, urllib.error.HTTPError)
+        self.assertEqual(result.code, 504)
+        self.assertEqual(len(waits), fetch_data.TRIES - 1)
+        self.assertGreaterEqual(sum(waits), 120, "an outage of a couple of minutes is waited out")
+
+    def test_a_file_that_is_not_there_is_not_asked_for_again(self):
+        result, waits = self.fetch(http_error(404), b"never asked")
+        self.assertIsInstance(result, urllib.error.HTTPError)
+        self.assertEqual(waits, [])
 
 
 class Fetch(unittest.TestCase):

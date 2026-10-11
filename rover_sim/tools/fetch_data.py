@@ -31,11 +31,13 @@ error.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -48,7 +50,8 @@ from urc import dem  # noqa: E402
 
 DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
-TRIES = 3  # per download: the ImageServers answer HTTP 500 now and then
+TRIES = 6  # per download: the ImageServers answer HTTP 500 now and then, and time out (HTTP 504) for minutes
+WAITS = (10, 20, 40, 80, 120)  # [s] between tries, 4.5 min in all (M: the first CI run met a 504, 2026-10-11)
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 # The TIFF tags of an original raster beyond its pixels' layout and encoding and the pixel scale and tiepoint its
@@ -139,17 +142,25 @@ def matches(entry, path):
     return "tags" not in entry or tags_of(path) == entry["tags"]
 
 
+def transient(error):
+    """Whether a failed request is worth trying again: a server error, a timeout or throttling, a refused or dropped
+    connection, a body cut short. A file that is not there (HTTP 404 and the other client errors) is not."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500 or error.code in (408, 429)
+    return isinstance(error, (OSError, http.client.HTTPException))
+
+
 def download(url):
-    """The body at url, after up to TRIES attempts."""
+    """The body at url, after up to TRIES attempts, waiting WAITS between them while the failure is transient."""
     for attempt in range(TRIES):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
                                         timeout=600) as response:
                 return response.read()
-        except OSError:
-            if attempt == TRIES - 1:
+        except (OSError, http.client.HTTPException) as error:  # HTTPException: IncompleteRead, a body cut short
+            if attempt == TRIES - 1 or not transient(error):
                 raise
-            time.sleep(5 * (attempt + 1))
+            time.sleep(WAITS[attempt])
 
 
 def requests_of(provenance):
