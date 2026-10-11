@@ -47,7 +47,7 @@ The rover itself is `rover_description`'s: its physical numbers are `rover_descr
 
 Open these worlds with `pixi run sim <world>` or `sim.launch.py`; `gazebo.launch.py` cannot load them (it sets neither Gazebo's resource path nor its plugin path, which `gzenv.py` sets for `sim.launch.py`).
 
-A new world is a hand-written `.sdf` in `worlds/` (tracked; describe it in the list above) or a generated one (`urc/missions/<name>.py`, `pixi run sim-worlds <name>`; git-ignored). Either includes `model://rover` exactly once, at the start pose, since `sim.launch.py` swaps that include for the rover with ros2_control: [CONTRIBUTING.md, Add a world](../CONTRIBUTING.md#add-a-world), and the manual's [A new world](../docs/sim/manual.md#a-new-world).
+A new world is a hand-written `.sdf` in `worlds/` (tracked; describe it in the list above) or a generated one (a module `urc/missions/<module>.py` with its `KEY`, `pixi run sim-worlds <KEY>`, named `urc_<KEY>` unless the module names it; `.gitignore` covers `urc_*` and `proving_ground.*`, so a world named otherwise needs its own line). Either includes `model://rover` exactly once, at the start pose, since `sim.launch.py` swaps that include for the rover with ros2_control: [CONTRIBUTING.md, Add a world](../CONTRIBUTING.md#add-a-world), and the manual's [A new world](../docs/sim/manual.md#a-new-world).
 
 ### Tests
 - `pixi run sim-test`: the suite in `tests/` (597 tests, Python unittest), after building the plugins and generating the rover and the worlds. It drives the rover in Gazebo without ROS (`wheel_cmd.py`), and with ROS 2 in `test_ros2_control` (RoverSimSystem inside Gazebo with the controllers) and `test_sim_launch` (`sim.launch.py`).

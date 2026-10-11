@@ -15,7 +15,7 @@ We use [pixi](https://pixi.prefix.dev/latest/#installation) to manage ROS packag
 To build and source our custom packages for testing, follow these steps:
 1. Starting from a pixi shell, go to the root folder of the workspace (such that you can see the `src/` folder)
 2. Run `colcon build` and wait for all packages to build (you can use `--packages-select package_name other_package_name ...` to build only specific packages, and you can use `--continue-on-error` to continue building other packages after one fails)
-3. Source the appropriate setup file from the `install` folder (ex: on bash, run `source install/local_setup.bash`)
+3. Source the appropriate setup file from the `install` folder (ex: on bash, run `source install/local_setup.bash`; in zsh, the macOS default, `source install/local_setup.zsh`)
 You should now be able to use launch files, executables, and assets installed by any of our packages in your current shell.
 
 From the `src` folder, `pixi run build` does step 2 for you (`colcon build` in the workspace root; on Windows without the tests), and the tasks below build what they need first.
