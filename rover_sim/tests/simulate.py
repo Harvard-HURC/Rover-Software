@@ -521,6 +521,12 @@ class Cost:
         return 0.001 / self.wall_per_step
 
 
+def rss_bytes(ru_maxrss, platform=sys.platform):
+    """getrusage's ru_maxrss in bytes: macOS reports bytes, Linux kibibytes (CI's first Ubuntu run read a 1.4 GB
+    server as 1.4 MB)."""
+    return ru_maxrss if platform == "darwin" else ru_maxrss * 1024
+
+
 def gz_run(world, iterations, env=None):
     """One `gz sim -s -r --iterations N` process: (CPU s, wall s, peak RSS
     bytes), CPU = user + sys of the process and the children it waited for."""
@@ -536,7 +542,7 @@ def gz_run(world, iterations, env=None):
             log.seek(0)
             raise RuntimeError(f"gz sim exited with {process.returncode} on {world}:\n"
                                + log.read().decode(errors="replace")[-3000:])
-    return usage.ru_utime + usage.ru_stime, wall, usage.ru_maxrss  # macOS: ru_maxrss in bytes
+    return usage.ru_utime + usage.ru_stime, wall, rss_bytes(usage.ru_maxrss)
 
 
 def cpu_time_per_step(worlds, iterations=20_000, runs=5, schedule=DRIVE_SCHEDULE, env=None):

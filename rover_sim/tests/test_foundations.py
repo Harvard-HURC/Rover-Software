@@ -18,7 +18,7 @@ import numpy as np
 from PIL import Image, TiffImagePlugin, TiffTags
 
 import gpu
-from simulate import ROVER_URI, cpu_time_per_step, diffdrive, simulate, twist_at, variant_sdf, world_sdf
+from simulate import ROVER_URI, cpu_time_per_step, diffdrive, rss_bytes, simulate, twist_at, variant_sdf, world_sdf
 from worldfiles import MODELS, SIM_DIR, temp_sdf
 
 import gzenv  # noqa: E402  (worldfiles puts sim/ on the path)
@@ -290,6 +290,14 @@ class SimulateRuns(unittest.TestCase):
 
 class CostHelpers(unittest.TestCase):
     """cpu_time_per_step: plain gz sim processes, the rover driven from here."""
+
+    def test_peak_rss_is_in_bytes_on_every_platform(self):
+        self.assertEqual(rss_bytes(2048, "darwin"), 2048)
+        self.assertEqual(rss_bytes(2048, "linux"), 2048 * 1024)
+        touch_200_mib = "b = bytearray(200 * 2**20); b[::4096] = b'x' * len(b[::4096])"
+        child = subprocess.Popen([sys.executable, "-c", touch_200_mib])
+        _, _, usage = os.wait4(child.pid, 0)
+        self.assertTrue(200 * 2**20 < rss_bytes(usage.ru_maxrss) < 2 * 2**30, usage.ru_maxrss)
 
     def test_cost_of_a_driving_run(self):
         node = Node()
