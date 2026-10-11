@@ -318,8 +318,11 @@ class CostHelpers(unittest.TestCase):
         self.assertEqual(rss_bytes(2048, "linux"), 2048 * 1024)
         touch_200_mib = "b = bytearray(200 * 2**20); b[::4096] = b'x' * len(b[::4096])"
         child = subprocess.Popen([sys.executable, "-c", touch_200_mib])
-        _, _, usage = os.wait4(child.pid, 0)
-        self.assertTrue(200 * 2**20 < rss_bytes(usage.ru_maxrss) < 2 * 2**30, usage.ru_maxrss)
+        _, status, usage = os.wait4(child.pid, 0)
+        child.returncode = os.waitstatus_to_exitcode(status)  # reaped here, so Popen does not wait for it
+        # The lower bound catches kibibytes read as bytes. A forked child on Linux starts with its parent's high-water
+        # mark (3 GB under the full suite on CI), so the upper bound only catches bytes read as kibibytes (200 GiB).
+        self.assertTrue(200 * 2**20 < rss_bytes(usage.ru_maxrss) < 64 * 2**30, usage.ru_maxrss)
 
     def test_cost_of_a_driving_run(self):
         node = Node()
