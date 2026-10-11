@@ -199,13 +199,15 @@ class Worlds(unittest.TestCase):
         self.assertLess(bz, post["z"] - 3.0)
 
     @gpu.needs_gpu
+    @gpu.needs_physical_gpu
     @needs_world("urc_autonomy")
     def test_camera_sees_the_start_post(self):
         """The rover's camera, CAMERA_RANGE in front of one of the start
         post's faces and facing it, decodes ArUco 0 in one of its frames of 3 s
-        (rendered in a separate process: see world_copy). Every frame counts:
-        on GitHub's macOS runner (a virtual GPU, CI 2026-10-11) the last frame
-        of 1.5 s showed no tag; ROVER_TEST_ARTIFACTS gets the last frame.
+        (rendered in a separate process: see world_copy). Every frame counts,
+        and ROVER_TEST_ARTIFACTS gets the last frame. It skips on Apple's
+        paravirtual GPU (GitHub's macOS runner), which draws the world's large
+        merged meshes as spikes in front of the post (CI 2026-10-11).
 
         Why square on and 5 m: 1280 px over 1.5 rad (f = 686 px) put a
         2.5 cm tag cell on 3.6 px at 5 m from the post (the camera 4.65 m
