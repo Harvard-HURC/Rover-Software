@@ -37,18 +37,27 @@ from urc.missions import MISSIONS, delivery  # noqa: E402
 
 
 CAMERA_CHECK = """
-import json, sys
+import json, os, sys
 import cv2, numpy as np
 sys.path.insert(0, {tests!r})
 from simulate import simulate
 from gz.msgs10.image_pb2 import Image
 topic = {topic!r}
-state = simulate(1.5, world={world!r}, subscribe=[(topic, Image)])
-img = state.messages[topic][-1]
-rgb = np.frombuffer(img.data, np.uint8).reshape(img.height, img.width, 3)
-detector = cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50), cv2.aruco.DetectorParameters())
-_, ids, _ = detector.detectMarkers(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY))
-print("IDS", json.dumps([] if ids is None else ids.flatten().tolist()))
+state = simulate(3.0, world={world!r}, subscribe=[(topic, Image)])
+dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+seen, means, rgb = set(), [], None
+for img in state.messages[topic]:
+    rgb = np.frombuffer(img.data, np.uint8).reshape(img.height, img.width, 3)
+    means.append(round(float(rgb.mean()), 1))
+    _, ids, _ = detector.detectMarkers(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY))
+    seen.update([] if ids is None else ids.flatten().tolist())
+out = os.environ.get("ROVER_TEST_ARTIFACTS")
+if out and rgb is not None:
+    os.makedirs(out, exist_ok=True)
+    cv2.imwrite(os.path.join(out, "start_post_camera.png"), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+print("IDS", json.dumps(sorted(seen)))
+print("FRAMES", len(means), "brightness of the last", means[-5:])
 """
 CAMERA_RANGE = 5.0  # [m] rover centre to the post; the camera is 0.35 m ahead of it
 DUG = 0.5  # how far a route planner takes digging ground's wheels to be dug in (A: half way to its dig_max)
@@ -194,8 +203,10 @@ class Worlds(unittest.TestCase):
     @needs_world("urc_autonomy")
     def test_camera_sees_the_start_post(self):
         """The rover's camera, CAMERA_RANGE in front of one of the start
-        post's faces and facing it, decodes ArUco 0 (rendered in a separate
-        process: see world_copy).
+        post's faces and facing it, decodes ArUco 0 in one of its frames of 3 s
+        (rendered in a separate process: see world_copy). Every frame counts:
+        on GitHub's macOS runner (a virtual GPU, CI 2026-10-11) the last frame
+        of 1.5 s showed no tag; ROVER_TEST_ARTIFACTS gets the last frame.
 
         Why square on and 5 m: 1280 px over 1.5 rad (f = 686 px) put a
         2.5 cm tag cell on 3.6 px at 5 m from the post (the camera 4.65 m
@@ -214,7 +225,8 @@ class Worlds(unittest.TestCase):
             result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
         line = next((l for l in result.stdout.splitlines() if l.startswith("IDS")), None)
         self.assertIsNotNone(line, result.stdout[-2000:] + result.stderr[-2000:])
-        self.assertIn(0, json.loads(line[4:]))
+        frames = next((l for l in result.stdout.splitlines() if l.startswith("FRAMES")), "")
+        self.assertIn(0, json.loads(line[4:]), frames)
 
 
 class Lander(unittest.TestCase):
