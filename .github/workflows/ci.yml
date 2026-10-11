@@ -78,10 +78,20 @@ jobs:
       # The colcon tests (rover.launch.py on the hardware stub among them) and the simulation's suite, which runs
       # RoverSimSystem inside Gazebo with the controllers and sim.launch.py headless (the smoke test): no GPU needed.
       - run: pixi run test
+        env:
+          # Rendering tests that save what their cameras saw write it here (outside the repository).
+          ROVER_TEST_ARTIFACTS: ${{ github.workspace }}/test-artifacts
       # The tests regenerate tracked files (sim-model writes the rover's and the cameras' models, the wheel mesh and
       # the dust sprite): a generated file committed stale, or a test that changes a tracked file, fails here.
       - name: The tests left every tracked file as committed
         run: git diff --exit-code
+      - name: Upload what the rendering tests saw
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-frames-${{ runner.os }}
+          path: test-artifacts/
+          if-no-files-found: ignore
 
   windows:
     name: Windows (rover_description, rover_control)
