@@ -143,6 +143,15 @@ class RenderingCheck(unittest.TestCase):
             (dev / "dri" / "renderD128").touch()
             self.assertEqual(gpu.rendering({}, "linux", dev), (True, ""))
 
+    def test_a_macos_virtual_machine_renders_on_the_paravirtual_gpu(self):
+        self.assertTrue(gpu.paravirtual("darwin", lambda: "1\n"))
+        self.assertFalse(gpu.paravirtual("darwin", lambda: "0\n"))
+        self.assertFalse(gpu.paravirtual("linux", lambda: "1\n"))
+
+        def no_sysctl():
+            raise OSError("no sysctl")
+        self.assertFalse(gpu.paravirtual("darwin", no_sysctl))
+
 def _write_four_band_geotiff(path, pixels, lon0, lat0, step, alpha=False):
     """A 4-band uint8 GeoTIFF (EPSG:4326, PixelIsArea). PIL writes four bands
     only as RGBA, the fourth marked alpha (ExtraSamples 2); unless alpha, the
