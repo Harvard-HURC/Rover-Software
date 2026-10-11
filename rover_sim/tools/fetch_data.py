@@ -45,6 +45,7 @@ import shutil
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -59,7 +60,8 @@ import usgs_lidar  # noqa: E402
 
 DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
-TRIES = 5  # per download: the ImageServers answer HTTP 500 now and then, rockyweb drops connections (M, 2026-10-10)
+TRIES = 6  # per download: the ImageServers answer HTTP 500 and time out (HTTP 504) for minutes; rockyweb drops connections
+WAITS = (10, 20, 40, 80, 120)  # [s] between tries, 4.5 min in all (M: the first CI run met a 504, 2026-10-11)
 # Downloads at once of a lidar rebuild: rockyweb gave 0.14 MB/s to one connection and 0.32 MB/s to six
 # (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
 CONNECTIONS = 6
@@ -214,18 +216,25 @@ def check(entry, path):
     return "verified" if how == "content verified" else f"verified, {how}"
 
 
+def transient(error):
+    """Whether a failed request is worth trying again: a server error, a timeout or throttling, a refused or dropped
+    connection, a body cut short. A file that is not there (HTTP 404 and the other client errors) is not."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500 or error.code in (408, 429)
+    return isinstance(error, (OSError, http.client.HTTPException))
+
+
 def download(url):
-    """The body at url, after up to TRIES attempts: a refused or dropped connection, an HTTP error and a body cut
-    short are tried again."""
+    """The body at url, after up to TRIES attempts, waiting WAITS between them while the failure is transient."""
     for attempt in range(TRIES):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
                                         timeout=600) as response:
                 return response.read()
-        except (OSError, http.client.HTTPException):  # HTTPException: IncompleteRead, a body cut short
-            if attempt == TRIES - 1:
+        except (OSError, http.client.HTTPException) as error:  # HTTPException: IncompleteRead, a body cut short
+            if attempt == TRIES - 1 or not transient(error):
                 raise
-            time.sleep(5 * (attempt + 1))
+            time.sleep(WAITS[attempt])
 
 
 def requests_of(provenance):
