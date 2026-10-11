@@ -104,6 +104,12 @@ cost a wrong first attempt.
   strongly attenuated (stddev 0.05 → 1.5 DN) and on an RGB-D camera aborts gz
   on Metal (Ogre RenderingAPIException). Sky and haze come from the media
   patch, orthographic projection from the FlyCamera plugin.
+- **Apple's paravirtual GPU draws large merged meshes as spikes**: in a macOS virtual machine (GitHub's macOS
+  runners; Ogre logs `Metal: "Apple Paravirtual device"`), urc_autonomy's rocks, shrubs and pebbles (GLB visuals
+  of 8,500-42,000 vertices) render as huge stray polygons, while its slabs and risers (up to 1,100), the terrain,
+  far field and props render right; the same frames are right on a physical Mac (M4). Ogre logs no error.
+  `tests/gpu.py` (`needs_physical_gpu`, from `kern.hv_vmm_present`) skips the camera test that needs them there
+  (measured layer by layer on the runner, CI 2026-10-11).
 - **Any `<projector>` in a world with a Terra heightmap aborts gz on Metal**
   (the Terra pixel shader fails to compile), stock media too: no projected
   decals or tyre tracks (the ruts are markers the drivetrain draws).
