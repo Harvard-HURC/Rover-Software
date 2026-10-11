@@ -182,29 +182,32 @@ class RoverSimSystemInGazebo(unittest.TestCase):
     def test_the_joint_state_and_the_motor_currents_come_back(self):
         """/joint_states (joint_state_broadcaster) carries each wheel's motor current as its effort: the drivetrain's
         current of an update step (read() runs in gz_ros2_control's PostUpdate of steps 10, 20, 30 ..., after the
-        drivetrain's PreUpdate of that step wrote it). A message's stamp is the controller manager's clock, a few ms
-        behind the step, so the step is found near it: the steps within 50 ms whose four currents all equal the
-        efforts. Where that is one step (the currents change from step to step while the rover drives), it is an
-        update step."""
+        drivetrain's PreUpdate of that step wrote it). The message's stamp cannot tell the step: it is the
+        controller manager's clock, the bridged /clock, a few ms behind the step on an idle machine and far more on
+        a busy one (CI's macOS runner, 2026-10-11). The four currents can: they change from step to step while the
+        rover drives, so the recorded steps whose four currents all equal the efforts are found wherever they are,
+        and where that is one step it is an update step. A message whose step the subscriber dropped (the 1 kHz
+        states, on a busy machine) matches none, which fails only when no state was dropped."""
         currents = {ms(s["t"]): [s["wheels"][w]["i"] for w in WHEELS] for s in self.states}
+        first, last = min(currents), max(currents)
+        complete = len(currents) == last - first + 1
         pinned = drawn = undecided = 0
         for message in self.messages["/joint_states"]:
             effort = dict(zip(message.name, message.effort))
             got = [effort[f"wheel_{w}_joint"] for w in WHEELS]
-            stamp = ms(message.header.stamp)
-            window = range(stamp - 50, stamp + 51)
-            if not any(t in currents for t in window):
+            if not first <= ms(message.header.stamp) <= last:
                 continue  # before the drivetrain's first state, or after its last
-            if not all(t in currents for t in window):
-                undecided += 1  # a busy machine dropped a state here, maybe the one that matches (1 kHz states)
+            steps = [t for t, c in currents.items() if all(close(g, x) for g, x in zip(got, c))]
+            if not steps:
+                self.assertFalse(complete, (ms(message.header.stamp), got))
+                undecided += 1
                 continue
-            steps = [t for t in window if all(close(g, c) for g, c in zip(got, currents[t]))]
-            self.assertTrue(steps, (stamp, got))
             if len(steps) == 1:
-                self.assertEqual(steps[0] % UPDATE_STEPS, 0, (stamp, steps, got))
+                self.assertEqual(steps[0] % UPDATE_STEPS, 0, (ms(message.header.stamp), steps, got))
                 pinned += 1
             drawn += max(abs(g) for g in got) > 1.0
-        self.assertGreater(pinned, 10, f"{undecided} messages near a dropped state")  # some 100 with every state
+        dropped = last - first + 1 - len(currents)
+        self.assertGreater(pinned, 10, f"{undecided} messages unmatched, {dropped} states dropped")  # some 100
         self.assertGreater(drawn, 0, "the motors drew current")
 
     def test_the_setpoint_topic_is_ignored(self):
