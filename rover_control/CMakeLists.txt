@@ -83,8 +83,12 @@ if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME test_rover_launch COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_rover_launch
            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/test")
+  # The prefixes go before the AMENT_PREFIX_PATH the test runs in, at test time: $ENV{} here would bake in what the
+  # configure step saw, which on CI's first Ubuntu run (2026-10-11) lacked rover_description.
+  get_filename_component(rover_description_PREFIX "${rover_description_DIR}/../../.." ABSOLUTE)
   set_tests_properties(test_rover_launch PROPERTIES TIMEOUT 180
-    ENVIRONMENT "AMENT_PREFIX_PATH=${CMAKE_INSTALL_PREFIX}:$ENV{AMENT_PREFIX_PATH};PYTHONDONTWRITEBYTECODE=1")
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    ENVIRONMENT_MODIFICATION "AMENT_PREFIX_PATH=path_list_prepend:${rover_description_PREFIX};AMENT_PREFIX_PATH=path_list_prepend:${CMAKE_INSTALL_PREFIX}")
 endif()
 
 ament_export_include_directories(include)
