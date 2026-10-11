@@ -1,0 +1,16 @@
+# Who GitHub asks to review a pull request, by the files it changes (design spec 2026-10-09, section 8: one owner per
+# package, named by the team). These owners are a first proposal (2026-10-10): the team should confirm or change them.
+# An owner needs write access to the repository. GitHub only requests their review until an admin turns on "Require
+# review from Code Owners" for main. The last line that matches a file decides, so the default comes first.
+# CONTRIBUTING.md, Branches and pull requests.
+
+# The root files (README.md, CONTRIBUTING.md, pixi.toml, pixi.lock, .gitignore, .gitattributes) and everything no
+# later line names: .github/ (CI, these templates) and docs/ outside docs/sim/.
+*                       @BeckettOBrien
+
+/rover_description/     @BeckettOBrien
+/rover_control/         @BeckettOBrien
+
+# The simulation and its manual.
+/rover_sim/             @Alarion239
+/docs/sim/              @Alarion239
