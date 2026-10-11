@@ -80,7 +80,18 @@ jobs:
             src/rover_sim/data/dem/*.tif
             src/rover_sim/data/imagery/*.tif
           key: ${{ steps.rasters.outputs.cache-primary-key }}
+      # TEMPORARY (diagnostic of Autonomy's rendering on the macOS runner, reverted after): macOS renders the layers.
+      - name: Diagnostic renders of urc_autonomy
+        if: runner.os == 'macOS'
+        run: pixi run sim-worlds && pixi run python rover_sim/tests/diag_autonomy_layers.py ${{ github.workspace }}/test-artifacts/diag
+      - name: Upload the diagnostic renders
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: diag-autonomy-layers
+          path: test-artifacts/diag/
       - run: pixi run test
+        if: runner.os != 'macOS'
         env:
           # Rendering tests that save what their cameras saw write it here (outside the repository).
           ROVER_TEST_ARTIFACTS: ${{ github.workspace }}/test-artifacts
