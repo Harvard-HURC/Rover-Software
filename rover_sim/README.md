@@ -12,7 +12,7 @@ pixi run sim                    # build the plugins, generate rover and worlds, 
 pixi run sim urc_autonomy       # a mission world (also urc_equipment_servicing, urc_delivery, urc_astrobiology, proving_ground)
 pixi run drive urc_autonomy     # drive from the browser
 pixi run launcher               # every world as a tile
-pixi run test                   # the C++ tests and the simulation's suite
+pixi run test                   # the colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite
 ```
 
 Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, 5 to 20 minutes; `--sources <folder>` keeps the downloads: give a folder outside the repository, such as `../lidar-sources`, as git does not ignore one inside it); like every raster it is checked against `data/rasters.json`.
@@ -21,7 +21,8 @@ Every world needs the rasters fetch-data fetches, the test ground too (the tasks
 | Path | What it is |
 |---|---|
 | `plugins/` | Gazebo system plugins (RoverDrivetrain, RockerDifferential, JointMonitor, ChaseCamera, FlyCamera) and their C++ tests; colcon builds them into the workspace's `build/rover_sim` and installs them to `lib/rover_sim` |
-| `gen_model.py`, `viewers.py`, `models/` | The rover's parameters and its generated Gazebo model; the driver station's cameras |
+| `config/`, `urdf/`, `rover_config.py`, `tools/gen_rover.py` | How the simulation models the rover (`config/sim.yaml`), the Gazebo parts it adds to `rover_description`'s description (`urdf/rover_sim.urdf.xacro`), the one reader of both YAML files for the simulation's Python, and the generator of the rover's Gazebo model (`pixi run sim-model`) |
+| `viewers.py`, `models/` | The driver station's cameras; the generated models (the rover's, the cameras') |
 | `gen_worlds.py`, `urc/`, `worlds/` | The URC world generator and the worlds (`rover_test.sdf` is tracked; the rest is generated and git-ignored) |
 | `station/`, `launcher/`, `referee.py` | Driver station, launcher, URC referee |
 | `gzenv.py`, `run.sh`, `bridge.yaml` | The Gazebo environment (the one place it is set), `pixi run sim`, the ROS 2 bridge's topics |
@@ -31,6 +32,8 @@ Every world needs the rasters fetch-data fetches, the test ground too (the tasks
 | `tests/` | The simulation's suite (`pixi run sim-test`) |
 
 Comments and docstrings written before the simulation joined this repository call this folder `sim/` (read `rover_sim/`), cite `sim/README.md` (now the three files in `docs/sim/`) and `sim/data/research/` (now `docs/research/`, except the four files kept in `data/research/`).
+
+The rover itself is `rover_description`'s: its physical numbers are `rover_description/config/rover.yaml` and its README says how to change it. `config/sim.yaml` holds how the simulation models it (the drivetrain's settings, contact, dig-in, the visual cues, dust, the Gazebo topics); `pixi run sim-model` builds `models/rover/model.sdf` from both, and `tests/test_equivalence.py` checks it against the rover frozen before the description existed. `gen_model.py`, which held all of it as Python before, is gone; comments in `urc/sdf.py` and `urc/textures.py` still name it, because a change to either renames the media files every world references (`urc/media.py` names a generated texture or mesh after the source of its generator's module and of the `urc` modules that one imports: `textures.py` holds generators, and `farfield.py`'s imports include `sdf.py`), so they wait for a change that regenerates the worlds anyway.
 
 ### Launch Files
 - `gazebo.launch.py`: Start Gazebo using the correct method for your operating system. Set the `world` argument to change which SDF is loaded

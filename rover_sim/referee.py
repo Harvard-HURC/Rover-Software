@@ -24,7 +24,7 @@ from pathlib import Path
 
 SIM_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SIM_DIR))
-import gen_model  # noqa: E402
+import rover_config  # noqa: E402
 from urc import judge as J  # noqa: E402
 from urc import props, rules, sheet as sheets  # noqa: E402
 
@@ -55,8 +55,8 @@ class Referee:
         self.rover = None
         self.led = "off"
         self.poses, self.joints, self.presses = {}, {}, []
-        self.node.subscribe(Odometry, gen_model.GROUND_TRUTH_TOPIC, self._on_odometry)
-        self.node.subscribe(StringMsg, gen_model.LED_TOPIC, self._on_led)
+        self.node.subscribe(Odometry, rover_config.GROUND_TRUTH_TOPIC, self._on_odometry)
+        self.node.subscribe(StringMsg, rover_config.LED_TOPIC, self._on_led)
         self.node.subscribe(StringMsg, "/model/lander/presses", self._on_press)
         for name in set(self.sheet["objects"]) | {"lander"}:
             self.node.subscribe(Model, f"/model/{name}/state", lambda m, n=name: self._on_state(n, m))
@@ -140,7 +140,7 @@ class Referee:
             return
         self.last_led = shown
         msg = self.msgs["MaterialColor"]()
-        msg.entity.name = f"rover::base_link::{gen_model.LED_VISUAL}"
+        msg.entity.name = f"rover::base_link::{rover_config.LED_VISUAL}"
         r, g, b = LED_COLORS[shown]
         for color in (msg.ambient, msg.diffuse):
             color.r, color.g, color.b, color.a = r, g, b, 1.0

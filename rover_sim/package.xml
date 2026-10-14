@@ -15,6 +15,11 @@
   <depend>gz_rendering_vendor</depend>
   <depend>gz_common_vendor</depend>
 
+  <!-- tools/gen_rover.py builds the rover's model from the description (rover_config.py reads its YAML) -->
+  <exec_depend>rover_description</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>python3-numpy</exec_depend>

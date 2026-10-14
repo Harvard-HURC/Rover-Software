@@ -26,7 +26,8 @@ from worldfiles import ROVER_POSE, SENSORS, WORLDS, gz_check, model_root, rock_v
 from worldfiles import skip_if_missing, world_copy
 from worldfiles import terrain as world_terrain
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+from rover_config import ROVER  # noqa: E402
 from urc import appearance, dem, features, geo, landscape, lighting, meshes, terrain, terrains, textures  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc.media import Media  # noqa: E402
@@ -310,7 +311,7 @@ class SmallWorld(unittest.TestCase):
         world_sdf = ET.parse(self.world_path).getroot()
         self.assertEqual(world_sdf.findtext("world/physics/dart/solver/solver_type"), "pgs")
         names = [p.get("name") for p in world_sdf.iter("plugin")]
-        self.assertIn("gz::sim::systems::ParticleEmitter", names)  # wheel dust, with DriveParams.dust on
+        self.assertIn("gz::sim::systems::ParticleEmitter", names)  # wheel dust, with sim.yaml dust on
         for key, name in (("ground_map", "ground.png"), ("ground_legend", "ground.json")):
             path = self.world_path.parent / self.sheet["terrain"][key]
             self.assertEqual(path.resolve(), (self.dir / name).resolve())
@@ -1030,7 +1031,7 @@ def wheel_poses(world, seconds, speed):
     rows of sim time and each wheel link's world pose (x, y, z, qw, qx, qy, qz),
     every 10 ms."""
     node = Node()
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
     twist = Twist()
     rows, links = [], {}
 
@@ -1061,9 +1062,9 @@ def wheel_poses(world, seconds, speed):
 
 def wheel_penetration(rows, height):
     """How far [m] the surface height(x, y) reaches into each wheel's cylinder
-    (radius and width from gen_model.Params), per row of wheel_poses and wheel:
+    (radius and width from rover.yaml), per row of wheel_poses and wheel:
     the surface sampled every 5 mm under the hub."""
-    p = gen_model.Params()
+    wheel = ROVER.wheel
     grid = np.arange(-0.2, 0.2001, 0.005)
     GX, GY = (g.ravel() for g in np.meshgrid(grid, grid))
     out = []
@@ -1075,8 +1076,8 @@ def wheel_penetration(rows, height):
                           [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]])
             P = np.stack([GX, GY, height(x + GX, y + GY) - z])
             local = R.T @ P  # the wheel's frame: its axle along y
-            inside = (np.abs(local[1]) <= p.wheel_width / 2) & (P[2] < 0)
-            out.append(float(np.max(p.wheel_radius - np.hypot(local[0][inside], local[2][inside])))
+            inside = (np.abs(local[1]) <= wheel.width / 2) & (P[2] < 0)
+            out.append(float(np.max(wheel.radius - np.hypot(local[0][inside], local[2][inside])))
                        if inside.any() else 0.0)
     return np.array(out)
 
@@ -1156,7 +1157,7 @@ class ProvingGroundPhysics(unittest.TestCase):
         with world_copy("proving_ground", rover=(ditch["x"] - 3.0, ditch["y"], 0.0), lift=0.05) as world:
             state = simulate(20.0, world=world, cmd=(0.4, 0.0), params=physical())
         pose = state.poses["base_link"]
-        self.assertGreater(state.rocker_peak, 0.9 * gen_model.Params().rocker_limit)
+        self.assertGreater(state.rocker_peak, 0.9 * ROVER.rocker.limit)
         self.assertGreater(pose[0], ditch["x"] + 2.0, pose)  # and drives on across
         self.assertLess(max(abs(pose[3]), abs(pose[4])), 0.3, pose)
 

@@ -1,7 +1,7 @@
 """Rendered pictures of the appearance assets (design spec section 11,
 "Rendering"): the patched media's sky, Terra roughness and haze, the far
 field, merged GLB clutter, what the haze leaves alone (depth), the
-record of the rover's opt-in dust (gen_model.DriveParams.dust, off by
+record of the rover's opt-in dust (sim.yaml dust, off by
 default since the user's decision of 2026-10-07): drawn, and seen by depth,
 and the dig-in made visible (the user's decisions of 2026-10-07): the tyre
 sink and the tread tyre seen by a camera on the driven rover (DigCues), the
@@ -15,7 +15,6 @@ world built here or a copy of a generated one, with the patched media (sim/tools
 directory) or Gazebo's stock media.
 """
 import contextlib
-import dataclasses
 import json
 import math
 import os
@@ -36,8 +35,11 @@ import numpy as np
 import gpu
 from worldfiles import SIM_DIR
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
 import gzenv  # noqa: E402
+import rover_config  # noqa: E402
+import viewers  # noqa: E402
+from rover_config import ROVER, Variant  # noqa: E402
 from urc import appearance as A  # noqa: E402
 from urc import dem, farfield, geo, lighting, meshes, props, sdf, terrain, terrains  # noqa: E402
 from urc.media import Media  # noqa: E402
@@ -221,9 +223,9 @@ def aim(eye, target):
 
 
 def drive_world(world_name, rover, params, cameras, extra=""):
-    """A copy of sim/worlds/<world_name>.sdf to drive in: as fast as it runs, the rover built from gen_model
-    Params `params` (its model written beside, see Renderer.drive_variant) at rover = (x, y, yaw) 0.25 m above the
-    terrain, the station's chase camera and rover eye (the models it spawns), and static cameras
+    """A copy of sim/worlds/<world_name>.sdf to drive in: as fast as it runs, the rover built from the
+    rover_config.Variant `params` (its model written beside, see Renderer.drive_variant) at rover = (x, y, yaw)
+    0.25 m above the terrain, the station's chase camera and rover eye (the models it spawns), and static cameras
     [(name, eye, target, kind, size)] (kind "camera" or "rgbd_camera"), eye and target `z` above the terrain."""
     from simulate import variant_sdf  # here: simulate sets the tests' Gazebo environment when imported
     from worldfiles import ROVER_POSE, WORLDS, terrain as world_terrain
@@ -241,7 +243,7 @@ def drive_world(world_name, rover, params, cameras, extra=""):
         eye = (eye[0], eye[1], eye[2] + hf.height(eye[0], eye[1]))
         target = (target[0], target[1], target[2] + hf.height(target[0], target[1]))
         body += camera(name, eye, *aim(eye, target), size=size, hfov=1.0, kind=kind)
-    return text.replace("</world>", body + extra + "\n  </world>"), gen_model.build_sdf(params)
+    return text.replace("</world>", body + extra + "\n  </world>"), gen_rover.build_sdf(params)
 
 
 def _drive_main(cfg_path):
@@ -274,8 +276,8 @@ def _drive_main(cfg_path):
     for topic in cfg["topics"]:
         node.subscribe(Image, topic, lambda msg, t=topic: on_image(msg, t))
     states = []
-    node.subscribe(StringMsg, gen_model.DRIVETRAIN_TOPIC, lambda m: states.append((phase[0], m.data)))
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    node.subscribe(StringMsg, rover_config.DRIVETRAIN_TOPIC, lambda m: states.append((phase[0], m.data)))
+    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
     twist, handles, trace = Twist(), {}, []
 
     def pre_update(info, ecm):
@@ -346,12 +348,12 @@ def _render_main(cfg_path):
     node = Node()
     for topic in cfg["topics"]:
         node.subscribe(Image, topic, lambda msg, t=topic: last.__setitem__(t, msg))
-    node.subscribe(StringMsg, gen_model.DRIVETRAIN_TOPIC, lambda msg: state.__setitem__("drivetrain", msg.data))
+    node.subscribe(StringMsg, rover_config.DRIVETRAIN_TOPIC, lambda msg: state.__setitem__("drivetrain", msg.data))
     fixture = TestFixture(cfg["world"])
     commands = cfg.get("commands")
     driving = [bool(commands)]
     if commands:
-        publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+        publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
         twist = Twist()
 
         def pre_update(info, ecm):
@@ -540,12 +542,15 @@ class Render(unittest.TestCase):
 
     @staticmethod
     def dust():
-        """The rover's own dust emitter (gen_model._add_dust_emitter, which the rover has only with
-        DriveParams.dust; its sprite from sim/models/rover) emitting at 400 /s, ten times the drivetrain's most,
-        2 m in front of the camera."""
+        """The rover's own dust emitter (the left one of the rover with sim.yaml dust on, which the rover has only
+        then; its sprite from sim/models/rover) emitting at 400 /s, ten times the drivetrain's most, 2 m in front of
+        the camera."""
+        rover = ET.fromstring(gen_rover.build_sdf(Variant().replace(dust={"enabled": True})))
+        emitter = rover.find("model/link[@name='rocker_left']/particle_emitter")
+        emitter.set("name", "e")
+        emitter.find("topic").text = rover_config.DUST_TOPIC.format(link="link", emitter="e")
         link = ET.Element("link", name="link")
-        gen_model._add_dust_emitter(link, gen_model.Params(), "e")
-        emitter = link.find("particle_emitter")
+        link.append(emitter)
         emitter.find("emitting").text, emitter.find("rate").text = "true", "400"
         emitter.find("pose").text = "0 0 0 0 0 0"
         return (f'<model name="dust"><static>true</static><pose>2 0 0.3 0 0 0</pose>'
@@ -563,7 +568,7 @@ class Render(unittest.TestCase):
         self.assertGreater(np.abs(stock[self.RGBD[1]].astype(int) - patched[self.RGBD[1]].astype(int)).max(), 5)
 
     def test_dust_is_drawn(self):
-        """The rover's opt-in dust (DriveParams.dust, off by default) shows in
+        """The rover's opt-in dust (sim.yaml dust, off by default) shows in
         the colour image as dust: pale tan, its sprite's colour
         (terrains.DUST_RGB), not black (an emitter material without a diffuse
         draws black smoke, measured). Kept for when the switch comes back on."""
@@ -586,10 +591,10 @@ class Render(unittest.TestCase):
         8,601 of 76,800 pixels, and so did ratios sent on the emitter's
         topic. Only a particle material without a diffuse stays out of the
         depth image, and it renders black. Hence the user's decision of
-        2026-10-07: the rover has no dust by default (DriveParams.dust off,
-        test_gen_model.Dust), and Q11 is met by its absence. Kept as an
+        2026-10-07: the rover has no dust by default (sim.yaml dust off,
+        test_rover_model.Dust), and Q11 is met by its absence. Kept as an
         expected failure, the record for the opt-in switch: the emitter asks
-        for a scatter ratio near none (DriveParams.dust_scatter_ratio; with
+        for a scatter ratio near none (sim.yaml dust scatter_ratio; with
         none a gz-rendering that honours it would apply 0.65), so the test
         starts passing when that ratio is honoured, and then the dust can
         come back on."""
@@ -653,13 +658,12 @@ class Render(unittest.TestCase):
 
 # --- The dig-in made visible (the user's decisions of 2026-10-07) ----------------------------------------------------
 
-ROVER = gen_model.Params()
 SIDE = "/render/side"  # side_view_world's camera on the rover
 SIDE_IMAGE, SIDE_DEPTH = f"{SIDE}/image", f"{SIDE}/depth_image"
 SIDE_SIZE, SIDE_HFOV = (960, 540), 0.9
 SIDE_POSE = (0.0, 1.95, 0.25, 0.0, 0.0, -math.pi / 2)  # in base_link: level, looking right (-y) at the left tyres
 SIDE_FOCAL = SIDE_SIZE[0] / 2 / math.tan(SIDE_HFOV / 2)  # [px]
-FACE = SIDE_POSE[1] - (ROVER.pivot_y + ROVER.wheel_width / 2)  # [m] the left tyres' outer faces from the camera
+FACE = SIDE_POSE[1] - (ROVER.rocker.pivot_y + ROVER.wheel.width / 2)  # [m] the left tyres' outer faces from the camera
 SPIN = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (5.0, 0.0, 0.0)]  # turn in place at 1 rad/s from 0.5 s to 5 s
 
 
@@ -667,7 +671,7 @@ SPIN = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (5.0, 0.0, 0.0)]  # turn in place at 1
 def side_view_world(params, key):
     """The text of a world to picture (stage()): flat ground of catalogue
     type `key` (terrains.TYPES, under the strong dig-in preset) with the
-    rover built from gen_model Params `params` at the origin, and a camera
+    rover built from the rover_config.Variant `params` at the origin, and a camera
     on its base_link 1.5 m beyond its left tyres (SIDE, SIDE_POSE), level. A
     sensor has no mass, so the rover drives as it does without one, and its
     tyres stay where they are in the pictures however it turns. The ground
@@ -682,7 +686,7 @@ def side_view_world(params, key):
     surface = (f'<visual name="ground_visual"><pose>0 0 {kind.traction.sinkage_m - 0.05:.6g} 0 0 0</pose>'
                f'<geometry><box><size>32 32 0.1</size></box></geometry>'
                f'<material><ambient>{rgb} 1</ambient><diffuse>{rgb} 1</diffuse></material></visual>')
-    root = ET.fromstring(gen_model.build_sdf(params))
+    root = ET.fromstring(gen_rover.build_sdf(params))
     sensor = sdf.sub(root.find("model/link[@name='base_link']"), "sensor", name="side", type="rgbd_camera")
     sdf.pose(sensor, SIDE_POSE)
     sdf.sub(sensor, "always_on", True)
@@ -726,8 +730,8 @@ def top_edge(depth, u, rows):
 class DigCues(unittest.TestCase):
     """The dig-in made visible, each cue behind its own switch and visual
     only (the user's decisions of 2026-10-07): the tyre sink
-    (DriveParams.dig_sink: a dug wheel's tyre drawn (D - 1) x the ground's
-    static sinkage lower, true scale) and the tread tyre (Params.tread_tyre:
+    (sim.yaml dig_sink: a dug wheel's tyre drawn (D - 1) x the ground's
+    static sinkage lower, true scale) and the tread tyre (sim.yaml tread_tyre:
     spokes, one of them ochre). The rover turns in place at 1 rad/s on
     strong-preset sand (test_drivetrain.LooseSand): its wheels dig in to
     sand's D_max 2.0 within 3 s, and it spins its wheels in place without
@@ -743,8 +747,8 @@ class DigCues(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.r = Renderer(cls._tmp.name)
         from simulate import physical  # here: see _render_main
-        cues, no_sink = physical(), physical(dig_sink=False)  # the defaults: both cues on
-        plain = dataclasses.replace(no_sink, tread_tyre=False)  # the rover before the cues
+        cues, no_sink = physical(), physical(dig_sink={"enabled": False})  # the defaults: both cues on
+        plain = no_sink.replace(tread_tyre=False)  # the rover before the cues
         rock_spin = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.0), (3.0, 0.0, 0.0)]
         cls.runs = {}
         for name, params, key, schedule, phases in (("cues", cues, "sand", SPIN, cls.SAND),
@@ -762,16 +766,16 @@ class DigCues(unittest.TestCase):
     def test_tyres_sink_in_sand(self):
         """Dug in to D 2.0, the left tyres' top edges are (D - 1) x sand's 2 cm
         lower in the side camera's depth image than without the sink, +-1.5
-        px (13.3 px at 1.5 m): the true scale (DriveParams.dig_sink_gain 1).
+        px (13.3 px at 1.5 m): the true scale (sim.yaml dig_sink gain 1).
         The physics is the same (the drivetrain states are equal)."""
         sunk, flat = self.runs["cues"]["dug"], self.runs["no_sink"]["dug"]
         self.assertEqual(sunk.drivetrain, flat.drivetrain)
         s = terrains.SAND.traction.sinkage_m
-        for wheel, x in (("fl", ROVER.wheel_dx), ("rl", -ROVER.wheel_dx)):
+        for wheel, x in (("fl", ROVER.wheel.dx), ("rl", -ROVER.wheel.dx)):
             dig = sunk.drivetrain["wheels"][wheel]["dig"]
             self.assertGreater(dig, 1.95, wheel)
-            u, v = side_px(x, SIDE_POSE[1] - FACE, ROVER.wheel_radius)
-            top = round(v - SIDE_FOCAL * ROVER.wheel_radius / FACE)
+            u, v = side_px(x, SIDE_POSE[1] - FACE, ROVER.wheel.radius)
+            top = round(v - SIDE_FOCAL * ROVER.wheel.radius / FACE)
             rows = range(top - 20, round(v))
             drops = []
             for column in range(round(u) - 15, round(u) + 16):
@@ -793,9 +797,9 @@ class DigCues(unittest.TestCase):
         on, off = sunk.images[SIDE_DEPTH], flat.images[SIDE_DEPTH]
         changed = depth_changed(on, off)
         boxes = np.zeros(changed.shape, bool)
-        r, w, m = ROVER.wheel_radius, ROVER.wheel_width, 0.03
-        for x in (ROVER.wheel_dx, -ROVER.wheel_dx):
-            for y in (ROVER.pivot_y, -ROVER.pivot_y):
+        r, w, m = ROVER.wheel.radius, ROVER.wheel.width, 0.03
+        for x in (ROVER.wheel.dx, -ROVER.wheel.dx):
+            for y in (ROVER.rocker.pivot_y, -ROVER.rocker.pivot_y):
                 corners = [side_px(x + dx, y + dy, r + dz) for dx in (-r - m, r + m) for dy in (-w / 2 - m, w / 2 + m)
                            for dz in (-r - m, r + m)]
                 (u0, v0), (u1, v1) = np.min(corners, axis=0), np.max(corners, axis=0)
@@ -804,7 +808,7 @@ class DigCues(unittest.TestCase):
         self.assertEqual(int((changed & ~boxes).sum()), 0)
 
         def tyre(depth):  # pixels at a tyre's depth: the near tyres' outer faces and tread, the far ones'
-            near, far = (SIDE_POSE[1] + side * ROVER.pivot_y for side in (-1, 1))
+            near, far = (SIDE_POSE[1] + side * ROVER.rocker.pivot_y for side in (-1, 1))
             with np.errstate(invalid="ignore"):
                 return (np.abs(depth - near) < w / 2 + 0.01) | (np.abs(depth - far) < w / 2 + 0.01)
 
@@ -843,14 +847,14 @@ class DigCues(unittest.TestCase):
         self.assertLess(max(w["dig"] for w in self.runs["cues"]["reset"].drivetrain["wheels"].values()), 1.01)
 
     def test_tread_tyre_shows_the_spin(self):
-        """The tread tyre (Params.tread_tyre) on a wheel spinning in place, the
+        """The tread tyre (sim.yaml tread_tyre) on a wheel spinning in place, the
         rover dug in and still: its face is not uniform (light hub and spokes
         on the dark tyre), and between two frames 0.1 s apart its one ochre
         spoke turns by the wheel's own angle, +-30 %. The plain tyre is
         uniform, has no ochre, and looks the same in both frames."""
         tread, plain = self.runs["no_sink"], self.runs["plain"]  # no sink: the tyres where they are drawn plain
-        u, v = side_px(ROVER.wheel_dx, SIDE_POSE[1] - FACE, ROVER.wheel_radius)
-        radius = SIDE_FOCAL * ROVER.wheel_radius / FACE
+        u, v = side_px(ROVER.wheel.dx, SIDE_POSE[1] - FACE, ROVER.wheel.radius)
+        radius = SIDE_FOCAL * ROVER.wheel.radius / FACE
         vv, uu = np.mgrid[:SIDE_SIZE[1], :SIDE_SIZE[0]]
         ground = side_px(0.0, SIDE_POSE[1] - FACE, terrains.SAND.traction.sinkage_m + 0.02)[1]
         disc = (np.hypot(uu - u, vv - v) < 0.85 * radius) & (vv < ground)
@@ -896,7 +900,7 @@ def back_project(depth, eye, target, hfov=1.0):
 
 @gpu.needs_gpu
 class Ruts(unittest.TestCase):
-    """The ruts and pits behind the wheels (gen_model.DriveParams.ruts, on by
+    """The ruts and pits behind the wheels (sim.yaml ruts, on by
     default since the user's decisions of 2026-10-07; plugins/rover_tracks.hh,
     rover_tracks_render.hh) as camera sensors see them: the station's chase
     camera and rover eye, static close-ups and an RGB-D. The proving ground's
@@ -915,7 +919,7 @@ class Ruts(unittest.TestCase):
     CAMERAS = [("top", (18.5, -2.6, 3.2), (18.5, 0.0, 0.0), "camera", (640, 360)),
                ("side", (18.0, -2.0, 0.45), (18.0, 0.0, 0.12), "camera", (640, 360)),
                ("d", *DEPTH, "rgbd_camera", (640, 360))]
-    TOPICS = [gen_model.CHASE_IMAGE_TOPIC, gen_model.EYE_IMAGE_TOPIC, "/render/top", "/render/side",
+    TOPICS = [viewers.CHASE_IMAGE_TOPIC, viewers.EYE_IMAGE_TOPIC, "/render/top", "/render/side",
               "/render/d/image", "/render/d/depth_image"]
 
     @classmethod
@@ -930,7 +934,7 @@ class Ruts(unittest.TestCase):
                                   ("rock_on", cls.ROCK, True), ("rock_off", cls.ROCK, False)):
             dy = pose[1] - cls.SAND[1]
             cameras = [(n, (e[0], e[1] + dy, e[2]), (t[0], t[1] + dy, t[2]), k, s) for n, e, t, k, s in cls.CAMERAS]
-            text, rover = drive_world(cls.WORLD, pose, physical(ruts=ruts), cameras)
+            text, rover = drive_world(cls.WORLD, pose, physical(ruts={"enabled": ruts}), cameras)
             rock = label.startswith("rock")
             cls.runs[label] = cls.r.drive_variant(text, rover, dict(
                 name=cls.WORLD, topics=cls.TOPICS, schedule=cls.SCHEDULE, seconds=17.0,
@@ -959,10 +963,9 @@ class Ruts(unittest.TestCase):
         """World (x, y) of the four wheel centres along the run, every 10 ms."""
         trace = self.runs["on"][1]
         trace = trace[trace[:, 0] == phase]
-        p = gen_model.Params()
+        a, c = ROVER.wheel.dx, ROVER.rocker.pivot_y
         out = []
-        for dx, dy in ((p.wheel_dx, p.pivot_y), (p.wheel_dx, -p.pivot_y), (-p.wheel_dx, p.pivot_y),
-                       (-p.wheel_dx, -p.pivot_y)):
+        for dx, dy in ((a, c), (a, -c), (-a, c), (-a, -c)):
             c, s = np.cos(trace[:, 5]), np.sin(trace[:, 5])
             out.append(np.stack([trace[:, 2] + c * dx - s * dy, trace[:, 3] + s * dx + c * dy], axis=-1))
         return np.concatenate(out)
@@ -984,7 +987,7 @@ class Ruts(unittest.TestCase):
         chase view show the track (at the strong preset's D 1.25: the faint
         floor and 7 mm berms): mostly darker pixels, between the wheels' start
         and where they are."""
-        for topic, share in (("/render/top", 0.02), ("/render/side", 0.02), (gen_model.CHASE_IMAGE_TOPIC, 0.005)):
+        for topic, share in (("/render/top", 0.02), ("/render/side", 0.02), (viewers.CHASE_IMAGE_TOPIC, 0.005)):
             self.assertGreater(self.changed(topic, 0).mean(), share, topic)
         off, on = (self.frames(k)[("/render/top", 0)].astype(int).sum(axis=-1) for k in ("off", "on"))
         changed = self.changed("/render/top", 0)
@@ -1015,10 +1018,10 @@ class Ruts(unittest.TestCase):
         self.assertGreater(heights[1], 0.022, heights)
         trace = self.runs["on"][1]
         row = trace[(trace[:, 0] == 0) & (trace[:, 1] <= 11.0)][-1]  # where the wheels dug in
-        p = gen_model.Params()
+        a, b = ROVER.wheel.dx, ROVER.rocker.pivot_y
         c, s = math.cos(row[5]), math.sin(row[5])
         wheels = np.array([(row[2] + c * dx - s * dy, row[3] + s * dx + c * dy)
-                           for dx in (p.wheel_dx, -p.wheel_dx) for dy in (p.pivot_y, -p.pivot_y)])
+                           for dx in (a, -a) for dy in (b, -b)])
         eye, target = ((q[0], q[1], q[2] + self.hf.height(q[0], q[1])) for q in self.DEPTH)
         dark = []
         for grab in (0, 1):
@@ -1066,8 +1069,8 @@ class Ruts(unittest.TestCase):
         they dig in place (the head looks ahead, 0.12 rad down: the
         synthesis' documented limit); once the rover has backed out the pits
         and ruts lie ahead of it and the eye shows them."""
-        self.assertFalse(self.changed(gen_model.EYE_IMAGE_TOPIC, 1, 0).any())
-        self.assertGreater(self.changed(gen_model.EYE_IMAGE_TOPIC, 2).mean(), 0.01)
+        self.assertFalse(self.changed(viewers.EYE_IMAGE_TOPIC, 1, 0).any())
+        self.assertGreater(self.changed(viewers.EYE_IMAGE_TOPIC, 2).mean(), 0.01)
 
     def test_reset_clears_them(self):
         """A world reset clears every rut and pit: 0.9 s after it every view
@@ -1106,7 +1109,7 @@ class Ruts(unittest.TestCase):
         topics = ["/render/d/image", "/render/d/depth_image"]
         shots = {}
         for ruts in (False, True):
-            rover = gen_model.build_sdf(physical(ruts=ruts, default_surface="sand"))
+            rover = gen_rover.build_sdf(physical(ruts={"enabled": ruts}, contact={"default_surface": "sand"}))
             shots[ruts], trace, _, _, _ = self.r.drive_variant(world(body), rover, dict(
                 name="render", topics=topics, schedule=[(0.0, 0.0, 0.0), (0.5, 0.5, 0.0), (4.5, 0.0, 1.0)],
                 seconds=7.0, grabs=[(0, 6.5)], reset_steps=0))

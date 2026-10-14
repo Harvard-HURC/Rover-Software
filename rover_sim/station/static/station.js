@@ -643,7 +643,7 @@ function showDrivetrain(m) {
   $("motor-table").hidden = !d;
   $("motors-figure").hidden = !d;
   $("drivetrain-note").textContent = d ? ""
-    : "No motor data: this rover drives with Gazebo's DiffDrive (DriveParams.mode = \"physical\" has the motor model).";
+    : "No motor data: this rover drives with Gazebo's DiffDrive (sim.yaml's drivetrain mode physical has the motor model).";
   if (!d) return;
   const limit = state.info ? state.info.drivetrain.current_limit : 20;
   const rows = WHEELS.map((name) => {

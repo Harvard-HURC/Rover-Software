@@ -149,7 +149,7 @@ def spins():
     def fresh_spins(solver):
         out = {}
         for key in keys:
-            trace = run(6.0, key, simulate.physical(dig=False), solver=solver)
+            trace = run(6.0, key, simulate.physical(contact={"dig": False}), solver=solver)
             measured = float(trace[(trace[:, 0] >= 3.0) & (trace[:, 0] < 6.0), 7].mean())
             expected = simulate.spin_ratio(terrains.TYPES[key].traction)
             out[key] = {"measured": measured, "closed_form": expected,

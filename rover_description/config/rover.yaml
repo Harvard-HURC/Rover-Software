@@ -1,0 +1,130 @@
+# The rover's physical numbers, in one place: geometry, masses, joints, the rocker differential, the motors and
+# their drivelines, the tyres, the sensors and the camera head, and how the rover looks. urdf/rover.urdf.xacro
+# builds the description from them; the simulation (rover_sim) reads them too. How the simulation models the
+# world (contact, dig-in, dust, its motor controller's tuning) is in rover_sim/config/sim.yaml instead.
+#
+# Units SI: m, kg, s, rad, N, V, A. Frames (REP 103): x forward, y left, z up; base_link's origin is on the ground
+# midway between the four wheels, with the rockers at zero. Write every number that is not a count with a decimal
+# point: the tools keep the type (20.0 is a float, 20 an int).
+# Sources: (A) assumed, (M) measured or tuned in the simulation, (R) from a reference in docs/research, with the
+# design that chose it. The geometry is the swerve design's placeholder (rover_control's config.hpp, kRover) until
+# the mechanical team has real numbers. To change the rover, edit this file and run `pixi run sim-model`
+# (rover_description/README.md).
+
+chassis:
+  size: [0.80, 0.50, 0.20]          # [m] the body, a box (A: rover model design 2026-10-05)
+  z: 0.40                           # [m] the box centre above the ground (A)
+  mass: 30.0                        # [kg] everything the chassis carries, the camera head's real mass included (A)
+
+rocker:                             # left and right, each carrying a front and a rear wheel
+  pivot_y: 0.40                     # [m] the pivots at (0, +-pivot_y, pivot_z) (A: config.hpp)
+  pivot_z: 0.35                     # [m] (A: config.hpp)
+  mass: 3.0                         # [kg] each; its arms below are visual and collision only (A)
+  limit: 0.5                        # [rad] each way (A)
+  damping: 0.5                      # [N m s/rad] the pivot's (A)
+  arm_inset: 0.08                   # [m] the arms' plane, from the wheel's centre plane toward the chassis (A)
+  arm_thickness: 0.04               # [m] (A)
+  arm_height: 0.05                  # [m] (A)
+
+differential:                       # a torsion spring and damper on q_left + q_right, keeping the rockers opposite
+  stiffness: 5000.0                 # [N m/rad] static error about 1e-4 rad (A: rover model design)
+  damping: 100.0                    # [N m s/rad] (A)
+
+wheel:
+  radius: 0.15                      # [m] (A: config.hpp)
+  width: 0.10                       # [m] (A)
+  dx: 0.45                          # [m] wheel centres at pivot + (+-dx, 0, dz): front +, rear - (A: config.hpp)
+  dz: -0.20                         # [m] (A: config.hpp)
+  mass: 2.5                         # [kg] (A)
+  top_speed: 20.0                   # [rad/s] 3 m/s, the rover's top speed (user decision 2026-10-07)
+
+# The drive motor of each wheel, the same four. Placeholders until the drivetrain is chosen (realism design D20, Q7:
+# the prototype's validated set). The names are those of the simulation's motor model (RoverDrivetrain <motor>).
+motor:
+  # [V] twice the Husky A200's 24 V (R [18]): a 21.6 rad/s free speed at the wheel, 3.2 m/s, for the 3 m/s top speed
+  # (user decision 2026-10-07); the torque per amp, and with it every climb and stall, is unchanged.
+  voltage: 48.0
+  resistance: 0.46                  # [ohm] (R [18])
+  kt: 0.0445                        # [N m/A] (R [18])
+  ke: 0.0445                        # [V s/rad] (R [18])
+  gear: 50.0                        # (M: prototype; datasheet alternative 51, R [22])
+  efficiency: 0.8                   # (M: prototype; datasheet alternative 0.7)
+  rotor_inertia: 1.2e-5             # [kg m^2] at the motor, 0.03 at the wheel (A)
+  free_current: 1.0                 # [A] no-load current (A)
+  output_friction: 0.05             # [N m s/rad] (A)
+  current_limit: 20.0               # [A] 35.6 N m at the wheel (M: prototype)
+
+driveline:                          # between each gearbox and its wheel (RoverDrivetrain <driveline>)
+  stiffness: 1500.0                 # [N m/rad] (A: 12 mm x 0.1 m steel shaft)
+  damping: 2.0                      # [N m s/rad] (A)
+  backlash: 0.026                   # [rad] 1.5 deg (A: IMS 0.8-2.5 deg [22])
+
+# The tyres' compliance, which the simulation's tyre model uses when it is on (rover_sim/config/sim.yaml
+# tyre_compliance; realism design 6.7, D18, phase 2). Placeholders until the wheel type is known (Q8).
+tyre:
+  radial: {stiffness: 60000.0, damping: 170.0}   # [N/m], [N s/m] (M: prototype)
+  axial: {stiffness: 40000.0, damping: 40.0}     # [N/m], [N s/m] (M: prototype)
+  travel: 0.03                                   # [m] each way (M: prototype)
+
+imu:                                # frame imu, aligned with base_link
+  xyz: [0.0, 0.0, 0.40]             # [m] at the chassis box centre (A)
+  rate: 100.0                       # [Hz] (A: rover model design)
+  gyro_noise: 0.002                 # [rad/s] stddev (A)
+  accel_noise: 0.02                 # [m/s^2] stddev (A)
+
+gnss:                               # the antenna on a short mast (frame gnss)
+  xyz: [-0.25, 0.0, 0.85]           # [m] (A)
+  rate: 10.0                        # [Hz] (A)
+  noise_horizontal: 0.5             # [m] stddev (A)
+  noise_vertical: 1.0               # [m] stddev (A)
+
+# The front RGB-D camera on a pan-tilt head on a mast (frame camera). xyz is the camera and its tilt axis; the pan
+# axis runs vertically through it. 1280x720: at 640x480 a 20 cm ArUco face read only to ~2.5 m (docs/sim/manual.md,
+# Known limitations); the depth image has the same size (one RGB-D sensor).
+camera:
+  xyz: [0.35, 0.0, 0.85]            # [m] (A)
+  rate: 15.0                        # [Hz] (A)
+  size: [1280, 720]                 # [px] (M: realism design 7)
+  hfov: 1.5                         # [rad] (A)
+  clip: [0.1, 40.0]                 # [m] the depth range (A: realism design 7, D14)
+
+# The pan-tilt head. Angles from straight ahead and level; pan positive to the left (about +z), tilt positive down
+# (about +y).
+head:
+  home_tilt: 0.12                   # [rad] down: where the head starts and the station centres it (A)
+  pan_limit: 2.8                    # [rad] each way (A)
+  tilt_limits: [-0.6, 1.2]          # [rad] (up, down) (A)
+  speed: 2.0                        # [rad/s] (A)
+  effort: 5.0                       # [N m] (A)
+  damping: 0.01                     # [N m s/rad] each joint's (A)
+  # Token masses: the head's real mass is part of the chassis'. Skid-steer turning is sensitive to the centre of
+  # mass: 0.4 kg on the head moves it 3 mm forward and made a 4 s turn in place wander 0.24 m instead of 0 (M).
+  pan_mass: 0.02                    # [kg]
+  tilt_mass: 0.02                   # [kg]
+  pan_height: 0.05                  # [m] the pan bearing below the tilt axis (A)
+  pan_box: [0.06, 0.15, 0.06]       # [m] the box the pan link's inertia is computed for (A)
+
+led:                                # the status LED on the back (URC 2027 rule 1.e.ii; frame led)
+  xyz: [-0.41, 0.0, 0.47]           # [m] (A)
+  size: [0.02, 0.16, 0.06]          # [m] (A)
+
+# Parts drawn without mass or collision of their own (their mass is the chassis'), and the colours (RGBA, 0-1). All
+# are drawing choices (A); lengths and positions in m.
+looks:
+  mast_radius: 0.015                # [m] the GNSS and camera masts
+  camera_mast_gap: 0.01             # [m] the camera mast's top below the pan bearing
+  antenna: {radius: 0.06, length: 0.02}                      # [m] the GNSS antenna's disc
+  turntable: {radius: 0.03, length: 0.02}                    # [m] the pan bearing's turntable
+  yoke: {size: [0.03, 0.008], y: 0.07, extra_height: 0.02}   # [m] the tilt yoke's arms: pan_height + extra_height tall
+  yoke_base: {size: [0.03, 0.148, 0.008], z: 0.01}           # [m] the plate joining the arms
+  camera_box: [0.04, 0.12, 0.04]    # [m] the camera's housing, also the box its link's inertia is computed for
+  lens: {radius: 0.014, length: 0.012, xyz: [0.024, 0.03, 0.0]}   # [m] xyz from the housing's centre
+  colors:
+    chassis: [0.85, 0.55, 0.15, 1.0]     # ochre; also the tread tyre's marked spoke
+    frame: [0.35, 0.35, 0.38, 1.0]       # rockers, masts and the head
+    tyre: [0.1, 0.1, 0.1, 1.0]           # the plain tyre, and the tread tyre's dark
+    tread: [0.30, 0.29, 0.26, 1.0]       # the tread tyre's bars, hub and spokes
+    antenna: [0.9, 0.9, 0.9, 1.0]
+    camera: [0.1, 0.1, 0.1, 1.0]
+    lens: [0.05, 0.08, 0.12, 1.0]
+    led_off: [0.15, 0.15, 0.15, 1.0]     # the LED's colour while it is off

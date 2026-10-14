@@ -65,7 +65,7 @@ namespace rover_sim::tracks {
 using Stamp = int64_t;
 constexpr Stamp kNever = std::numeric_limits<Stamp>::max();
 
-/// The <tracks> group of the drivetrain plugin (gen_model.TrackParams writes it; units SI).
+/// The <tracks> group of the drivetrain plugin (urdf/rover_sim.urdf.xacro writes it from sim.yaml ruts; units SI).
 struct Params {
   double spacing = 0.05;        ///< [m] of a wheel's travel per cross-section
   int chunk = 128;              ///< records per chunk
