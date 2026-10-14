@@ -1,0 +1,17 @@
+{
+ "world": "urc_equipment_servicing",
+ "size_m": 256.0,
+ "gsd_m": 0.0625,
+ "pixels": 4096,
+ "tile_m": 64.0,
+ "tiles": 16,
+ "camera": {
+  "px": 1270,
+  "hfov": 0.26300670255057074,
+  "z": 301.33140003681183,
+  "above_highest_terrain": 300.0
+ },
+ "frame": "row 0 north, column 0 west, centred on the world origin; x east, y north",
+ "render_seconds": 4.7,
+ "rover": "left out (drawn live)"
+}

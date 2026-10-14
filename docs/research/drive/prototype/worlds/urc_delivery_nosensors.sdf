@@ -1,0 +1,357 @@
+<?xml version="1.0"?>
+<sdf version="1.11">
+  <world name="urc_delivery">
+    <physics name="1ms" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics" />
+    
+    
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu" />
+    
+    
+    <scene>
+      <ambient>0.5 0.48 0.46 1</ambient>
+      <background>0.62 0.74 0.9 1</background>
+      <grid>false</grid>
+      <shadows>true</shadows>
+      <sky />
+    </scene>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 100 0 0 0</pose>
+      <diffuse>1 0.96 0.9 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+      <direction>-0.45 0.35 -0.82</direction>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>38.4075125</latitude_deg>
+      <longitude_deg>-110.788578</longitude_deg>
+      <elevation>1367.97818</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+    <include>
+      <uri>model://urc_terrain_delivery</uri>
+      <name>terrain</name>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://urc_c2_station</uri>
+      <name>c2_station</name>
+      <pose>-430 -390 6.34824751 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://urc_start_gate</uri>
+      <name>start_gate</name>
+      <pose>-418 -382 6.34824751 0 0 0.610865238</pose>
+    </include>
+    <include>
+      <uri>model://rover</uri>
+      <name>rover</name>
+      <pose>-421 -385 6.36824751 0 0 0.610865238</pose>
+    </include>
+    <include>
+      <uri>model://urc_toolbox</uri>
+      <name>toolbox</name>
+      <pose>-360 -350 5.91984135 0 0 0.4</pose>
+    </include>
+    <include>
+      <uri>model://urc_wrench</uri>
+      <name>wrench</name>
+      <pose>-360 -350 5.92684135 0 0 0.4</pose>
+    </include>
+    <include>
+      <uri>model://urc_astronaut_a</uri>
+      <name>astronaut_a</name>
+      <pose>-305 -378 5.90233811 0 0 -3.04588595</pose>
+    </include>
+    <include>
+      <uri>model://urc_astronaut_b</uri>
+      <name>astronaut_b</name>
+      <pose>-265 -295 5.57707713 0 0 -2.61918922</pose>
+    </include>
+    <include>
+      <uri>model://urc_water_jug</uri>
+      <name>water_jug</name>
+      <pose>-322 -258 5.58438349 0 0 0</pose>
+    </include>
+    <include>
+      <uri>model://urc_supply_crate</uri>
+      <name>supply_crate</name>
+      <pose>-235 -335 5.78616543 0 0 1</pose>
+    </include>
+    <include>
+      <uri>model://urc_astronaut_d</uri>
+      <name>astronaut_d</name>
+      <pose>-190 -265 12.2320151 0 0 -2.66141762</pose>
+    </include>
+    <include>
+      <uri>model://urc_sign_search</uri>
+      <name>field_sign</name>
+      <pose>-100 -100 6.02371874 0 0 -2.42062133</pose>
+    </include>
+    <include>
+      <uri>model://urc_instrument_case</uri>
+      <name>instrument_case</name>
+      <pose>22 -9 4.43756211 0 0 2.2</pose>
+    </include>
+    <include>
+      <uri>model://urc_first_aid_kit</uri>
+      <name>first_aid_kit</name>
+      <pose>38 -168 4.6371301 0 0 0.3</pose>
+    </include>
+    <include>
+      <uri>model://urc_astronaut_c</uri>
+      <name>astronaut_c</name>
+      <pose>330 220 4.25109776 0 0 -2.35619449</pose>
+    </include>
+    <include>
+      <uri>model://urc_spectrometer</uri>
+      <name>spectrometer</name>
+      <pose>415 -57 3.37861529 0 0 1.2</pose>
+    </include>
+    <include>
+      <uri>model://urc_ledge_30cm</uri>
+      <name>ledge_0</name>
+      <pose>270 162 3.67498571 0 0 0.785398163</pose>
+    </include>
+    <include>
+      <uri>model://urc_ledge_60cm</uri>
+      <name>ledge_1</name>
+      <pose>282 174 3.07703883 0 0 0.785398163</pose>
+    </include>
+    <include>
+      <uri>model://urc_ledge_100cm</uri>
+      <name>ledge_2</name>
+      <pose>294 186 2.9865992 0 0 0.785398163</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_0</name>
+      <pose>90.4119625 -107.435619 4.71968349 0 0 3.97520943</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_1</name>
+      <pose>-178.770124 -26.9769507 5.24071096 0 0 1.42318988</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_2</name>
+      <pose>-230.244485 17.9627199 6.05984799 0 0 5.31803473</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_3</name>
+      <pose>-36.39376 269.44293 22.8641371 0 0 4.32595152</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_4</name>
+      <pose>-69.2861169 379.132015 4.75791347 0 0 1.55757544</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_5</name>
+      <pose>-261.62663 48.4401137 7.01648734 0 0 5.59537609</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_6</name>
+      <pose>24.2067669 -430.737579 6.46448354 0 0 4.33669249</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_7</name>
+      <pose>-129.054436 -259.17913 6.35860585 0 0 3.65333988</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_8</name>
+      <pose>21.8393315 -87.5760883 5.88902191 0 0 5.28988483</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_9</name>
+      <pose>133.91883 309.11802 7.73149333 0 0 5.12994981</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_10</name>
+      <pose>397.456121 77.3424606 5.68612769 0 0 1.89735165</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_11</name>
+      <pose>130.408306 -21.1917904 4.11801681 0 0 4.68499749</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_12</name>
+      <pose>275.729107 259.475665 6.51601164 0 0 5.08248674</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_13</name>
+      <pose>-320.913278 -73.3155134 5.85580112 0 0 3.60148209</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_14</name>
+      <pose>239.1374 -131.801235 10.0569595 0 0 3.72754318</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_15</name>
+      <pose>-114.207043 180.713174 6.83228142 0 0 4.05278623</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_16</name>
+      <pose>277.214056 -94.160595 17.2387771 0 0 0.261810364</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_17</name>
+      <pose>246.486232 261.794988 6.2617518 0 0 5.48106316</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_18</name>
+      <pose>-226.298768 356.137175 6.0567303 0 0 5.06159406</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_19</name>
+      <pose>150.714632 -387.280324 6.39603553 0 0 3.31062898</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_20</name>
+      <pose>181.72072 -218.657885 6.53636365 0 0 2.5470767</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_21</name>
+      <pose>-114.240288 -367.861967 6.566647 0 0 0.987570301</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_22</name>
+      <pose>18.9311964 396.181755 9.26662963 0 0 4.5592911</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_23</name>
+      <pose>-31.2417948 -186.354779 4.80422695 0 0 0.546866625</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_24</name>
+      <pose>165.803437 -306.570886 6.71223866 0 0 1.4291556</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_25</name>
+      <pose>232.926788 -317.460789 4.40758798 0 0 0.190249698</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_26</name>
+      <pose>106.761593 -223.567155 5.28649214 0 0 2.44530973</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_27</name>
+      <pose>41.2902421 -406.74576 7.27823966 0 0 4.63853841</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_28</name>
+      <pose>150.72043 160.72235 15.6818225 0 0 5.68733915</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_29</name>
+      <pose>338.343299 186.103569 5.10733499 0 0 2.48117499</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_30</name>
+      <pose>-389.440519 -282.789425 5.78928317 0 0 1.47849998</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_31</name>
+      <pose>228.782848 -38.5415292 12.0403339 0 0 3.9077158</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_32</name>
+      <pose>281.210972 -100.616237 16.0240961 0 0 0.222542044</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_33</name>
+      <pose>-427.520875 -137.354005 5.4935567 0 0 3.40275627</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_34</name>
+      <pose>133.272334 235.305297 6.27608122 0 0 3.13419209</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_35</name>
+      <pose>42.0547492 -368.193197 6.78269238 0 0 5.30039387</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_36</name>
+      <pose>-371.882081 -47.1054679 5.92954952 0 0 1.28900648</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_37</name>
+      <pose>-164.669009 66.0295872 6.59468327 0 0 3.5956562</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_38</name>
+      <pose>362.536899 -116.097639 25.915057 0 0 2.07325311</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_3</uri>
+      <name>shrub_39</name>
+      <pose>204.246348 115.087035 4.63375541 0 0 0.304765724</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_4</uri>
+      <name>shrub_40</name>
+      <pose>192.559137 -38.1939739 5.89797127 0 0 4.43309008</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_5</uri>
+      <name>shrub_41</name>
+      <pose>-29.9099149 -312.178983 8.06395423 0 0 2.57738859</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_0</uri>
+      <name>shrub_42</name>
+      <pose>-390.569818 -60.033971 5.84935243 0 0 2.52509825</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_1</uri>
+      <name>shrub_43</name>
+      <pose>-417.804338 -82.0832705 5.30793563 0 0 2.83096107</pose>
+    </include>
+    <include>
+      <uri>model://urc_shrub_2</uri>
+      <name>shrub_44</name>
+      <pose>37.6455693 150.319345 3.79586521 0 0 1.36159715</pose>
+    </include>
+  </world>
+</sdf>

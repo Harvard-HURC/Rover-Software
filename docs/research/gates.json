@@ -1,0 +1,1589 @@
+{
+ "format": "rover-gates/1",
+ "spec": "docs/superpowers/specs/2026-10-06-urc-realism-design.md, section 10.4 (method: section 10.3)",
+ "machine": "Apple M4, 16 GB, macOS 26 (Darwin 25.5); gz-sim 8.10, DART, ogre2 on Metal (pixi env)",
+ "scripts": "sim/data/research/gates/ (build.sh builds the prototype plugins; every script writes to GATES_SCRATCH)",
+ "method": "CPU time per physics step: plain `gz sim -s -r --iterations N` processes, user + sys from the kernel minus a one-step start-up run, interleaved cases, median of 5 (G8 A/B: 10); the rover driven by a thread of the measuring process (simulate.twist_publisher), never by Python inside the server. Sensors stripped and real_time_factor 0 unless a gate renders. The 1-minute load average is recorded: ratios hold on a loaded machine, absolute numbers need a load average below 4 (spec 10.3). CPU time also counts the server's helper threads, so G5 reports the wall time per step beside it (wall clock, valid on an idle machine).",
+ "summary": {
+  "G1": "pass",
+  "G2": "pass",
+  "G3": "pass",
+  "G4": "partial",
+  "G5": "fail by CPU time in urc_equipment_servicing; pass by wall clock",
+  "G6": "pass",
+  "G7": "pass",
+  "G8": "pass"
+ },
+ "gates": {
+  "G1": {
+   "question": "Autonomy at 4097^2 (collision + visual) on the 0.5 m lidar, with a 60 s driving run",
+   "rule": "RTF loss <= 15 % vs 2049^2, start-up <= 30 s, memory <= 3.5 GB",
+   "fallback": "2049^2 for both (1 m); real 0.5 m relief lost below 1 m",
+   "run": "2026-10-06, by the first WS-0 run, at load 5-14 (ratios and functional checks: valid on a loaded machine)",
+   "script": "make_tree.py g1_lidar4097 autonomy --patch (route_area_lidar_0p5m.tif, 4097 samples); derive_2049.py; g1.py 5",
+   "measured": {
+    "lidar_4097": {
+     "cpu_ms_per_step": 0.3433,
+     "real_time_factor_cpu": 2.913,
+     "cpu_ms_per_step_runs": [
+      0.3237,
+      0.3362,
+      0.3433,
+      0.4403,
+      0.3444
+     ],
+     "startup_wall_s": 3.21,
+     "peak_rss_mb": 606.1,
+     "load_avg_1min_median": 6.15,
+     "vs_lidar_2049": 0.031
+    },
+    "lidar_2049": {
+     "cpu_ms_per_step": 0.333,
+     "real_time_factor_cpu": 3.003,
+     "cpu_ms_per_step_runs": [
+      0.328,
+      0.3256,
+      0.333,
+      0.4542,
+      0.3826
+     ],
+     "startup_wall_s": 2.62,
+     "peak_rss_mb": 417.7,
+     "load_avg_1min_median": 6.55,
+     "vs_lidar_2049": 0.0
+    },
+    "today_3dep_2049": {
+     "cpu_ms_per_step": 0.3538,
+     "real_time_factor_cpu": 2.826,
+     "cpu_ms_per_step_runs": [
+      0.3262,
+      0.3346,
+      0.3538,
+      0.4017,
+      0.3841
+     ],
+     "startup_wall_s": 2.68,
+     "peak_rss_mb": 408.4,
+     "load_avg_1min_median": 6.34,
+     "vs_lidar_2049": 0.062
+    }
+   },
+   "verdict": "pass",
+   "numbers": {
+    "rtf_loss": 0.031,
+    "startup_wall_s": 3.21,
+    "peak_rss_mb": 606.1,
+    "passes": true
+   },
+   "decision": "Autonomy at 4097^2 for collision and visual (one grid, D6).",
+   "notes": [
+    "RTF loss +3.1 % against its 2049^2 twin (same models and clutter), start-up 3.2 s, peak 606 MB: the loss is a ratio of interleaved runs, valid at load 5.5-11.5; start-up and memory are 9x and 6x inside their limits.",
+    "The 2049^2 twin is the 4097^2 heightmap subsampled and renormalised (derive_2049.py), because generating the lidar world at 2049^2 failed: autonomy.py's routes.easy_route found no route onto the butte within EASY_ROUTE_MAX_SLOPE 16 deg (TypeError on None, g1_gen_2049.log), while at 4097^2 it found one. WS-T2 must check the easy route and its slope limit on the lidar.",
+    "Today's 3DEP world (2049^2): 0.354 ms/step in the same runs."
+   ]
+  },
+  "G2": {
+   "question": "PGS on Equipment Servicing, Delivery and the proving ground",
+   "rule": "Lander key-press test passes; toolbox + wrench stay put 60 s",
+   "fallback": "Dantzig in that world (spec 6.6)",
+   "run": "2026-10-06, by the first WS-0 run, at load 5-14 (ratios and functional checks: valid on a loaded machine)",
+   "script": "g2_tests.py pgs; g2.py settle <world> <solver> 60",
+   "measured": {
+    "tests_with_pgs": {
+     "ran": 5,
+     "failures": [],
+     "errors": [],
+     "which": "test_urc_terrain.ProvingGroundPhysics (4) and test_urc_sim.Lander (the key-press test), their worlds switched to PGS"
+    },
+    "settle_0p5_to_60s": {
+     "urc_delivery/pgs": {
+      "rover": {
+       "max_link_move_m": 0.00024,
+       "max_link_turn_deg": 0.003,
+       "max_joint_change": 4e-05
+      },
+      "toolbox": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "wrench": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "water_jug": {
+       "max_link_move_m": 0.00099,
+       "max_link_turn_deg": 0.295,
+       "max_joint_change": 0.0
+      },
+      "supply_crate": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "instrument_case": {
+       "max_link_move_m": 3e-05,
+       "max_link_turn_deg": 0.01,
+       "max_joint_change": 0.0
+      },
+      "first_aid_kit": {
+       "max_link_move_m": 0.00161,
+       "max_link_turn_deg": 1.238,
+       "max_joint_change": 0.0
+      },
+      "spectrometer": {
+       "max_link_move_m": 0.00052,
+       "max_link_turn_deg": 0.268,
+       "max_joint_change": 0.0
+      }
+     },
+     "urc_delivery/dantzig": {
+      "rover": {
+       "max_link_move_m": 0.00013,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "toolbox": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "wrench": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "water_jug": {
+       "max_link_move_m": 0.00099,
+       "max_link_turn_deg": 0.29,
+       "max_joint_change": 0.0
+      },
+      "supply_crate": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.001,
+       "max_joint_change": 0.0
+      },
+      "instrument_case": {
+       "max_link_move_m": 3e-05,
+       "max_link_turn_deg": 0.01,
+       "max_joint_change": 0.0
+      },
+      "first_aid_kit": {
+       "max_link_move_m": 0.00181,
+       "max_link_turn_deg": 1.358,
+       "max_joint_change": 0.0
+      },
+      "spectrometer": {
+       "max_link_move_m": 0.00052,
+       "max_link_turn_deg": 0.265,
+       "max_joint_change": 0.0
+      }
+     },
+     "urc_equipment_servicing/pgs": {
+      "rover": {
+       "max_link_move_m": 0.0002,
+       "max_link_turn_deg": 0.003,
+       "max_joint_change": 4e-05
+      },
+      "sample_tube": {
+       "max_link_move_m": 4e-05,
+       "max_link_turn_deg": 0.027,
+       "max_joint_change": 0.0
+      },
+      "cache_container": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "lander": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "key": {
+       "max_link_move_m": 0.0014,
+       "max_link_turn_deg": 0.435,
+       "max_joint_change": 0.0
+      },
+      "fuel_tank": {
+       "max_link_move_m": 0.007,
+       "max_link_turn_deg": 1.338,
+       "max_joint_change": 0.0181
+      }
+     },
+     "urc_equipment_servicing/dantzig": {
+      "rover": {
+       "max_link_move_m": 2e-05,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "sample_tube": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "cache_container": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "lander": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.0,
+       "max_joint_change": 0.0
+      },
+      "key": {
+       "max_link_move_m": 0.0,
+       "max_link_turn_deg": 0.003,
+       "max_joint_change": 0.0
+      },
+      "fuel_tank": {
+       "max_link_move_m": 0.007,
+       "max_link_turn_deg": 1.336,
+       "max_joint_change": 0.00046
+      }
+     },
+     "proving_ground/pgs": {
+      "rover": {
+       "max_link_move_m": 0.0002,
+       "max_link_turn_deg": 0.003,
+       "max_joint_change": 4e-05
+      }
+     }
+    }
+   },
+   "verdict": "pass",
+   "decision": "PGS is allowed in Delivery, Equipment Servicing and the proving ground as far as stability goes; the per-world solver also needs G5's cost.",
+   "notes": [
+    "The toolbox and the wrench do not move (0.0 mm) from 0.5 s to 60 s with either solver.",
+    "With PGS the four proving-ground physics tests and the lander key-press test pass.",
+    "PGS lets loose parts creep a little more (Equipment Servicing: key 1.4 mm and 0.4 deg, fuel-tank joints 0.018 rad against 0.0005 with Dantzig): solver noise, not realism (D4)."
+   ]
+  },
+  "G3": {
+   "question": "GLB meshes as collisions in DART; GLB vs OBJ visual memory",
+   "rule": "Loads, contacts correct",
+   "fallback": "OBJ for collisions, GLB for visuals",
+   "run": "2026-10-06, by the first WS-0 run, at load 5-14 (ratios and functional checks: valid on a loaded machine)",
+   "script": "g3.py collide; g3.py memory 3",
+   "measured": {
+    "collision": {
+     "glb": {
+      "rover_base_z_after_3s": 0.3,
+      "ball_start": [
+       0.8,
+       6.0,
+       1.6
+      ],
+      "ball_after_3s": [
+       -7.155,
+       5.991,
+       0.2
+      ],
+      "rover_on_slab": true,
+      "ball_rolled_downhill": true
+     },
+     "obj": {
+      "rover_base_z_after_3s": 0.3,
+      "ball_start": [
+       0.8,
+       6.0,
+       1.6
+      ],
+      "ball_after_3s": [
+       -7.155,
+       5.991,
+       0.2
+      ],
+      "rover_on_slab": true,
+      "ball_rolled_downhill": true
+     },
+     "same_as_obj": true
+    },
+    "visual_memory": {
+     "none": {
+      "peak_rss_mb_median": 314.1,
+      "wall_s_median": 2.76,
+      "frames": [
+       42,
+       27,
+       0
+      ]
+     },
+     "obj": {
+      "peak_rss_mb_median": 800.7,
+      "wall_s_median": 5.53,
+      "frames": [
+       81,
+       74,
+       71
+      ]
+     },
+     "glb": {
+      "peak_rss_mb_median": 511.7,
+      "wall_s_median": 3.79,
+      "frames": [
+       58,
+       71,
+       68
+      ]
+     },
+     "files_mb": {
+      "glb": 37.5,
+      "obj": 110.2
+     },
+     "triangles": 1638400
+    }
+   },
+   "verdict": "pass",
+   "decision": "GLB for collisions and visuals (no OBJ fallback needed).",
+   "notes": [
+    "The rover rests at z = 0.300 m on a 0.3 m GLB slab as on the OBJ one, and a ball rolls the same way down a 20 deg GLB and OBJ wedge (to 1 mm).",
+    "1.64 M visual triangles in 16 chunks, all in view of a watched 1280 x 720 camera: peak 512 MB with GLB, 801 MB with OBJ, 314 MB without them, so GLB needs 0.41x the memory of OBJ (198 vs 487 MB); files 37.5 vs 110 MB, server wall time 3.8 vs 5.5 s."
+   ]
+  },
+  "G4": {
+   "question": "Alpha-tested textures from SDF (shrub cards, feathered decal edges)",
+   "rule": "Visible cut-out / feathered edge",
+   "fallback": "Opaque low-poly shrubs; no detail decals",
+   "run": "2026-10-07, on an otherwise idle machine (load 1.6-5.5 including the server under test)",
+   "script": "g4.py",
+   "measured": {
+    "backdrop": [
+     0.0,
+     0.0,
+     255.0
+    ],
+    "cutout_disc_centre": [
+     232.0,
+     0.0,
+     0.0
+    ],
+    "cutout_corner_transparent": [
+     0.0,
+     0.0,
+     255.0
+    ],
+    "cutout_corner_2": [
+     0.0,
+     0.0,
+     255.0
+    ],
+    "cutout_works": true,
+    "feather": {
+     "profile": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "max_step": 1.0,
+     "levels": 2,
+     "feathered": false
+    },
+    "feather_with_transparency": {
+     "profile": [
+      0.72,
+      0.68,
+      0.65,
+      0.62,
+      0.59,
+      0.56,
+      0.54,
+      0.52,
+      0.49,
+      0.47,
+      0.45,
+      0.42,
+      0.4,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "max_step": 0.403,
+     "levels": 5,
+     "feathered": false
+    }
+   },
+   "verdict": "partial",
+   "decision": "Shrub cards may use alpha cut-outs (alpha-tested at 0.5). Soft-edged decals are not available: the spec's fallback for them applies (no detail decals), or decals whose edge is a hard, irregular (noise-cut) alpha-test edge.",
+   "notes": [
+    "Cut-out: the transparent texels of an albedo map vanish (the wall behind shows through), with no <transparency> needed: gz-sim gives every albedo map an alpha test at 0.5.",
+    "Feathering: an alpha ramp 0 -> 1 renders as a hard edge where alpha = 0.5. With <transparency> 0.001 the material blends, so opacity follows the texture alpha from 1 down to 0.5, but the alpha test still removes everything below 0.5: the edge steps from 50 % opacity to nothing.",
+    "Not measured: sorting and depth of blended (transparent-queue) materials over the Terra terrain."
+   ]
+  },
+  "G5": {
+   "question": "Drivetrain prototype + PGS per world, method of spec 10.3",
+   "rule": ">= 1.1x real time",
+   "fallback": "Dantzig in that world; feeds Q2",
+   "run": "2026-10-07, on an otherwise idle machine (load 1.6-5.5 including the server under test)",
+   "script": "g5.py joint 5 (sensors stripped, RTF 0, 20,000 steps of simulate.DRIVE_SCHEDULE, interleaved)",
+   "measured": {
+    "urc_delivery": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.5715,
+      "real_time_factor_cpu": 1.75,
+      "cpu_ms_per_step_runs": [
+       0.5715,
+       0.5667,
+       0.5731,
+       0.5699,
+       0.5789
+      ],
+      "load_avg_1min_median": 3.75,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.408,
+      "real_time_factor_wall": 2.45
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.6217,
+      "real_time_factor_cpu": 1.608,
+      "cpu_ms_per_step_runs": [
+       0.6205,
+       0.6148,
+       0.6242,
+       0.6347,
+       0.6217
+      ],
+      "load_avg_1min_median": 3.72,
+      "vs_diffdrive_dantzig": 0.088,
+      "wall_ms_per_step": 0.466,
+      "real_time_factor_wall": 2.15
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.7772,
+      "real_time_factor_cpu": 1.287,
+      "cpu_ms_per_step_runs": [
+       0.7717,
+       0.7998,
+       0.7772,
+       0.777,
+       0.7776
+      ],
+      "load_avg_1min_median": 3.85,
+      "vs_diffdrive_dantzig": 0.36,
+      "wall_ms_per_step": 0.5955,
+      "real_time_factor_wall": 1.68
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "urc_equipment_servicing": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.9343,
+      "real_time_factor_cpu": 1.07,
+      "cpu_ms_per_step_runs": [
+       0.9437,
+       0.9271,
+       0.934,
+       0.9343,
+       0.9445
+      ],
+      "load_avg_1min_median": 4.48,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.676,
+      "real_time_factor_wall": 1.48
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 1.0348,
+      "real_time_factor_cpu": 0.966,
+      "cpu_ms_per_step_runs": [
+       1.0348,
+       1.035,
+       1.0397,
+       1.0294,
+       1.0341
+      ],
+      "load_avg_1min_median": 3.95,
+      "vs_diffdrive_dantzig": 0.108,
+      "wall_ms_per_step": 0.738,
+      "real_time_factor_wall": 1.35
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 1.159,
+      "real_time_factor_cpu": 0.863,
+      "cpu_ms_per_step_runs": [
+       1.1459,
+       1.1643,
+       1.159,
+       1.1683,
+       1.1519
+      ],
+      "load_avg_1min_median": 4.81,
+      "vs_diffdrive_dantzig": 0.241,
+      "wall_ms_per_step": 0.8585,
+      "real_time_factor_wall": 1.16
+     },
+     "pgs_passes_by_cpu_time": false,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": false,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "proving_ground": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.1887,
+      "real_time_factor_cpu": 5.301,
+      "cpu_ms_per_step_runs": [
+       0.1892,
+       0.1887,
+       0.1884,
+       0.1861,
+       0.1964
+      ],
+      "load_avg_1min_median": 4.08,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.15,
+      "real_time_factor_wall": 6.67
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.2002,
+      "real_time_factor_cpu": 4.994,
+      "cpu_ms_per_step_runs": [
+       0.1994,
+       0.2002,
+       0.2026,
+       0.2014,
+       0.1963
+      ],
+      "load_avg_1min_median": 3.83,
+      "vs_diffdrive_dantzig": 0.061,
+      "wall_ms_per_step": 0.16,
+      "real_time_factor_wall": 6.25
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.2079,
+      "real_time_factor_cpu": 4.81,
+      "cpu_ms_per_step_runs": [
+       0.2081,
+       0.2079,
+       0.2149,
+       0.2056,
+       0.1927
+      ],
+      "load_avg_1min_median": 3.61,
+      "vs_diffdrive_dantzig": 0.102,
+      "wall_ms_per_step": 0.1675,
+      "real_time_factor_wall": 5.97
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "urc_astrobiology": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.2558,
+      "real_time_factor_cpu": 3.909,
+      "cpu_ms_per_step_runs": [
+       0.2497,
+       0.2591,
+       0.2558,
+       0.2555,
+       0.2586
+      ],
+      "load_avg_1min_median": 3.36,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.216,
+      "real_time_factor_wall": 4.63
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.2679,
+      "real_time_factor_cpu": 3.732,
+      "cpu_ms_per_step_runs": [
+       0.2679,
+       0.273,
+       0.2781,
+       0.2654,
+       0.2614
+      ],
+      "load_avg_1min_median": 3.46,
+      "vs_diffdrive_dantzig": 0.047,
+      "wall_ms_per_step": 0.227,
+      "real_time_factor_wall": 4.41
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.2679,
+      "real_time_factor_cpu": 3.733,
+      "cpu_ms_per_step_runs": [
+       0.269,
+       0.2669,
+       0.2676,
+       0.2679,
+       0.2721
+      ],
+      "load_avg_1min_median": 3.31,
+      "vs_diffdrive_dantzig": 0.047,
+      "wall_ms_per_step": 0.228,
+      "real_time_factor_wall": 4.39
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "urc_autonomy": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.2675,
+      "real_time_factor_cpu": 3.738,
+      "cpu_ms_per_step_runs": [
+       0.2657,
+       0.2714,
+       0.2675,
+       0.2712,
+       0.2663
+      ],
+      "load_avg_1min_median": 2.45,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.2125,
+      "real_time_factor_wall": 4.71
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.2846,
+      "real_time_factor_cpu": 3.514,
+      "cpu_ms_per_step_runs": [
+       0.2872,
+       0.2842,
+       0.2829,
+       0.2846,
+       0.2849
+      ],
+      "load_avg_1min_median": 2.35,
+      "vs_diffdrive_dantzig": 0.064,
+      "wall_ms_per_step": 0.2275,
+      "real_time_factor_wall": 4.4
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.2937,
+      "real_time_factor_cpu": 3.404,
+      "cpu_ms_per_step_runs": [
+       0.2937,
+       0.299,
+       0.2967,
+       0.2862,
+       0.2867
+      ],
+      "load_avg_1min_median": 2.29,
+      "vs_diffdrive_dantzig": 0.098,
+      "wall_ms_per_step": 0.2365,
+      "real_time_factor_wall": 4.23
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "rover_test": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.1442,
+      "real_time_factor_cpu": 6.933,
+      "cpu_ms_per_step_runs": [
+       0.145,
+       0.1409,
+       0.1446,
+       0.144,
+       0.1442
+      ],
+      "load_avg_1min_median": 2.8,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.1045,
+      "real_time_factor_wall": 9.57
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.1545,
+      "real_time_factor_cpu": 6.472,
+      "cpu_ms_per_step_runs": [
+       0.1533,
+       0.1605,
+       0.1545,
+       0.1524,
+       0.1625
+      ],
+      "load_avg_1min_median": 2.65,
+      "vs_diffdrive_dantzig": 0.071,
+      "wall_ms_per_step": 0.1155,
+      "real_time_factor_wall": 8.66
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.1643,
+      "real_time_factor_cpu": 6.085,
+      "cpu_ms_per_step_runs": [
+       0.1636,
+       0.1643,
+       0.1649,
+       0.1664,
+       0.1634
+      ],
+      "load_avg_1min_median": 2.55,
+      "vs_diffdrive_dantzig": 0.139,
+      "wall_ms_per_step": 0.126,
+      "real_time_factor_wall": 7.94
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    },
+    "flat": {
+     "diffdrive_dantzig": {
+      "cpu_ms_per_step": 0.1067,
+      "real_time_factor_cpu": 9.374,
+      "cpu_ms_per_step_runs": [
+       0.1061,
+       0.1058,
+       0.1067,
+       0.1078,
+       0.1082
+      ],
+      "load_avg_1min_median": 2.57,
+      "vs_diffdrive_dantzig": 0.0,
+      "wall_ms_per_step": 0.0895,
+      "real_time_factor_wall": 11.17
+     },
+     "proto_dantzig": {
+      "cpu_ms_per_step": 0.1181,
+      "real_time_factor_cpu": 8.471,
+      "cpu_ms_per_step_runs": [
+       0.1184,
+       0.1174,
+       0.118,
+       0.1186,
+       0.1181
+      ],
+      "load_avg_1min_median": 2.67,
+      "vs_diffdrive_dantzig": 0.107,
+      "wall_ms_per_step": 0.1005,
+      "real_time_factor_wall": 9.95
+     },
+     "proto_pgs": {
+      "cpu_ms_per_step": 0.126,
+      "real_time_factor_cpu": 7.935,
+      "cpu_ms_per_step_runs": [
+       0.1258,
+       0.1256,
+       0.1283,
+       0.1273,
+       0.126
+      ],
+      "load_avg_1min_median": 2.63,
+      "vs_diffdrive_dantzig": 0.181,
+      "wall_ms_per_step": 0.109,
+      "real_time_factor_wall": 9.17
+     },
+     "pgs_passes_by_cpu_time": true,
+     "pgs_passes_by_wall_clock": true,
+     "dantzig_passes_by_cpu_time": true,
+     "dantzig_passes_by_wall_clock": true
+    }
+   },
+   "earlier_runs_at_load_6_to_14": {
+    "proving_ground/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.2769,
+     "rtf_cpu": 3.612
+    },
+    "proving_ground/proto_dantzig": {
+     "cpu_ms_per_step": 0.356,
+     "rtf_cpu": 2.809
+    },
+    "proving_ground/proto_pgs": {
+     "cpu_ms_per_step": 0.3248,
+     "rtf_cpu": 3.078
+    },
+    "urc_delivery/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.9998,
+     "rtf_cpu": 1.0
+    },
+    "urc_delivery/proto_dantzig": {
+     "cpu_ms_per_step": 1.0593,
+     "rtf_cpu": 0.944
+    },
+    "urc_delivery/proto_pgs": {
+     "cpu_ms_per_step": 1.2852,
+     "rtf_cpu": 0.778
+    },
+    "urc_astrobiology/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.4276,
+     "rtf_cpu": 2.339
+    },
+    "urc_astrobiology/proto_dantzig": {
+     "cpu_ms_per_step": 0.4925,
+     "rtf_cpu": 2.03
+    },
+    "urc_astrobiology/proto_pgs": {
+     "cpu_ms_per_step": 0.4698,
+     "rtf_cpu": 2.129
+    },
+    "urc_autonomy/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.3751,
+     "rtf_cpu": 2.666
+    },
+    "urc_autonomy/proto_dantzig": {
+     "cpu_ms_per_step": 0.4217,
+     "rtf_cpu": 2.371
+    },
+    "urc_autonomy/proto_pgs": {
+     "cpu_ms_per_step": 0.3912,
+     "rtf_cpu": 2.556
+    },
+    "urc_equipment_servicing/diffdrive_dantzig": {
+     "cpu_ms_per_step": 1.1405,
+     "rtf_cpu": 0.877
+    },
+    "urc_equipment_servicing/proto_dantzig": {
+     "cpu_ms_per_step": 1.2573,
+     "rtf_cpu": 0.795
+    },
+    "urc_equipment_servicing/proto_pgs": {
+     "cpu_ms_per_step": 1.2666,
+     "rtf_cpu": 0.79
+    },
+    "rover_test/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.177,
+     "rtf_cpu": 5.648
+    },
+    "rover_test/proto_dantzig": {
+     "cpu_ms_per_step": 0.1924,
+     "rtf_cpu": 5.198
+    },
+    "rover_test/proto_pgs": {
+     "cpu_ms_per_step": 0.2052,
+     "rtf_cpu": 4.873
+    },
+    "flat/diffdrive_dantzig": {
+     "cpu_ms_per_step": 0.1382,
+     "rtf_cpu": 7.234
+    },
+    "flat/proto_dantzig": {
+     "cpu_ms_per_step": 0.1576,
+     "rtf_cpu": 6.346
+    },
+    "flat/proto_pgs": {
+     "cpu_ms_per_step": 0.1647,
+     "rtf_cpu": 6.071
+    }
+   },
+   "verdict": "fail by CPU time in urc_equipment_servicing; pass by wall clock",
+   "decision": "PGS in Delivery, the proving ground, Astrobiology, Autonomy (and rover_test); Dantzig in Equipment Servicing (the user's Q2 answer: Dantzig with approximate per-wheel friction, no lander optimisation).",
+   "notes": [
+    "Measured on an otherwise idle machine: load 1.6-5.5, of which the server under test adds about 1.3 (it runs 1.3 cores); run spread 1-3 %.",
+    "By the spec's CPU-time method the prototype with PGS reaches 1.29x real time in Delivery (Dantzig 1.61x), 4.8x on the proving ground, 3.7x in Astrobiology and 3.4x in Autonomy (3DEP 2049^2; G1 adds 3 % for the lidar), but only 0.86x in Equipment Servicing (Dantzig 0.97x, today's DiffDrive rover 1.07x): the lander's 101 joints dominate (spec 10.1).",
+    "CPU time counts the server's helper threads (gz-transport, /clock published every step) beside the physics step: the wall-clock step is 13-29 % shorter on this machine. By wall clock Equipment Servicing reaches 1.35x with Dantzig and 1.16x with PGS, Delivery 1.68x with PGS; G6 ran Equipment Servicing at RTF 0.985 of a requested 1.0 while rendering four cameras. simulate.Cost now reports both (wall_real_time_factor); sim-perf judges the wall clock.",
+    "Drivetrain cost (prototype, joint loads, against DiffDrive, both Dantzig): +4.7 % to +10.8 % in every world, inside the +25 % budget. PGS over Dantzig with the prototype: +25 % in Delivery, +12 % in Equipment Servicing, 0-4 % elsewhere.",
+    "Earlier runs of this gate at load 6-14 (earlier_runs_at_load_6_to_14) read up to 60 % higher and are superseded."
+   ]
+  },
+  "G6": {
+   "question": "Station frame rate: full-config render assets in Delivery and Equipment Servicing; eye and fly watched, RGB-D subscribed, RTF 1",
+   "rule": ">= 15 fps; LensFlare logs 'Render pass added' and disconnects",
+   "fallback": "Lower shrub/pebble budgets; fly camera 960 x 540; lens flare off",
+   "run": "2026-10-07, on an otherwise idle machine (load 1.6-5.5 including the server under test)",
+   "script": "run_g6.sh (g6.py <world> rgbd1280|fallback|chase_flare|rgbd1280_dd 10)",
+   "measured": {
+    "urc_delivery_chase_flare": {
+     "fps": {
+      "/eye_camera/image": 17.7,
+      "/fly_camera/image": 17.6,
+      "/model/rover/camera/image": 13.4,
+      "/model/rover/camera/depth_image": 13.4,
+      "/chase_camera/image": 17.6
+     },
+     "real_time_factor": 0.985,
+     "first_frame_s": 4.3,
+     "lens_flare_pass_added": true,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720468
+     }
+    },
+    "urc_delivery_fallback": {
+     "fps": {
+      "/eye_camera/image": 18.3,
+      "/fly_camera/image": 18.3,
+      "/model/rover/camera/image": 13.8,
+      "/model/rover/camera/depth_image": 13.8
+     },
+     "real_time_factor": 0.988,
+     "first_frame_s": 3.7,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 736640,
+      "pebble_tris": 0,
+      "far_tris": 720468
+     }
+    },
+    "urc_delivery_rgbd1280": {
+     "fps": {
+      "/eye_camera/image": 18.49,
+      "/fly_camera/image": 18.49,
+      "/model/rover/camera/image": 14.1,
+      "/model/rover/camera/depth_image": 14.1
+     },
+     "real_time_factor": 0.986,
+     "first_frame_s": 4.6,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": -9,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720468
+     }
+    },
+    "urc_delivery_rgbd1280_dd": {
+     "fps": {
+      "/eye_camera/image": 18.5,
+      "/fly_camera/image": 18.5,
+      "/model/rover/camera/image": 14.1,
+      "/model/rover/camera/depth_image": 14.1
+     },
+     "real_time_factor": 0.984,
+     "first_frame_s": 4.1,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720468
+     }
+    },
+    "urc_equipment_servicing_chase_flare": {
+     "fps": {
+      "/eye_camera/image": 17.0,
+      "/fly_camera/image": 17.0,
+      "/model/rover/camera/image": 12.9,
+      "/model/rover/camera/depth_image": 12.9,
+      "/chase_camera/image": 17.0
+     },
+     "real_time_factor": 0.98,
+     "first_frame_s": 3.9,
+     "lens_flare_pass_added": true,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720604
+     }
+    },
+    "urc_equipment_servicing_fallback": {
+     "fps": {
+      "/eye_camera/image": 18.4,
+      "/fly_camera/image": 18.5,
+      "/model/rover/camera/image": 14.0,
+      "/model/rover/camera/depth_image": 14.0
+     },
+     "real_time_factor": 0.99,
+     "first_frame_s": 3.5,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 736640,
+      "pebble_tris": 0,
+      "far_tris": 720604
+     }
+    },
+    "urc_equipment_servicing_rgbd1280": {
+     "fps": {
+      "/eye_camera/image": 18.5,
+      "/fly_camera/image": 18.5,
+      "/model/rover/camera/image": 14.0,
+      "/model/rover/camera/depth_image": 14.0
+     },
+     "real_time_factor": 0.985,
+     "first_frame_s": 3.9,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720604
+     }
+    },
+    "urc_equipment_servicing_rgbd1280_dd": {
+     "fps": {
+      "/eye_camera/image": 18.4,
+      "/fly_camera/image": 18.5,
+      "/model/rover/camera/image": 14.0,
+      "/model/rover/camera/depth_image": 14.0
+     },
+     "real_time_factor": 0.984,
+     "first_frame_s": 4.1,
+     "lens_flare_pass_added": false,
+     "lens_flare_sensor_missing": 0,
+     "exit_code": 0,
+     "errors": [],
+     "rgbd": [
+      1280,
+      720
+     ],
+     "counts": {
+      "shrub_tris": 1473280,
+      "pebble_tris": 800000,
+      "far_tris": 720604
+     }
+    }
+   },
+   "watched_fps_full_config": {
+    "urc_delivery_rgbd1280": 18.49,
+    "urc_equipment_servicing_rgbd1280": 18.5
+   },
+   "earlier_runs_at_load_6_to_14": {
+    "urc_delivery_chase": {
+     "fps": {
+      "/eye_camera/image": 14.2,
+      "/fly_camera/image": 14.2,
+      "/model/rover/camera/image": 10.8,
+      "/model/rover/camera/depth_image": 10.8,
+      "/chase_camera/image": 14.2
+     },
+     "real_time_factor": 0.925
+    },
+    "urc_delivery_chase_flare": {
+     "fps": {
+      "/eye_camera/image": 13.19,
+      "/fly_camera/image": 13.19,
+      "/model/rover/camera/image": 10.1,
+      "/model/rover/camera/depth_image": 10.0,
+      "/chase_camera/image": 13.19
+     },
+     "real_time_factor": 0.919
+    },
+    "urc_delivery_rgbd1280": {
+     "fps": {
+      "/eye_camera/image": 14.99,
+      "/fly_camera/image": 14.99,
+      "/model/rover/camera/image": 11.29,
+      "/model/rover/camera/depth_image": 11.29
+     },
+     "real_time_factor": 0.864
+    },
+    "urc_delivery_rgbd640": {
+     "fps": {
+      "/eye_camera/image": 13.39,
+      "/fly_camera/image": 13.39,
+      "/model/rover/camera/image": 10.1,
+      "/model/rover/camera/depth_image": 10.1
+     },
+     "real_time_factor": 0.687
+    },
+    "urc_equipment_servicing_chase": {
+     "fps": {
+      "/eye_camera/image": 1.7,
+      "/fly_camera/image": 1.7,
+      "/model/rover/camera/image": 1.2,
+      "/model/rover/camera/depth_image": 1.2,
+      "/chase_camera/image": 1.8
+     },
+     "real_time_factor": 0.739
+    },
+    "urc_equipment_servicing_chase_flare": {
+     "fps": {
+      "/eye_camera/image": 11.2,
+      "/fly_camera/image": 11.2,
+      "/model/rover/camera/image": 8.6,
+      "/model/rover/camera/depth_image": 8.5,
+      "/chase_camera/image": 11.2
+     },
+     "real_time_factor": 0.52
+    },
+    "urc_equipment_servicing_rgbd1280": {
+     "fps": {
+      "/eye_camera/image": 12.9,
+      "/fly_camera/image": 12.8,
+      "/model/rover/camera/image": 9.8,
+      "/model/rover/camera/depth_image": 9.8
+     },
+     "real_time_factor": 0.671
+    },
+    "urc_equipment_servicing_rgbd640": {
+     "fps": {
+      "/eye_camera/image": 12.4,
+      "/fly_camera/image": 12.4,
+      "/model/rover/camera/image": 9.4,
+      "/model/rover/camera/depth_image": 9.3
+     },
+     "real_time_factor": 0.608
+    }
+   },
+   "verdict": "pass",
+   "decision": "Full config as planned: fly camera 1280 x 720, rover RGB-D 1280 x 720, shrub and pebble budgets of the spec, lens flare allowed. Re-run this gate in WS-V with the real assets.",
+   "notes": [
+    "Eye and fly views 18.5 fps in both worlds (RTF 0.985-0.99 of a requested 1.0), the rover's RGB-D subscribed at 14 Hz of its 15 Hz; with the chase camera and lens flare as well 17.0-17.7 fps.",
+    "The frame rate is set by rendering, not physics: the same scene with today's DiffDrive rover gives the same 18.4-18.5 fps, and the fallback (half the shrubs, no pebbles, fly 960 x 540) 18.3-18.5 fps.",
+    "LensFlare logged 'Render pass added' in both worlds; its PostRender connection is reset right after (gz-sim 8 LensFlare.cc), so it costs nothing per frame afterwards. Its first message prints the camera name before it is set, hence 'named []'. The earlier run that missed the message lost the server's buffered output (killed after 15 s); the server now writes to a pseudo-terminal.",
+    "Stand-ins, not the real config: 1.47 M shrub and 0.8 M pebble triangles (merged GLB chunks), a 0.72 M-triangle far-field grid, a 4096^2 colour map as terrain layer 0, 80 km far clip. Not included: the patched terrain shader, sky and haze (spec 10.2: +0.7 to +4.7 ms per 1280 x 720 frame), real textures, dust. 18.5 fps leaves 3.5 fps of margin above the 15 fps floor."
+   ]
+  },
+  "G7": {
+   "question": "Delivery and Astrobiology at 2049^2 (4x today's samples)",
+   "rule": "Generation <= 2 min each; RTF loss <= 10 %; mission grades and easy-route invariants unchanged",
+   "fallback": "1025^2 + relief transfer at 1 m",
+   "run": "2026-10-07, on an otherwise idle machine (load 1.6-5.5 including the server under test)",
+   "script": "make_tree.py g7_2049 delivery astrobiology --patch (2049 samples); g7_invariants.py; g7.py 5",
+   "measured": {
+    "generation_s": {
+     "urc_delivery": 6.6,
+     "urc_astrobiology": 4.5
+    },
+    "rtf_loss": {
+     "urc_delivery": 0.002,
+     "urc_astrobiology": -0.007
+    },
+    "cost": {
+     "urc_delivery/1025": {
+      "cpu_ms_per_step": 0.5601,
+      "real_time_factor_cpu": 1.785,
+      "cpu_ms_per_step_runs": [
+       0.5709,
+       0.5554,
+       0.5469,
+       0.5601,
+       0.5683
+      ],
+      "startup_wall_s": 2.39,
+      "peak_rss_mb": 435.1,
+      "load_avg_1min_median": 4.24
+     },
+     "urc_delivery/2049": {
+      "cpu_ms_per_step": 0.5611,
+      "real_time_factor_cpu": 1.782,
+      "cpu_ms_per_step_runs": [
+       0.5486,
+       0.5621,
+       0.5611,
+       0.5685,
+       0.5557
+      ],
+      "startup_wall_s": 2.5,
+      "peak_rss_mb": 493.4,
+      "load_avg_1min_median": 3.83
+     },
+     "urc_astrobiology/1025": {
+      "cpu_ms_per_step": 0.2557,
+      "real_time_factor_cpu": 3.911,
+      "cpu_ms_per_step_runs": [
+       0.2557,
+       0.2585,
+       0.2538,
+       0.2591,
+       0.2535
+      ],
+      "startup_wall_s": 2.35,
+      "peak_rss_mb": 367.3,
+      "load_avg_1min_median": 3.77
+     },
+     "urc_astrobiology/2049": {
+      "cpu_ms_per_step": 0.2539,
+      "real_time_factor_cpu": 3.939,
+      "cpu_ms_per_step_runs": [
+       0.2537,
+       0.2535,
+       0.2539,
+       0.2568,
+       0.265
+      ],
+      "startup_wall_s": 2.42,
+      "peak_rss_mb": 425.3,
+      "load_avg_1min_median": 3.65
+     }
+    },
+    "invariants": {
+     "ran": 55,
+     "failures": [],
+     "errors": [],
+     "which": "test_urc_missions and the no-physics classes of test_urc_terrain on the 2049^2 tree"
+    },
+    "largest_sheet_changes": {
+     "delivery": {
+      "numbers": {
+       "z": [
+        0.012,
+        "/terrain_zones/wash_sand_11/center/z: 3.582 -> 3.57"
+       ],
+       "alt": [
+        0.01,
+        "/judges_only/boulder_field/alt: 1372.67 -> 1372.68"
+       ],
+       "lat": [
+        0.0,
+        "/origin/lat: 38.407512522569526 -> 38.40751252257114"
+       ],
+       "lon": [
+        0.0,
+        "/origin/lon: -110.78857800285179 -> -110.78857800284953"
+       ],
+       "samples": [
+        1024,
+        "/terrain/samples: 1025 -> 2049"
+       ],
+       "z_max": [
+        0.0072,
+        "/terrain/z_max: 28.0189 -> 28.0261"
+       ]
+      }
+     },
+     "astrobiology": {
+      "numbers": {
+       "z": [
+        0.008,
+        "/terrain_zones/wash_sand_1/center/z: 1.218 -> 1.226"
+       ],
+       "alt": [
+        0.01,
+        "/points/biocrust_3/alt: 1403.41 -> 1403.4"
+       ],
+       "samples": [
+        1024,
+        "/terrain/samples: 1025 -> 2049"
+       ],
+       "z_max": [
+        0.014,
+        "/terrain/z_max: 29.17 -> 29.184"
+       ]
+      }
+     }
+    }
+   },
+   "verdict": "pass",
+   "decision": "Delivery and Astrobiology at 2049^2.",
+   "notes": [
+    "Generation 6.6 s (Delivery) and 4.5 s (Astrobiology), far under the 2 min limit.",
+    "No measurable RTF loss: CPU time per step +0.2 % (Delivery) and -0.7 % (Astrobiology), run spread about 2 %, load 2.4-4.9. (An earlier pair of runs at load 8-12 read -17 % and -2 %: noise.)",
+    "The mission and terrain tests without physics (55) pass on the 2049^2 tree; the largest sheet changes are 1.2 cm in a zone centre height, 1.4 cm in z_max and 1 cm in an altitude."
+   ]
+  },
+  "G8": {
+   "question": "Drivetrain cost: load_source contact vs joint, and contact customisation on vs off (prototype plugin)",
+   "rule": "Joint wheel loads within 10 % of contact loads on a 15 deg slope; pick the cheaper source",
+   "fallback": "Keep contact; accept the cost against the floor",
+   "run": "2026-10-06, by the first WS-0 run, at load 5-14 (ratios and functional checks: valid on a loaded machine)",
+   "script": "g8_loads.py up|across|drive dantzig|pgs 1; g8_cost.py 5; g8_ab.py 10",
+   "measured": {
+    "loads_15deg": {
+     "up/dantzig": {
+      "ratio_joint_over_contact": {
+       "fl": 0.9943,
+       "rl": 0.9942,
+       "fr": 0.9943,
+       "rr": 0.9942
+      },
+      "contact_N": {
+       "fl": 89.36,
+       "rl": 130.23,
+       "fr": 89.03,
+       "rr": 129.82
+      },
+      "sum_contact_N": 438.44,
+      "sum_joint_N": 435.92,
+      "weight_normal_N": 436.26
+     },
+     "up/pgs": {
+      "ratio_joint_over_contact": {
+       "fl": 0.9914,
+       "rl": 0.9913,
+       "fr": 0.9917,
+       "rr": 0.9916
+      },
+      "contact_N": {
+       "fl": 99.2,
+       "rl": 139.93,
+       "fr": 80.41,
+       "rr": 120.11
+      },
+      "sum_contact_N": 439.65,
+      "sum_joint_N": 435.92,
+      "weight_normal_N": 436.26
+     },
+     "across/dantzig": {
+      "ratio_joint_over_contact": {
+       "fl": 1.0002,
+       "rl": 1.0002,
+       "fr": 1.0003,
+       "rr": 1.0003
+      },
+      "contact_N": {
+       "fl": 132.84,
+       "rl": 132.68,
+       "fr": 85.23,
+       "rr": 85.07
+      },
+      "sum_contact_N": 435.82,
+      "sum_joint_N": 435.91,
+      "weight_normal_N": 436.26
+     },
+     "across/pgs": {
+      "ratio_joint_over_contact": {
+       "fl": 1.0002,
+       "rl": 1.0002,
+       "fr": 1.0003,
+       "rr": 1.0003
+      },
+      "contact_N": {
+       "fl": 144.75,
+       "rl": 144.45,
+       "fr": 73.18,
+       "rr": 73.44
+      },
+      "sum_contact_N": 435.82,
+      "sum_joint_N": 435.92,
+      "weight_normal_N": 436.26
+     },
+     "drive/dantzig": {
+      "ratio_joint_over_contact": {
+       "fl": 1.0262,
+       "rl": 1.0261,
+       "fr": 1.0262,
+       "rr": 1.0261
+      },
+      "contact_N": {
+       "fl": 82.15,
+       "rl": 129.93,
+       "fr": 82.44,
+       "rr": 130.31
+      },
+      "sum_contact_N": 424.83,
+      "sum_joint_N": 435.92,
+      "weight_normal_N": 436.26
+     },
+     "drive/pgs": {
+      "ratio_joint_over_contact": {
+       "fl": 1.0262,
+       "rl": 1.0261,
+       "fr": 1.0262,
+       "rr": 1.0261
+      },
+      "contact_N": {
+       "fl": 86.88,
+       "rl": 136.44,
+       "fr": 77.71,
+       "rr": 123.79
+      },
+      "sum_contact_N": 424.82,
+      "sum_joint_N": 435.91,
+      "weight_normal_N": 436.26
+     }
+    },
+    "worst_joint_vs_contact": 0.0262,
+    "cost_vs_diffdrive_delivery": {
+     "diffdrive": {
+      "cpu_ms_per_step": 0.8176,
+      "real_time_factor_cpu": 1.223,
+      "cpu_ms_per_step_runs": [
+       0.7273,
+       0.9566,
+       0.7303,
+       0.8176,
+       0.8245
+      ],
+      "startup_wall_s": 2.58,
+      "peak_rss_mb": 434.9,
+      "load_avg_1min_median": 7.24,
+      "vs_diffdrive": 0.0
+     },
+     "contact_custom": {
+      "cpu_ms_per_step": 0.8745,
+      "real_time_factor_cpu": 1.143,
+      "cpu_ms_per_step_runs": [
+       0.8073,
+       0.8996,
+       0.8656,
+       0.8913,
+       0.8745
+      ],
+      "startup_wall_s": 2.49,
+      "peak_rss_mb": 452.1,
+      "load_avg_1min_median": 6.95,
+      "vs_diffdrive": 0.07
+     },
+     "contact_nocustom": {
+      "cpu_ms_per_step": 0.8103,
+      "real_time_factor_cpu": 1.234,
+      "cpu_ms_per_step_runs": [
+       0.7684,
+       0.8485,
+       0.8103,
+       0.7873,
+       0.916
+      ],
+      "startup_wall_s": 2.48,
+      "peak_rss_mb": 457.5,
+      "load_avg_1min_median": 7.29,
+      "vs_diffdrive": -0.009
+     },
+     "joint_custom": {
+      "cpu_ms_per_step": 0.8079,
+      "real_time_factor_cpu": 1.238,
+      "cpu_ms_per_step_runs": [
+       0.8195,
+       0.7877,
+       0.8079,
+       1.0672,
+       0.7838
+      ],
+      "startup_wall_s": 2.53,
+      "peak_rss_mb": 451.5,
+      "load_avg_1min_median": 7.16,
+      "vs_diffdrive": -0.012
+     },
+     "joint_nocustom": {
+      "cpu_ms_per_step": 0.7634,
+      "real_time_factor_cpu": 1.31,
+      "cpu_ms_per_step_runs": [
+       0.8991,
+       0.7634,
+       0.7569,
+       0.8048,
+       0.7092
+      ],
+      "startup_wall_s": 2.48,
+      "peak_rss_mb": 458.0,
+      "load_avg_1min_median": 7.39,
+      "vs_diffdrive": -0.066
+     }
+    },
+    "joint_vs_contact_pairs": {
+     "median": 0.933,
+     "pairs": [
+      0.953,
+      0.781,
+      0.964,
+      0.942,
+      1.046,
+      0.924,
+      1.003,
+      0.904,
+      0.834,
+      0.735
+     ],
+     "joint_cheaper_in": 8,
+     "of": 10
+    }
+   },
+   "verdict": "pass",
+   "decision": "Wheel loads from JointTransmittedWrench (load_source = joint), contact customisation on; no ContactSensorData on the tyres.",
+   "notes": [
+    "Joint loads are within 0.3-2.6 % of contact loads on the 15 deg slope (parked uphill and across, driving uphill at 0.2 m/s; Dantzig and PGS). Their sum equals the weight's normal component to 0.1 %; the contact sum is 2.6 % low while driving.",
+    "Cost in Delivery (Dantzig) against DiffDrive: contact + customisation +7.0 %, contact without customisation -0.9 %, joint + customisation -1.2 %, joint without customisation -6.6 % (load 6-10, run spread about 10 %). Joint is cheaper than contact in 8 of 10 interleaved pairs (median ratio 0.933): the ContactSensorData components, not the customisation callback, carry most of the prototype's extra cost.",
+    "The joint load is a static balance of the wheel (it ignores the wheel's own acceleration). The contact point for the ground lookup comes from the customisation callback, which sees every contact, so the drivetrain needs no contact sensor data for it."
+   ]
+  }
+ },
+ "checks": {
+  "terrain_heightmap_hh": {
+   "what": "sim/plugins/terrain_heightmap.hh against urc.sheet's terrain (check_heightmap.py, HmCheck)",
+   "measured": {
+    "urc_autonomy": {
+     "header": "2049 2048 2048 85.8873291 0 0 0",
+     "points": 2005,
+     "outside_returns_minus_inf": 1,
+     "max_err_visual_m": 3.097047864741853e-05,
+     "max_err_collision_m": 3.097047864741853e-05,
+     "nearest_matches_python": true
+    },
+    "urc_delivery": {
+     "header": "1025 1024 1024 28.0188508 0 0 0",
+     "points": 2005,
+     "outside_returns_minus_inf": 1,
+     "max_err_visual_m": 4.78873174891703e-05,
+     "max_err_collision_m": 4.78873174891703e-05,
+     "nearest_matches_python": true
+    },
+    "proving_ground": {
+     "header": "2049 256 256 8.06272221 0 0 0",
+     "points": 2005,
+     "outside_returns_minus_inf": 1,
+     "max_err_visual_m": 2.2226855552531788e-05,
+     "max_err_collision_m": 2.2226855552531788e-05,
+     "nearest_matches_python": true
+    }
+   }
+  },
+  "byte_identical": {
+   "what": "WS-0's refactors leave every generated output unchanged: sim/gen_model.py and sim/gen_worlds.py run in `git archive` trees of the baseline (232d9c2) and of WS-0's branch, sim/data shared",
+   "measured": {
+    "base": "232d9c2",
+    "head": "435f274",
+    "result": "identical",
+    "files_compared": 1247,
+    "models_mb": 165,
+    "differences": 0
+   }
+  }
+ }
+}

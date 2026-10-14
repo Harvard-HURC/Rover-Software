@@ -1,0 +1,16 @@
+{
+ "orthographic_sdf": {
+  "what": "Static cameras looking straight down at the ES lander from 40 m and 80 m (prototype/exp1_ortho.py). Mean pixel value of each frame and the warning sdformat prints.",
+  "<camera><projection_type>orthographic</projection_type>": "sdformat 14: 'XML Element[projection_type], child of element[camera], not defined in SDF. Copying[projection_type] as children of [camera]'; frames identical to the plain perspective camera (mean 143.1 at 40 m, 143.8 at 80 m for both); lander halves in size from 40 to 80 m",
+  "<camera><lens><type>orthographic</type></lens>": "no warning (it is the wide-angle lens mapping), ignored by a plain camera sensor: frames identical to perspective (143.1 / 143.8)",
+  "plugin: rendering::Camera::SetProjectionType(CPT_ORTHOGRAPHIC) + SetProjectionMatrix(ortho 60 m window) from a gz-sim system on the rendering thread": "works: the lander is the same size at 40, 80 and 400 m; dark-pixel count of the lander 698 at 40 m vs 699 at 80 m (perspective 2102 -> 468); projection persists across frames once set",
+  "ortho shadows": "no cast shadows in the orthographic camera (perspective shows the lander and tank shadows): ortho_vs_perspective_shadows.jpg"
+ },
+ "telephoto_shadows": {
+  "what": "Perspective camera straight down over the lander, footprint 60 m, near/far +-100 m (prototype/exp2_shadow.py). Darkest 1 % of the crop around the lander and its shadow, ground median ~142.",
+  "camera_height_m_vs_p1": {"40": 61, "100": 61, "200": 61, "400": 61, "590": 81, "1500": 131},
+  "reading": "cast shadows render up to at least 400 m camera distance and are gone by 590 m (consistent with a ~500 m shadow far distance)",
+  "horizontal_fov_minimum": "SDF rejects <horizontal_fov> below 0.1 rad: 'The value [0.0749649] is less than the minimum allowed value of [0.1]' and the world does not load"
+ },
+ "paused_world": "a camera sensor sends 0 frames in 3 s while the world is paused, 57 frames in 3 s running (exp6_checks.py pause)"
+}

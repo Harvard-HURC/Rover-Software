@@ -1,0 +1,164 @@
+[
+ {
+  "tag": "T",
+  "frames": 1999,
+  "run_s": 24.1,
+  "fps": 82.9,
+  "ms_per_frame": 12.06,
+  "peak_MB": 759,
+  "errors": []
+ },
+ {
+  "tag": "T_ortho",
+  "frames": 1999,
+  "run_s": 19.52,
+  "fps": 102.4,
+  "ms_per_frame": 9.76,
+  "peak_MB": 1104,
+  "errors": []
+ },
+ {
+  "tag": "T_od1",
+  "frames": 1999,
+  "run_s": 21.72,
+  "fps": 92.0,
+  "ms_per_frame": 10.87,
+  "peak_MB": 1187,
+  "errors": []
+ },
+ {
+  "tag": "T_od3",
+  "frames": 1999,
+  "run_s": 22.49,
+  "fps": 88.9,
+  "ms_per_frame": 11.25,
+  "peak_MB": 1072,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched",
+  "frames": 1999,
+  "run_s": 20.68,
+  "fps": 96.7,
+  "ms_per_frame": 10.35,
+  "peak_MB": 1184,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_peb",
+  "frames": 1999,
+  "run_s": 18.65,
+  "fps": 107.2,
+  "ms_per_frame": 9.33,
+  "peak_MB": 1586,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_peb_onb",
+  "frames": 1999,
+  "run_s": 17.02,
+  "fps": 117.5,
+  "ms_per_frame": 8.51,
+  "peak_MB": 1579,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_onb",
+  "frames": 1999,
+  "run_s": 15.58,
+  "fps": 128.3,
+  "ms_per_frame": 7.79,
+  "peak_MB": 1183,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_dust",
+  "frames": 1999,
+  "run_s": 19.36,
+  "fps": 103.3,
+  "ms_per_frame": 9.68,
+  "peak_MB": 1070,
+  "errors": []
+ },
+ {
+  "tag": "T",
+  "frames": 1999,
+  "run_s": 19.38,
+  "fps": 103.1,
+  "ms_per_frame": 9.69,
+  "peak_MB": 768,
+  "errors": []
+ },
+ {
+  "tag": "T_ortho",
+  "frames": 1999,
+  "run_s": 17.55,
+  "fps": 113.9,
+  "ms_per_frame": 8.78,
+  "peak_MB": 1101,
+  "errors": []
+ },
+ {
+  "tag": "T_od1",
+  "frames": 1999,
+  "run_s": 17.95,
+  "fps": 111.4,
+  "ms_per_frame": 8.98,
+  "peak_MB": 1181,
+  "errors": []
+ },
+ {
+  "tag": "T_od3",
+  "frames": 1999,
+  "run_s": 21.97,
+  "fps": 91.0,
+  "ms_per_frame": 10.99,
+  "peak_MB": 1078,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched",
+  "frames": 1999,
+  "run_s": 17.62,
+  "fps": 113.5,
+  "ms_per_frame": 8.81,
+  "peak_MB": 1187,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_peb",
+  "frames": 1999,
+  "run_s": 17.32,
+  "fps": 115.4,
+  "ms_per_frame": 8.66,
+  "peak_MB": 1567,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_peb_onb",
+  "frames": 1999,
+  "run_s": 23.38,
+  "fps": 85.5,
+  "ms_per_frame": 11.7,
+  "peak_MB": 1590,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_onb",
+  "frames": 1999,
+  "run_s": 15.63,
+  "fps": 127.9,
+  "ms_per_frame": 7.82,
+  "peak_MB": 1182,
+  "errors": []
+ },
+ {
+  "tag": "T_od1_patched_dust",
+  "frames": 1999,
+  "run_s": 15.66,
+  "fps": 127.7,
+  "ms_per_frame": 7.83,
+  "peak_MB": 1082,
+  "errors": []
+ }
+]

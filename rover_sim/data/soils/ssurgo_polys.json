@@ -1,0 +1,8 @@
+{
+  "what": "NRCS SSURGO map-unit polygons round MDRS and the URC route area: the soil map urc.landscape.Soils paints (design spec 5.3). A copy of sim/data/research/ssurgo_polys.geojson.",
+  "source": "USDA NRCS SSURGO, survey area UT631 'Henry Mountains Area, Utah, Parts of Garfield, Kane, and Wayne Counties', via Soil Data Access (https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest)",
+  "license": "public domain (USDA NRCS)",
+  "fetched": "2026-10-06",
+  "extent": "10 map-unit polygons clipped to lon -110.810..-110.764, lat 38.390..38.432 (WGS84); a 1:24,000 survey, so the boundaries are coarse",
+  "properties": "mukey, musym, muname; components, horizons and area fractions are in sim/data/research/ssurgo_soils.json"
+}

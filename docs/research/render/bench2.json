@@ -1,0 +1,202 @@
+[
+ {
+  "tag": "stock",
+  "frames": 250,
+  "run_cam": 5.99,
+  "run_nocam": 4.73,
+  "ms_per_frame": 5.04,
+  "peak_MB": 1154,
+  "load_s": 1.17,
+  "errors": []
+ },
+ {
+  "tag": "stock_patched",
+  "frames": 250,
+  "run_cam": 5.51,
+  "run_nocam": 5.31,
+  "ms_per_frame": 0.8,
+  "peak_MB": 1160,
+  "load_s": 1.12,
+  "errors": []
+ },
+ {
+  "tag": "ortho_only",
+  "frames": 250,
+  "run_cam": 5.5,
+  "run_nocam": 4.92,
+  "ms_per_frame": 2.32,
+  "peak_MB": 1446,
+  "load_s": 1.04,
+  "errors": []
+ },
+ {
+  "tag": "od1",
+  "frames": 250,
+  "run_cam": 6.75,
+  "run_nocam": 5.59,
+  "ms_per_frame": 4.64,
+  "peak_MB": 1470,
+  "load_s": 1.18,
+  "errors": []
+ },
+ {
+  "tag": "od3",
+  "frames": 250,
+  "run_cam": 6.17,
+  "run_nocam": 5.23,
+  "ms_per_frame": 3.76,
+  "peak_MB": 1470,
+  "load_s": 1.27,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched",
+  "frames": 250,
+  "run_cam": 6.25,
+  "run_nocam": 6.27,
+  "ms_per_frame": -0.08,
+  "peak_MB": 1459,
+  "load_s": 1.05,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_peb",
+  "frames": 250,
+  "run_cam": 6.91,
+  "run_nocam": 5.74,
+  "ms_per_frame": 4.68,
+  "peak_MB": 1750,
+  "load_s": 1.08,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_dust",
+  "frames": 250,
+  "run_cam": 6.19,
+  "run_nocam": 4.9,
+  "ms_per_frame": 5.16,
+  "peak_MB": 1462,
+  "load_s": 1.06,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_onb",
+  "frames": 250,
+  "run_cam": 6.36,
+  "run_nocam": 5.37,
+  "ms_per_frame": 3.96,
+  "peak_MB": 1460,
+  "load_s": 1.16,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_peb_onb",
+  "frames": 250,
+  "run_cam": 6.43,
+  "run_nocam": 5.71,
+  "ms_per_frame": 2.88,
+  "peak_MB": 1763,
+  "load_s": 1.24,
+  "errors": []
+ },
+ {
+  "tag": "stock",
+  "frames": 250,
+  "run_cam": 5.65,
+  "run_nocam": 4.64,
+  "ms_per_frame": 4.04,
+  "peak_MB": 1154,
+  "load_s": 1.16,
+  "errors": []
+ },
+ {
+  "tag": "stock_patched",
+  "frames": 250,
+  "run_cam": 4.99,
+  "run_nocam": 4.92,
+  "ms_per_frame": 0.28,
+  "peak_MB": 1156,
+  "load_s": 1.04,
+  "errors": []
+ },
+ {
+  "tag": "ortho_only",
+  "frames": 250,
+  "run_cam": 5.04,
+  "run_nocam": 4.92,
+  "ms_per_frame": 0.48,
+  "peak_MB": 1447,
+  "load_s": 1.13,
+  "errors": []
+ },
+ {
+  "tag": "od1",
+  "frames": 250,
+  "run_cam": 5.48,
+  "run_nocam": 5.14,
+  "ms_per_frame": 1.36,
+  "peak_MB": 1471,
+  "load_s": 1.02,
+  "errors": []
+ },
+ {
+  "tag": "od3",
+  "frames": 250,
+  "run_cam": 7.32,
+  "run_nocam": 6.22,
+  "ms_per_frame": 4.4,
+  "peak_MB": 1469,
+  "load_s": 1.1,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched",
+  "frames": 250,
+  "run_cam": 7.35,
+  "run_nocam": 6.44,
+  "ms_per_frame": 3.64,
+  "peak_MB": 1476,
+  "load_s": 1.17,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_peb",
+  "frames": 250,
+  "run_cam": 6.74,
+  "run_nocam": 5.77,
+  "ms_per_frame": 3.88,
+  "peak_MB": 1762,
+  "load_s": 1.19,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_dust",
+  "frames": 250,
+  "run_cam": 6.42,
+  "run_nocam": 4.97,
+  "ms_per_frame": 5.8,
+  "peak_MB": 1475,
+  "load_s": 1.04,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_onb",
+  "frames": 250,
+  "run_cam": 6.04,
+  "run_nocam": 5.09,
+  "ms_per_frame": 3.8,
+  "peak_MB": 1472,
+  "load_s": 1.21,
+  "errors": []
+ },
+ {
+  "tag": "od1_patched_peb_onb",
+  "frames": 250,
+  "run_cam": 5.94,
+  "run_nocam": 5.1,
+  "ms_per_frame": 3.36,
+  "peak_MB": 1773,
+  "load_s": 1.03,
+  "errors": []
+ }
+]

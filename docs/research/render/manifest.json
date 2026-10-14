@@ -1,0 +1,72 @@
+{
+ "what": "Visual-realism prototypes for the URC Autonomy world (gz-sim 8.10, gz-rendering 8.2.2, Ogre-Next 2.3.3 Metal, Apple M4 16 GB). Renders are headless camera-sensor frames via TestFixture; BEFORE = stock sim/worlds/urc_autonomy.sdf (snapshot 2026-10-06 18:10), AFTER = all prototypes combined. Same camera poses in both.",
+ "views": {
+  "chase": "driver-station chase pose: 5 m behind rover, pitch 0.3, 960x540 hfov 1.2",
+  "onboard": "rover mast camera pose 0.85 m, 640x480 hfov 1.5",
+  "aerial": "140 m up, 166 m south of rover, pitch 0.5",
+  "ground": "1.8 m up looking down 1.0 rad (texture close-up)",
+  "topdown": "700 m straight down",
+  "mesa": "1.6 m eye height facing the Post-1 butte",
+  "slope_close": "1.2 m on the butte foot slope",
+  "badlands": "40 m up over the Morrison banded hills (SW)",
+  "look_S": "horizon south (Henry Mountains)",
+  "look_W": "horizon west (Factory Butte, C2 station box in view)",
+  "high": "bird's-eye 900 m up from 2.5 km south (free-fly map case)"
+ },
+ "after_config": {
+  "terrain_visual": "Terra heightmap: global albedo = NAIP 2021 0.6 m orthophoto resampled to 4096^2 over 2048 m (0.5 m/texel), shrubs inpainted, saturation x1.25 contrast x1.1 (linear); 3 detail layers: pavement2 3.3 m tile w~0.35 everywhere, silt 7.7 m w~0.15 everywhere, slab 5.1 m from h=62 m (w up to 0.47 at the top); ortho pre-compensated per texel so the result = ortho + zero-mean detail (prototype/terra_mix.py). First texture is passed as detail layer 0 with a flat 16x16 normal map because SDF requires <normal> and an unresolvable/empty one fails to load.",
+  "heightmap_visual": "0.5 m lidar (sim/data/dem/route_area_lidar_0p5m.tif, 4097^2) for the visual only; collision kept at 1 m 3DEP (visual vs collision differ std 5.4 cm, p99 18 cm) - prototype shortcut",
+  "gz_media_patch": "GZ_RENDERING_RESOURCE_PATH -> patched copy of share/gz/gz-rendering8 (prototype/gz_media_patch/*.diff): Terra roughness fix, procedural sky shader, distance haze beta 4e-5 /m",
+  "lighting": "sun el 49.8 az 102.4 (2027-05-28 10:30 MDT at 38.418 N -110.777), diffuse (1.0,0.95,0.87) intensity 1.4, ambient (0.32,0.34,0.40)",
+  "far_field": "visual-only GLB mesh 65 x 80 km, 120 m grid (0.72 M tris), 3DEP + NAIP overview 26-33 m/px, Earth curvature, hole under the 2 km heightmap; horizon plane removed",
+  "scatter": "shrubs: 9208 NAIP-detected shrubs within 400 m as 6-10 low-poly blobs each (1.48 M tris, cast shadows); pebbles: 20302 within 35 m (0.78 M tris, no shadows); GLB per colour"
+ },
+ "measured": {
+  "render_ms_per_frame_1280x720_median_of_3 (visual-only world, camera at 1000 Hz, includes GPU->CPU readback + publish)": {
+   "BEFORE_chase": 10.38,
+   "AFTER_terrain_only_chase": 11.12,
+   "AFTER_full_chase": 15.11,
+   "BEFORE_high": 8.36,
+   "AFTER_full_high": 13.7,
+   "AFTER_terrain+far_only": 10.48,
+   "AFTER_terrain+shrubs_only": 11.97,
+   "AFTER_terrain+pebbles_only": 9.75,
+   "noise": "run-to-run spread about +-1.5 ms"
+  },
+  "peak_memory_footprint_MB (/usr/bin/time -l, whole gz process)": {
+   "BEFORE": 769,
+   "AFTER_terrain_only": 1421,
+   "AFTER_full": 2145,
+   "ortho_4096_png_only": "+~340",
+   "lidar_4097_visual_heightmap": "+~350",
+   "far_mesh": "+~260-300",
+   "shrubs_glb": "+~390",
+   "pebbles_glb": "+~130",
+   "mesh_terrain_2m_glb_instead_of_Terra": "+~900 (2.1 M tris, no detail layers possible)",
+   "obj_instead_of_glb": "OBJ pebbles 709k tris +500 MB; OBJ shrubs 2.6M tris pushed peak to 4.0 GB"
+  },
+  "files": "visbench_final.json, visbench_parts.json, visbench1.json (texture variants, all within noise), bench2.json (with physics: rendering overlaps physics, not usable for cost)"
+ },
+ "does_not_work_here": {
+  "scene_fog": "<scene><fog> is parsed by sdformat but gz-sim 8 RenderUtil never applies it and gz-rendering 8 ogre2 has no fog API -> implemented as a shader piece instead",
+  "sky_cubemap_uri": "<sky><cubemap_uri> not read by gz-sim 8 (sky is on/off with the stock skybox.dds) -> procedural sky shader replaces skybox_fs",
+  "projector_decals_with_heightmap": "any <projector> in a world with a Terra heightmap aborts the process on Metal: Terra PixelShader fails to compile (decalsDiffuseTex undeclared); reproduced with stock media",
+  "lens_distortion": "camera <distortion> silently ignored with ogre2 (no Ogre2DistortionPass in gz-rendering 8): output identical",
+  "camera_noise": "works but attenuated: requested stddev 0.007/0.02/0.05/0.1/0.2 gave pixel std 0.02/0.23/1.5/6.0/19 DN; the rover's realistic ~2 DN needs stddev ~0.06-0.07, or add noise in the station/bridge",
+  "motion_blur_exposure_bloom_ssao": "no API in gz-rendering 8 ogre2 / SDF"
+ },
+ "works": [
+  "NAIP global albedo on Terra (first texture size == terrain size)",
+  "ortho + detail layers with per-texel compensation",
+  "Terra roughness patch (stock = mirror-like ground, sun glints, sky reflections)",
+  "procedural sky + haze via GZ_RENDERING_RESOURCE_PATH media copy",
+  "particle-emitter dust in camera sensors",
+  "lens-flare system",
+  "GLB meshes (write them Z-up: gz does not rotate glTF Y-up)",
+  "far-field ring mesh",
+  "NAIP shrub detection + inpainting + 3D shrubs",
+  "0.5 m lidar visual heightmap"
+ ],
+ "steps": "steps/*.jpg: each prototype vs its predecessor, same viewpoints",
+ "prototype": "prototype/*.py are the throwaway scripts used (paths point at a scratch dir); prototype/textures: procedural detail textures (tileable 2048^2) and previews"
+}

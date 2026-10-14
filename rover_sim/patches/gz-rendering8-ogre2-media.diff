@@ -1,0 +1,151 @@
+diff -ruN gz-rendering8/ogre2/media/Hlms/Gz/Pbs/800.GzPbsCode_piece_ps.any gz-rendering8.patched/ogre2/media/Hlms/Gz/Pbs/800.GzPbsCode_piece_ps.any
+--- gz-rendering8/ogre2/media/Hlms/Gz/Pbs/800.GzPbsCode_piece_ps.any
++++ gz-rendering8.patched/ogre2/media/Hlms/Gz/Pbs/800.GzPbsCode_piece_ps.any
+@@ -2,4 +2,5 @@
+ 
+ @piece( custom_ps_posExecution )
+   @insertpiece( custom_ps_posExecution_solid_color )
++  @insertpiece( custom_ps_posExecution_haze )
+ @end
+diff -ruN gz-rendering8/ogre2/media/Hlms/Gz/Pbs/900.RoverHaze_piece_ps.any gz-rendering8.patched/ogre2/media/Hlms/Gz/Pbs/900.RoverHaze_piece_ps.any
+--- gz-rendering8/ogre2/media/Hlms/Gz/Pbs/900.RoverHaze_piece_ps.any
++++ gz-rendering8.patched/ogre2/media/Hlms/Gz/Pbs/900.RoverHaze_piece_ps.any
+@@ -0,0 +1,9 @@
++// ROVER PATCH: distance haze (aerial perspective) for Pbs and Terra
++@piece( custom_ps_posExecution_haze )
++@property( !hlms_shadowcaster && !hlms_prepass && !hlms_render_depth_only && (hlms_normal || hlms_qtangent || detail_maps_diffuse || detail_maps_normal) )
++	{
++		float hazeF = ${HAZE_MAX} * ( 1.0 - exp( -length( inPs.pos ) * ${HAZE_BETA} ) );
++		outPs_colour0.xyz = lerp( outPs_colour0.xyz, float3( ${HAZE_RGB} ), hazeF );
++	}
++@end
++@end
+diff -ruN gz-rendering8/ogre2/media/Hlms/Terra/Any/800.PixelShader_piece_ps.any gz-rendering8.patched/ogre2/media/Hlms/Terra/Any/800.PixelShader_piece_ps.any
+--- gz-rendering8/ogre2/media/Hlms/Terra/Any/800.PixelShader_piece_ps.any
++++ gz-rendering8.patched/ogre2/media/Hlms/Terra/Any/800.PixelShader_piece_ps.any
+@@ -170,7 +170,7 @@
+ 												   material.detailOffsetScale[@n].xy,
+ 												   texIndex_detailRoughnessIdx@n ).x;
+ 		@else
+-			float roughness@n = 0;
++			float roughness@n = 1.0f; // ROVER PATCH: no roughness map = fully rough (was 0: mirror-like terrain)
+ 		@end
+ 	@end
+ 
+diff -ruN gz-rendering8/ogre2/media/materials/programs/GLSL/skybox_fs.glsl gz-rendering8.patched/ogre2/media/materials/programs/GLSL/skybox_fs.glsl
+--- gz-rendering8/ogre2/media/materials/programs/GLSL/skybox_fs.glsl
++++ gz-rendering8.patched/ogre2/media/materials/programs/GLSL/skybox_fs.glsl
+@@ -1,50 +1,21 @@
+-// The code in this file is adapted from OGRE Samples. The OGRE's license and
+-// copyright header is copied below.
+-
+-/*
+------------------------------------------------------------------------------
+-OGRE (www.ogre3d.org) is made available under the MIT License.
+-
+-Copyright (c) 2000-2013 Torus Knot Software Ltd
+-
+-Permission is hereby granted, free of charge, to any person obtaining a copy
+-of this software and associated documentation files (the "Software"), to deal
+-in the Software without restriction, including without limitation the rights
+-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-copies of the Software, and to permit persons to whom the Software is
+-furnished to do so, subject to the following conditions:
+-
+-The above copyright notice and this permission notice shall be included in
+-all copies or substantial portions of the Software.
+-
+-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+-THE SOFTWARE.
+------------------------------------------------------------------------------
+-*/
+-
+-
+ #version ogre_glsl_ver_330
+-
+ vulkan_layout( ogre_t0 ) uniform textureCube skyCubemap;
+ vulkan( layout( ogre_s0 ) uniform sampler texSampler );
+-
+-vulkan_layout( location = 0 )
+-in block
+-{
+-  vec3 cameraDir;
+-} inPs;
+-
+-vulkan_layout( location = 0 )
+-out vec3 fragColour;
+-
++vulkan_layout( location = 0 ) in block { vec3 cameraDir; } inPs;
++vulkan_layout( location = 0 ) out vec3 fragColour;
++// ROVER PATCH: procedural clear desert sky, see skybox_fs.metal (UNTESTED: written for Linux/GL, only Metal was run)
+ void main()
+ {
+-  // Cubemaps are left-handed
+-  fragColour = texture( vkSamplerCube(skyCubemap,texSampler),
+-						vec3( inPs.cameraDir.xy, -inPs.cameraDir.z ) ).xyz;
++  vec3 d = normalize( inPs.cameraDir );
++  vec3 sunDir = normalize( vec3( ${SUN_DIR} ) );
++  float mu = d.z;
++  float s = max( dot( d, sunDir ), 0.0 );
++  vec3 zenith = vec3( ${ZENITH} );
++  vec3 horizon = vec3( ${HORIZON} );
++  float h = pow( 1.0 - clamp( mu, 0.0, 1.0 ), ${HORIZON_EXPONENT} );
++  vec3 c = mix( zenith, horizon, h );
++  c += vec3( 1.0, 0.92, 0.80 ) * ( 0.10 * pow( s, 8.0 ) + 0.35 * pow( s, 200.0 ) ) * ( 0.6 + 0.4 * h );
++  c += vec3( 30.0 ) * smoothstep( 0.999985, 0.999992, s );
++  if( mu < 0.0 ) c = mix( horizon, horizon * vec3( ${GROUND_TINT} ), clamp( -mu * 8.0, 0.0, 1.0 ) );
++  fragColour = c;
+ }
+diff -ruN gz-rendering8/ogre2/media/materials/programs/Metal/skybox_fs.metal gz-rendering8.patched/ogre2/media/materials/programs/Metal/skybox_fs.metal
+--- gz-rendering8/ogre2/media/materials/programs/Metal/skybox_fs.metal
++++ gz-rendering8.patched/ogre2/media/materials/programs/Metal/skybox_fs.metal
+@@ -1,22 +1,22 @@
+-// The code in this file is adapted from OGRE Samples. The OGRE's license and
+-// copyright header is included in skybox.material.
+-// See: ogre-next/Samples/2.0/scripts/materials/Common/Metal/SkyCubemap_ps.metal
+-
+-#include <metal_stdlib>
+-using namespace metal;
+-
+-struct PS_INPUT
+-{
+-  float3 cameraDir;
+-};
+-
+-fragment float4 main_metal
+-(
+-  PS_INPUT inPs [[stage_in]],
+-  texturecube<float> skyCubemap [[texture(0)]],
+-  sampler samplerState [[sampler(0)]]
+-)
+-{
+-  //Cubemaps are left-handed
+-  return skyCubemap.sample( samplerState, float3( inPs.cameraDir.xy, -inPs.cameraDir.z ) ).xyzw;
+-}
++#include <metal_stdlib>
++using namespace metal;
++struct PS_INPUT { float3 cameraDir; };
++// ROVER PATCH: procedural clear desert sky (gz world frame: x east, y north, z up), linear output.
++fragment float4 main_metal( PS_INPUT inPs [[stage_in]], texturecube<float> skyCubemap [[texture(0)]],
++                            sampler samplerState [[sampler(0)]] )
++{
++  float3 d = normalize( inPs.cameraDir );
++  float3 sunDir = normalize( float3( ${SUN_DIR} ) );
++  float mu = d.z;
++  float s = max( dot( d, sunDir ), 0.0 );
++  float3 zenith = float3( ${ZENITH} );
++  float3 horizon = float3( ${HORIZON} );
++  float h = pow( 1.0 - clamp( mu, 0.0, 1.0 ), ${HORIZON_EXPONENT} );
++  float3 c = mix( zenith, horizon, h );
++  // Mie glow around the sun, stronger near the horizon; the sun disk (0.27 deg radius) saturates.
++  c += float3( 1.0, 0.92, 0.80 ) * ( 0.10 * pow( s, 8.0 ) + 0.35 * pow( s, 200.0 ) ) * ( 0.6 + 0.4 * h );
++  c += float3( 30.0 ) * smoothstep( 0.999985, 0.999992, s );
++  // Below the horizon: a darker haze band (normally hidden by terrain).
++  if( mu < 0.0 ) c = mix( horizon, horizon * float3( ${GROUND_TINT} ), clamp( -mu * 8.0, 0.0, 1.0 ) );
++  return float4( c, 1.0 );
++}

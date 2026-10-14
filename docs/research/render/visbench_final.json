@@ -1,0 +1,137 @@
+[
+ {
+  "tag": "BEFORE_chase",
+  "frames": 1999,
+  "run_s": 21.43,
+  "fps": 93.3,
+  "ms_per_frame": 10.72,
+  "peak_MB": 769,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_terrain_only_chase",
+  "frames": 1999,
+  "run_s": 23.01,
+  "fps": 86.9,
+  "ms_per_frame": 11.51,
+  "peak_MB": 1421,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_chase",
+  "frames": 1999,
+  "run_s": 30.21,
+  "fps": 66.2,
+  "ms_per_frame": 15.11,
+  "peak_MB": 2145,
+  "errors": []
+ },
+ {
+  "tag": "BEFORE_high",
+  "frames": 1999,
+  "run_s": 19.13,
+  "fps": 104.5,
+  "ms_per_frame": 9.57,
+  "peak_MB": 768,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_high",
+  "frames": 1999,
+  "run_s": 27.39,
+  "fps": 73.0,
+  "ms_per_frame": 13.7,
+  "peak_MB": 2132,
+  "errors": []
+ },
+ {
+  "tag": "BEFORE_chase",
+  "frames": 1999,
+  "run_s": 20.74,
+  "fps": 96.4,
+  "ms_per_frame": 10.38,
+  "peak_MB": 762,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_terrain_only_chase",
+  "frames": 1999,
+  "run_s": 22.22,
+  "fps": 90.0,
+  "ms_per_frame": 11.12,
+  "peak_MB": 1420,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_chase",
+  "frames": 1999,
+  "run_s": 32.94,
+  "fps": 60.7,
+  "ms_per_frame": 16.48,
+  "peak_MB": 2144,
+  "errors": []
+ },
+ {
+  "tag": "BEFORE_high",
+  "frames": 1999,
+  "run_s": 16.72,
+  "fps": 119.6,
+  "ms_per_frame": 8.36,
+  "peak_MB": 768,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_high",
+  "frames": 1999,
+  "run_s": 22.36,
+  "fps": 89.4,
+  "ms_per_frame": 11.19,
+  "peak_MB": 2105,
+  "errors": []
+ },
+ {
+  "tag": "BEFORE_chase",
+  "frames": 1999,
+  "run_s": 18.3,
+  "fps": 109.2,
+  "ms_per_frame": 9.15,
+  "peak_MB": 758,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_terrain_only_chase",
+  "frames": 1999,
+  "run_s": 20.74,
+  "fps": 96.4,
+  "ms_per_frame": 10.38,
+  "peak_MB": 1421,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_chase",
+  "frames": 1999,
+  "run_s": 27.85,
+  "fps": 71.8,
+  "ms_per_frame": 13.93,
+  "peak_MB": 2139,
+  "errors": []
+ },
+ {
+  "tag": "BEFORE_high",
+  "frames": 1999,
+  "run_s": 16.11,
+  "fps": 124.1,
+  "ms_per_frame": 8.06,
+  "peak_MB": 771,
+  "errors": []
+ },
+ {
+  "tag": "AFTER_full_high",
+  "frames": 1999,
+  "run_s": 30.25,
+  "fps": 66.1,
+  "ms_per_frame": 15.13,
+  "peak_MB": 2108,
+  "errors": []
+ }
+]

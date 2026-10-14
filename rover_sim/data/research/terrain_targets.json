@@ -1,0 +1,486 @@
+{
+ "what": "Roughness targets for the synthetic ground (design spec 5.4): plane-detrended RMS height [cm] in non-overlapping square windows, p25/p50/p75/p90, per ground type of the real 0.5 m lidar painted by the soil-map rules (urc.landscape.Soils), and for the whole real Autonomy square. Made by sim/tools/terrain_targets.py.",
+ "percentiles": [
+  25,
+  50,
+  75,
+  90
+ ],
+ "scales_m": [
+  4,
+  8,
+  16,
+  32
+ ],
+ "res_m": 0.5,
+ "window_share": 0.8,
+ "min_windows": 20,
+ "dems": [
+  "sim/data/dem/route_area_lidar_0p5m.tif",
+  "sim/data/dem/mdrs_area_lidar2018_0p5m.tif"
+ ],
+ "squares": {
+  "autonomy_square": {
+   "size_m": 2048.0,
+   "samples": 4097,
+   "origin": {
+    "lat": 38.419080786902285,
+    "lon": -110.77516827457822,
+    "alt": 1400.7825226943974
+   }
+  },
+  "mdrs_area_square": {
+   "size_m": 2800.0,
+   "samples": 5601,
+   "origin": {
+    "lat": 38.40316404525044,
+    "lon": -110.79000000000002,
+    "alt": 1374.471435546875
+   }
+  }
+ },
+ "paint_rules": {
+  "soil_map": "sim/data/soils/ssurgo_polys.geojson",
+  "slope_smooth_m": 2.0,
+  "gentle_deg": 8.0,
+  "steep_deg": 30.0,
+  "crest": [
+   10.0,
+   0.3
+  ],
+  "hollow": [
+   25.0,
+   -1.0
+  ],
+  "cap": [
+   15.0,
+   3.0
+  ],
+  "units": {
+   "55112": {
+    "name": "Sheppard-Leebench complex",
+    "gentle": "sand_sheet",
+    "moderate": "sand_sheet",
+    "steep": "rock",
+    "crest": "sand",
+    "hollow": null,
+    "cap": null
+   },
+   "55151": {
+    "name": "Chipeta-Badland complex",
+    "gentle": "clay_crust",
+    "moderate": "badland_slope",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": null
+   },
+   "55156": {
+    "name": "Badland-Rock outcrop complex",
+    "gentle": "silt_flat",
+    "moderate": "badland_slope",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": "caprock"
+   },
+   "55162": {
+    "name": "Farb-Farb, very shallow-Rock outcrop complex",
+    "gentle": "slickrock",
+    "moderate": "slickrock",
+    "steep": "rock",
+    "crest": null,
+    "hollow": "sand_sheet",
+    "cap": null
+   },
+   "55165": {
+    "name": "Green River-Myton families complex",
+    "gentle": "gravel",
+    "moderate": "gravel",
+    "steep": "rock",
+    "crest": null,
+    "hollow": "wash_sand",
+    "cap": null
+   },
+   "55109": {
+    "name": "Badland",
+    "gentle": "silt_flat",
+    "moderate": "badland_slope",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": null
+   },
+   "55149": {
+    "name": "Chipeta silty clay, 2 to 15 percent slopes",
+    "gentle": "clay_crust",
+    "moderate": "badland_slope",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": null
+   },
+   "55166": {
+    "name": "Hanksville-Chipeta complex",
+    "gentle": "silt_flat",
+    "moderate": "clay_crust",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": null
+   },
+   "55222": {
+    "name": "Billings silt loam",
+    "gentle": "silt_flat",
+    "moderate": "silt_flat",
+    "steep": "rock",
+    "crest": null,
+    "hollow": null,
+    "cap": null
+   }
+  }
+ },
+ "cover": {
+  "autonomy_square": {
+   "sand": 0.0165,
+   "caprock": 0.0007,
+   "sand_sheet": 0.4747,
+   "clay_crust": 0.212,
+   "badland_slope": 0.1188,
+   "silt_flat": 0.1498,
+   "rock": 0.0274
+  },
+  "mdrs_area_square": {
+   "sand": 0.0005,
+   "slickrock": 0.0403,
+   "caprock": 0.0014,
+   "sand_sheet": 0.0079,
+   "clay_crust": 0.2422,
+   "badland_slope": 0.2172,
+   "silt_flat": 0.4563,
+   "rock": 0.0344
+  }
+ },
+ "world": {
+  "whole": {
+   "4": [
+    1.56,
+    2.7,
+    4.91,
+    9.05
+   ],
+   "8": [
+    3.45,
+    5.82,
+    11.59,
+    22.97
+   ],
+   "16": [
+    6.41,
+    11.51,
+    26.49,
+    52.8
+   ],
+   "32": [
+    12.16,
+    23.81,
+    55.06,
+    114.44
+   ]
+  },
+  "central_600m": {
+   "4": [
+    1.56,
+    2.28,
+    3.46,
+    5.37
+   ],
+   "8": [
+    3.02,
+    4.17,
+    6.3,
+    11.19
+   ],
+   "16": [
+    4.79,
+    6.27,
+    11.06,
+    20.98
+   ],
+   "32": [
+    7.32,
+    10.65,
+    20.25,
+    38.0
+   ]
+  }
+ },
+ "types": {
+  "badland_slope": {
+   "4": [
+    4.4,
+    6.79,
+    10.53,
+    15.86
+   ],
+   "windows": {
+    "4": 105139,
+    "8": 21058,
+    "16": 3827,
+    "32": 598
+   },
+   "8": [
+    13.28,
+    19.46,
+    28.03,
+    39.18
+   ],
+   "16": [
+    36.71,
+    50.63,
+    67.43,
+    85.28
+   ],
+   "32": [
+    87.61,
+    112.21,
+    137.75,
+    163.05
+   ],
+   "source": "soil map"
+  },
+  "clay_crust": {
+   "4": [
+    0.92,
+    1.47,
+    2.58,
+    4.3
+   ],
+   "windows": {
+    "4": 167063,
+    "8": 40576,
+    "16": 9780,
+    "32": 2346
+   },
+   "8": [
+    1.92,
+    3.36,
+    5.86,
+    9.29
+   ],
+   "16": [
+    4.08,
+    7.18,
+    12.32,
+    18.67
+   ],
+   "32": [
+    8.38,
+    14.72,
+    24.69,
+    34.03
+   ],
+   "source": "soil map"
+  },
+  "rock": {
+   "4": [
+    6.87,
+    11.33,
+    22.68,
+    47.84
+   ],
+   "windows": {
+    "4": 15821,
+    "8": 2444,
+    "16": 236
+   },
+   "8": [
+    17.67,
+    28.14,
+    52.17,
+    87.79
+   ],
+   "16": [
+    42.82,
+    65.59,
+    103.8,
+    146.27
+   ],
+   "source": "soil map"
+  },
+  "sand": {
+   "4": [
+    2.37,
+    3.5,
+    5.04,
+    7.12
+   ],
+   "windows": {
+    "4": 1331,
+    "8": 30
+   },
+   "8": [
+    6.1,
+    8.21,
+    9.89,
+    11.27
+   ],
+   "source": "soil map"
+  },
+  "sand_sheet": {
+   "4": [
+    1.55,
+    2.5,
+    4.08,
+    6.92
+   ],
+   "windows": {
+    "4": 124171,
+    "8": 30626,
+    "16": 7657,
+    "32": 1948
+   },
+   "8": [
+    3.17,
+    4.89,
+    7.89,
+    14.91
+   ],
+   "16": [
+    5.47,
+    8.43,
+    15.26,
+    30.67
+   ],
+   "32": [
+    9.8,
+    16.93,
+    32.29,
+    61.85
+   ],
+   "source": "soil map"
+  },
+  "silt_flat": {
+   "4": [
+    1.1,
+    1.89,
+    3.19,
+    5.01
+   ],
+   "windows": {
+    "4": 243952,
+    "8": 58107,
+    "16": 13678,
+    "32": 3151
+   },
+   "8": [
+    2.47,
+    4.21,
+    6.92,
+    10.49
+   ],
+   "16": [
+    5.14,
+    8.43,
+    13.9,
+    19.99
+   ],
+   "32": [
+    9.96,
+    16.07,
+    26.08,
+    35.98
+   ],
+   "source": "soil map"
+  },
+  "slickrock": {
+   "4": [
+    1.66,
+    2.42,
+    3.92,
+    6.29
+   ],
+   "windows": {
+    "4": 19498,
+    "8": 4842,
+    "16": 1200,
+    "32": 265
+   },
+   "8": [
+    3.24,
+    4.65,
+    6.97,
+    11.54
+   ],
+   "16": [
+    5.39,
+    7.09,
+    10.12,
+    19.33
+   ],
+   "32": [
+    8.07,
+    10.21,
+    16.48,
+    44.55
+   ],
+   "source": "soil map"
+  },
+  "block_field": {
+   "4": [
+    5.56,
+    8.4,
+    12.48,
+    18.44
+   ],
+   "8": [
+    14.44,
+    20.55,
+    29.04,
+    43.63
+   ],
+   "16": [
+    31.45,
+    44.34,
+    61.8,
+    79.17
+   ],
+   "32": [
+    64.87,
+    91.67,
+    105.75,
+    141.51
+   ],
+   "windows": {
+    "4": 3531,
+    "8": 862,
+    "16": 211,
+    "32": 48
+   },
+   "source": "research windows I and J as a whole (provisional, mixed slopes)"
+  }
+ },
+ "catalogue": [
+  "badland_slope",
+  "bentonite",
+  "biocrust",
+  "block_field",
+  "caprock",
+  "clay",
+  "clay_crust",
+  "fan_pavement",
+  "gravel",
+  "gypsum",
+  "manmade",
+  "mudstone",
+  "pavement",
+  "regolith",
+  "rock",
+  "sand",
+  "sand_sheet",
+  "scree",
+  "silt_flat",
+  "slickrock",
+  "wash_sand"
+ ]
+}

@@ -1,0 +1,1034 @@
+{
+  "mission": "Rover proving ground",
+  "world": "proving_ground",
+  "origin": {
+    "lat": 38.40855841659421,
+    "lon": -110.78534340002936,
+    "alt": 1369.519
+  },
+  "note": "x, y, z: Gazebo world frame [m], x east, y north, z up, the origin above; lat/lon WGS84 (what the rover's NavSat reports); alt = origin alt + z.",
+  "points": {
+    "lane_mu020": {
+      "x": 22.0,
+      "y": -46.0,
+      "z": 1.409,
+      "lat": 38.40814411,
+      "lon": -110.78509157,
+      "alt": 1370.93,
+      "title": "Friction lane mu 0.20",
+      "description": "Test surface mu 0.20: 8 m flat, 8 m up at 10 deg, 4 m flat, 7 m up at 20 deg, 4 m flat, 5 m up at 30 deg; then a plateau and the way down (mu 1). Holds or climbs up to 11 deg.",
+      "sign": [
+        "FRICTION LANE",
+        "MU 0.20",
+        "10 20 30 DEG"
+      ],
+      "mu": 0.2,
+      "length_m": 36.0,
+      "heading_deg": 180.0,
+      "offset_m": 14.0,
+      "profile": [
+        {
+          "length_m": 8.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 8.0,
+          "grade_deg": 10.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 7.0,
+          "grade_deg": 20.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 5.0,
+          "grade_deg": 30.0
+        },
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 32.2,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "lane_mu035": {
+      "x": 22.0,
+      "y": -39.0,
+      "z": 1.409,
+      "lat": 38.40820715,
+      "lon": -110.78509157,
+      "alt": 1370.93,
+      "title": "Friction lane mu 0.35",
+      "description": "Test surface mu 0.35: 8 m flat, 8 m up at 10 deg, 4 m flat, 7 m up at 20 deg, 4 m flat, 5 m up at 30 deg; then a plateau and the way down (mu 1). Holds or climbs up to 19 deg.",
+      "sign": [
+        "FRICTION LANE",
+        "MU 0.35",
+        "10 20 30 DEG"
+      ],
+      "mu": 0.35,
+      "length_m": 36.0,
+      "heading_deg": 180.0,
+      "offset_m": 7.0,
+      "profile": [
+        {
+          "length_m": 8.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 8.0,
+          "grade_deg": 10.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 7.0,
+          "grade_deg": 20.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 5.0,
+          "grade_deg": 30.0
+        },
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 32.2,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "lane_mu050": {
+      "x": 22.0,
+      "y": -32.0,
+      "z": 1.409,
+      "lat": 38.4082702,
+      "lon": -110.78509157,
+      "alt": 1370.93,
+      "title": "Friction lane mu 0.50",
+      "description": "Test surface mu 0.50: 8 m flat, 8 m up at 10 deg, 4 m flat, 7 m up at 20 deg, 4 m flat, 5 m up at 30 deg; then a plateau and the way down (mu 1). Holds or climbs up to 27 deg.",
+      "sign": [
+        "FRICTION LANE",
+        "MU 0.50",
+        "10 20 30 DEG"
+      ],
+      "mu": 0.5,
+      "length_m": 36.0,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 8.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 8.0,
+          "grade_deg": 10.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 7.0,
+          "grade_deg": 20.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 5.0,
+          "grade_deg": 30.0
+        },
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 32.2,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "lane_mu070": {
+      "x": 22.0,
+      "y": -25.0,
+      "z": 1.409,
+      "lat": 38.40833325,
+      "lon": -110.78509157,
+      "alt": 1370.93,
+      "title": "Friction lane mu 0.70",
+      "description": "Test surface mu 0.70: 8 m flat, 8 m up at 10 deg, 4 m flat, 7 m up at 20 deg, 4 m flat, 5 m up at 30 deg; then a plateau and the way down (mu 1). Holds or climbs up to 35 deg.",
+      "sign": [
+        "FRICTION LANE",
+        "MU 0.70",
+        "10 20 30 DEG"
+      ],
+      "mu": 0.7,
+      "length_m": 36.0,
+      "heading_deg": 180.0,
+      "offset_m": -7.0,
+      "profile": [
+        {
+          "length_m": 8.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 8.0,
+          "grade_deg": 10.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 7.0,
+          "grade_deg": 20.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 5.0,
+          "grade_deg": 30.0
+        },
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 32.2,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "lane_mu095": {
+      "x": 22.0,
+      "y": -18.0,
+      "z": 1.409,
+      "lat": 38.4083963,
+      "lon": -110.78509157,
+      "alt": 1370.93,
+      "title": "Friction lane mu 0.95",
+      "description": "Test surface mu 0.95: 8 m flat, 8 m up at 10 deg, 4 m flat, 7 m up at 20 deg, 4 m flat, 5 m up at 30 deg; then a plateau and the way down (mu 1). Holds or climbs up to 44 deg.",
+      "sign": [
+        "FRICTION LANE",
+        "MU 0.95",
+        "10 20 30 DEG"
+      ],
+      "mu": 0.95,
+      "length_m": 36.0,
+      "heading_deg": 180.0,
+      "offset_m": -14.0,
+      "profile": [
+        {
+          "length_m": 8.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 8.0,
+          "grade_deg": 10.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 7.0,
+          "grade_deg": 20.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 5.0,
+          "grade_deg": 30.0
+        },
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 32.2,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "sand_pit": {
+      "x": 22.0,
+      "y": 0.0,
+      "z": 1.557,
+      "lat": 38.40855842,
+      "lon": -110.78509157,
+      "alt": 1371.08,
+      "title": "Sand pit",
+      "description": "Soft sand (mu 0.40, holds up to 22 deg): 10 m flat, 6 m up at 15 deg, 4 m flat, 6 m down at 15 deg.",
+      "sign": [
+        "SAND PIT",
+        "MU 0.40",
+        "15 DEG SLOPES"
+      ],
+      "mu": 0.4,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": 15.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": -15.0
+        }
+      ]
+    },
+    "clay_patch": {
+      "x": 22.0,
+      "y": 10.0,
+      "z": 1.552,
+      "lat": 38.40864848,
+      "lon": -110.78509157,
+      "alt": 1371.07,
+      "title": "Clay patch",
+      "description": "Dusty bentonite clay (mu 0.25, holds up to 14 deg): 10 m flat, 6 m up at 12 deg, 4 m flat, 6 m down at 12 deg.",
+      "sign": [
+        "CLAY PATCH",
+        "MU 0.25",
+        "12 DEG SLOPES"
+      ],
+      "mu": 0.25,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 10.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": 12.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": -12.0
+        }
+      ]
+    },
+    "slickrock_slab": {
+      "x": 22.0,
+      "y": 20.0,
+      "z": 1.509,
+      "lat": 38.40873855,
+      "lon": -110.78509157,
+      "alt": 1371.03,
+      "title": "Slickrock slab",
+      "description": "Slickrock sandstone slab (mu 1.00, holds up to 45 deg): 6 m flat, 6 m up at 25 deg, 4 m flat, 6 m down at 25 deg.",
+      "sign": [
+        "SLICKROCK SLAB",
+        "MU 1.00",
+        "25 DEG SLOPES"
+      ],
+      "mu": 1.0,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 6.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": 25.0
+        },
+        {
+          "length_m": 4.0,
+          "grade_deg": 0.0
+        },
+        {
+          "length_m": 6.0,
+          "grade_deg": -25.0
+        }
+      ]
+    },
+    "side_slope_10": {
+      "x": 22.0,
+      "y": 34.0,
+      "z": 1.498,
+      "lat": 38.40886464,
+      "lon": -110.78509157,
+      "alt": 1371.02,
+      "title": "Side slope 10 deg",
+      "description": "20 m along a 10 deg side slope, the south side up: tests roll stability and sideways slip (tyre mu 0.5 across).",
+      "sign": [
+        "SIDE SLOPE",
+        "10 DEG"
+      ],
+      "cross_slope_deg": 10,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 20.0,
+          "grade_deg": 0.0
+        }
+      ]
+    },
+    "side_slope_20": {
+      "x": 22.0,
+      "y": 46.0,
+      "z": 1.438,
+      "lat": 38.40897273,
+      "lon": -110.78509157,
+      "alt": 1370.96,
+      "title": "Side slope 20 deg",
+      "description": "20 m along a 20 deg side slope, the south side up: tests roll stability and sideways slip (tyre mu 0.5 across).",
+      "sign": [
+        "SIDE SLOPE",
+        "20 DEG"
+      ],
+      "cross_slope_deg": 20,
+      "heading_deg": 180.0,
+      "offset_m": 0.0,
+      "profile": [
+        {
+          "length_m": 20.0,
+          "grade_deg": 0.0
+        }
+      ]
+    },
+    "garden_10cm": {
+      "x": 42.0,
+      "y": -46.0,
+      "z": 1.408,
+      "lat": 38.40814411,
+      "lon": -110.78486264,
+      "alt": 1370.93,
+      "title": "Rock garden 10 cm",
+      "description": "A 12 x 6 m plot of 10 cm rocks (+-20 %), one per 1.0 m cell; the wheel radius is 15 cm.",
+      "sign": [
+        "ROCK GARDEN",
+        "10 CM"
+      ],
+      "rock_size_m": 0.1,
+      "length_m": 12.0,
+      "width_m": 6.0,
+      "heading_deg": 0.0
+    },
+    "garden_20cm": {
+      "x": 42.0,
+      "y": -36.0,
+      "z": 1.368,
+      "lat": 38.40823417,
+      "lon": -110.78486264,
+      "alt": 1370.89,
+      "title": "Rock garden 20 cm",
+      "description": "A 12 x 6 m plot of 20 cm rocks (+-20 %), one per 1.3 m cell; the wheel radius is 15 cm.",
+      "sign": [
+        "ROCK GARDEN",
+        "20 CM"
+      ],
+      "rock_size_m": 0.2,
+      "length_m": 12.0,
+      "width_m": 6.0,
+      "heading_deg": 0.0
+    },
+    "garden_30cm": {
+      "x": 42.0,
+      "y": -26.0,
+      "z": 1.417,
+      "lat": 38.40832424,
+      "lon": -110.78486264,
+      "alt": 1370.94,
+      "title": "Rock garden 30 cm",
+      "description": "A 12 x 6 m plot of 30 cm rocks (+-20 %), one per 1.6 m cell; the wheel radius is 15 cm.",
+      "sign": [
+        "ROCK GARDEN",
+        "30 CM"
+      ],
+      "rock_size_m": 0.3,
+      "length_m": 12.0,
+      "width_m": 6.0,
+      "heading_deg": 0.0
+    },
+    "garden_40cm": {
+      "x": 42.0,
+      "y": -16.0,
+      "z": 1.485,
+      "lat": 38.40841431,
+      "lon": -110.78486264,
+      "alt": 1371.0,
+      "title": "Rock garden 40 cm",
+      "description": "A 12 x 6 m plot of 40 cm rocks (+-20 %), one per 1.9 m cell; the wheel radius is 15 cm.",
+      "sign": [
+        "ROCK GARDEN",
+        "40 CM"
+      ],
+      "rock_size_m": 0.4,
+      "length_m": 12.0,
+      "width_m": 6.0,
+      "heading_deg": 0.0
+    },
+    "articulation": {
+      "x": 38.0,
+      "y": 0.0,
+      "z": 1.619,
+      "lat": 38.40855842,
+      "lon": -110.78490843,
+      "alt": 1371.14,
+      "title": "Articulation track",
+      "description": "Humps of 10 20 30 cm under the left wheels, then the right, every 3 m; then a 49 cm diagonal ditch that takes a front wheel and the opposite rear wheel together, turning the rockers to their 0.5 rad limit.",
+      "sign": [
+        "ARTICULATION",
+        "BUMPS 10 20 30",
+        "TWIST DITCH"
+      ],
+      "humps": [
+        {
+          "x": 41.0,
+          "y": 0.4,
+          "z": 1.713,
+          "lat": 38.40856202,
+          "lon": -110.78487409,
+          "alt": 1371.23,
+          "height_m": 0.1,
+          "side": "left"
+        },
+        {
+          "x": 44.0,
+          "y": -0.4,
+          "z": 1.685,
+          "lat": 38.40855481,
+          "lon": -110.78483975,
+          "alt": 1371.2,
+          "height_m": 0.1,
+          "side": "right"
+        },
+        {
+          "x": 47.0,
+          "y": 0.4,
+          "z": 1.779,
+          "lat": 38.40856202,
+          "lon": -110.78480541,
+          "alt": 1371.3,
+          "height_m": 0.2,
+          "side": "left"
+        },
+        {
+          "x": 50.0,
+          "y": -0.4,
+          "z": 1.757,
+          "lat": 38.40855481,
+          "lon": -110.78477107,
+          "alt": 1371.28,
+          "height_m": 0.2,
+          "side": "right"
+        },
+        {
+          "x": 53.0,
+          "y": 0.4,
+          "z": 1.835,
+          "lat": 38.40856202,
+          "lon": -110.78473673,
+          "alt": 1371.35,
+          "height_m": 0.3,
+          "side": "left"
+        },
+        {
+          "x": 56.0,
+          "y": -0.4,
+          "z": 1.812,
+          "lat": 38.40855481,
+          "lon": -110.78470239,
+          "alt": 1371.33,
+          "height_m": 0.3,
+          "side": "right"
+        }
+      ],
+      "twist_ditch": {
+        "x": 62.0,
+        "y": 0.0,
+        "z": 0.978,
+        "lat": 38.40855841,
+        "lon": -110.78463371,
+        "alt": 1370.5,
+        "depth_m": 0.49,
+        "angle_deg": 41.6
+      },
+      "heading_deg": 0.0
+    },
+    "washboard": {
+      "x": 38.0,
+      "y": 12.0,
+      "z": 1.675,
+      "lat": 38.4086665,
+      "lon": -110.78490843,
+      "alt": 1371.19,
+      "title": "Washboard",
+      "description": "20 m of corrugations: crests every 0.8 m, +-4 cm.",
+      "sign": [
+        "WASHBOARD"
+      ],
+      "heading_deg": 0.0,
+      "length_m": 20.0
+    },
+    "step_10cm": {
+      "x": 44.0,
+      "y": 22.0,
+      "z": 1.662,
+      "lat": 38.40875656,
+      "lon": -110.78483975,
+      "alt": 1371.18,
+      "title": "Step 10 cm",
+      "description": "Drive east: a 10 cm up-step, 4 m on top, a 10 cm drop-off.",
+      "sign": [
+        "STEP",
+        "10 CM UP / DOWN"
+      ],
+      "height_m": 0.1,
+      "heading_deg": 0.0
+    },
+    "step_20cm": {
+      "x": 44.0,
+      "y": 28.0,
+      "z": 1.649,
+      "lat": 38.4088106,
+      "lon": -110.78483975,
+      "alt": 1371.17,
+      "title": "Step 20 cm",
+      "description": "Drive east: a 20 cm up-step, 4 m on top, a 20 cm drop-off.",
+      "sign": [
+        "STEP",
+        "20 CM UP / DOWN"
+      ],
+      "height_m": 0.2,
+      "heading_deg": 0.0
+    },
+    "step_30cm": {
+      "x": 44.0,
+      "y": 34.0,
+      "z": 1.637,
+      "lat": 38.40886464,
+      "lon": -110.78483974,
+      "alt": 1371.16,
+      "title": "Step 30 cm",
+      "description": "Drive east: a 30 cm up-step, 4 m on top, a 30 cm drop-off.",
+      "sign": [
+        "STEP",
+        "30 CM UP / DOWN"
+      ],
+      "height_m": 0.3,
+      "heading_deg": 0.0
+    },
+    "boulder_field": {
+      "x": 44.0,
+      "y": 56.0,
+      "z": 1.607,
+      "lat": 38.40906279,
+      "lon": -110.78483974,
+      "alt": 1371.13,
+      "title": "Boulder field",
+      "description": "70 boulders of 0.3-1.0 m within 14 m.",
+      "sign": [
+        "BOULDER FIELD"
+      ],
+      "radius_m": 14.0
+    }
+  },
+  "objects": {},
+  "tasks": [],
+  "terrain_zones": {
+    "lane_mu020": {
+      "type": "test_mu020",
+      "title": "Test surface mu 0.20",
+      "mu": 0.2,
+      "center": {
+        "x": 4.0,
+        "y": -46.0,
+        "z": 2.819,
+        "lat": 38.40814411,
+        "lon": -110.78529761,
+        "alt": 1372.34
+      },
+      "area_m2": 180.0,
+      "tiles": 6,
+      "tiled_area_m2": 180.0,
+      "outline": [
+        [
+          22.0,
+          -43.5
+        ],
+        [
+          -14.0,
+          -43.5
+        ],
+        [
+          -14.0,
+          -48.5
+        ],
+        [
+          22.0,
+          -48.5
+        ]
+      ]
+    },
+    "lane_mu035": {
+      "type": "test_mu035",
+      "title": "Test surface mu 0.35",
+      "mu": 0.35,
+      "center": {
+        "x": 4.0,
+        "y": -39.0,
+        "z": 2.819,
+        "lat": 38.40820715,
+        "lon": -110.78529761,
+        "alt": 1372.34
+      },
+      "area_m2": 180.0,
+      "tiles": 6,
+      "tiled_area_m2": 180.0,
+      "outline": [
+        [
+          22.0,
+          -36.5
+        ],
+        [
+          -14.0,
+          -36.5
+        ],
+        [
+          -14.0,
+          -41.5
+        ],
+        [
+          22.0,
+          -41.5
+        ]
+      ]
+    },
+    "lane_mu050": {
+      "type": "test_mu050",
+      "title": "Test surface mu 0.50",
+      "mu": 0.5,
+      "center": {
+        "x": 4.0,
+        "y": -32.0,
+        "z": 2.819,
+        "lat": 38.4082702,
+        "lon": -110.78529761,
+        "alt": 1372.34
+      },
+      "area_m2": 180.0,
+      "tiles": 6,
+      "tiled_area_m2": 180.0,
+      "outline": [
+        [
+          22.0,
+          -29.5
+        ],
+        [
+          -14.0,
+          -29.5
+        ],
+        [
+          -14.0,
+          -34.5
+        ],
+        [
+          22.0,
+          -34.5
+        ]
+      ]
+    },
+    "lane_mu070": {
+      "type": "test_mu070",
+      "title": "Test surface mu 0.70",
+      "mu": 0.7,
+      "center": {
+        "x": 4.0,
+        "y": -25.0,
+        "z": 2.819,
+        "lat": 38.40833325,
+        "lon": -110.78529761,
+        "alt": 1372.34
+      },
+      "area_m2": 180.0,
+      "tiles": 6,
+      "tiled_area_m2": 180.0,
+      "outline": [
+        [
+          22.0,
+          -22.5
+        ],
+        [
+          -14.0,
+          -22.5
+        ],
+        [
+          -14.0,
+          -27.5
+        ],
+        [
+          22.0,
+          -27.5
+        ]
+      ]
+    },
+    "lane_mu095": {
+      "type": "test_mu095",
+      "title": "Test surface mu 0.95",
+      "mu": 0.95,
+      "center": {
+        "x": 4.0,
+        "y": -18.0,
+        "z": 2.819,
+        "lat": 38.4083963,
+        "lon": -110.78529761,
+        "alt": 1372.34
+      },
+      "area_m2": 180.0,
+      "tiles": 6,
+      "tiled_area_m2": 180.0,
+      "outline": [
+        [
+          22.0,
+          -15.5
+        ],
+        [
+          -14.0,
+          -15.5
+        ],
+        [
+          -14.0,
+          -20.5
+        ],
+        [
+          22.0,
+          -20.5
+        ]
+      ]
+    },
+    "sand_pit": {
+      "type": "sand",
+      "title": "Soft sand",
+      "mu": 0.4,
+      "center": {
+        "x": 9.0,
+        "y": 0.0,
+        "z": 2.361,
+        "lat": 38.40855842,
+        "lon": -110.78524038,
+        "alt": 1371.88
+      },
+      "area_m2": 130.0,
+      "tiles": 4,
+      "tiled_area_m2": 130.0,
+      "outline": [
+        [
+          22.0,
+          2.5
+        ],
+        [
+          -4.0,
+          2.5
+        ],
+        [
+          -4.0,
+          -2.5
+        ],
+        [
+          22.0,
+          -2.5
+        ]
+      ]
+    },
+    "clay_patch": {
+      "type": "clay",
+      "title": "Dusty bentonite clay",
+      "mu": 0.25,
+      "center": {
+        "x": 9.0,
+        "y": 10.0,
+        "z": 2.19,
+        "lat": 38.40864848,
+        "lon": -110.78524038,
+        "alt": 1371.71
+      },
+      "area_m2": 130.0,
+      "tiles": 4,
+      "tiled_area_m2": 130.0,
+      "outline": [
+        [
+          22.0,
+          12.5
+        ],
+        [
+          -4.0,
+          12.5
+        ],
+        [
+          -4.0,
+          7.5
+        ],
+        [
+          22.0,
+          7.5
+        ]
+      ]
+    },
+    "slickrock_slab": {
+      "type": "slickrock",
+      "title": "Slickrock sandstone slab",
+      "mu": 1.0,
+      "center": {
+        "x": 11.0,
+        "y": 20.0,
+        "z": 3.841,
+        "lat": 38.40873855,
+        "lon": -110.78521749,
+        "alt": 1373.36
+      },
+      "area_m2": 110.0,
+      "tiles": 0,
+      "tiled_area_m2": 0,
+      "outline": [
+        [
+          22.0,
+          22.5
+        ],
+        [
+          0.0,
+          22.5
+        ],
+        [
+          0.0,
+          17.5
+        ],
+        [
+          22.0,
+          17.5
+        ]
+      ]
+    }
+  },
+  "terrain_types": {
+    "test_mu020": {
+      "title": "Test surface mu 0.20",
+      "mu": 0.2,
+      "max_slope_deg": 11.3,
+      "notes": "Uniform friction for calibration lanes."
+    },
+    "test_mu035": {
+      "title": "Test surface mu 0.35",
+      "mu": 0.35,
+      "max_slope_deg": 19.3,
+      "notes": "Uniform friction for calibration lanes."
+    },
+    "test_mu050": {
+      "title": "Test surface mu 0.50",
+      "mu": 0.5,
+      "max_slope_deg": 26.6,
+      "notes": "Uniform friction for calibration lanes."
+    },
+    "test_mu070": {
+      "title": "Test surface mu 0.70",
+      "mu": 0.7,
+      "max_slope_deg": 35.0,
+      "notes": "Uniform friction for calibration lanes."
+    },
+    "test_mu095": {
+      "title": "Test surface mu 0.95",
+      "mu": 0.95,
+      "max_slope_deg": 43.5,
+      "notes": "Uniform friction for calibration lanes."
+    },
+    "sand": {
+      "title": "Soft sand",
+      "mu": 0.4,
+      "max_slope_deg": 21.8,
+      "notes": "Wind-blown or wash sand. Real sand also sinks and resists rolling; DART cannot, so low traction stands in for both."
+    },
+    "clay": {
+      "title": "Dusty bentonite clay",
+      "mu": 0.25,
+      "max_slope_deg": 14.0,
+      "notes": "Morrison bentonite weathered to a 'popcorn' crust over powder: slippery, slides from about 14 deg."
+    },
+    "slickrock": {
+      "title": "Slickrock sandstone slab",
+      "mu": 1.0,
+      "max_slope_deg": 45.0,
+      "notes": "Bare cemented sandstone: the best grip there is (the tyres' own mu 1.0 limits it); smooth, so steep slabs are climbable. A decal only: the heightmap has mu 1.0 too."
+    }
+  },
+  "rover_start": {
+    "x": 30.0,
+    "y": -62.0,
+    "z": 1.502,
+    "lat": 38.408,
+    "lon": -110.785,
+    "alt": 1371.02,
+    "yaw": 1.5707963267948966
+  },
+  "rocks": {
+    "garden_10cm": {
+      "count": 72,
+      "colliding": 72
+    },
+    "garden_20cm": {
+      "count": 45,
+      "colliding": 45
+    },
+    "garden_30cm": {
+      "count": 32,
+      "colliding": 32
+    },
+    "garden_40cm": {
+      "count": 18,
+      "colliding": 18
+    },
+    "boulder_field": {
+      "count": 70,
+      "colliding": 70
+    }
+  },
+  "terrain": {
+    "heightmap": "../models/urc_terrain_proving_ground/heightmap.png",
+    "collision_heightmap": "../models/urc_terrain_proving_ground/heightmap_collision.png",
+    "dem_geotiff": "../models/urc_terrain_proving_ground/dem.tif",
+    "size_m": 256.0,
+    "samples": 2049,
+    "z_max": 8.254,
+    "note": "heightmap.png: 16-bit, centred on the world origin, row 0 north, column 0 west; z = pixel / 65535 * z_max. collision_heightmap: what Gazebo collides with, the same scale, cut 0.25 m down under the terrain_zones' tiles"
+  }
+}
