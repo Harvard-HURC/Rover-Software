@@ -134,7 +134,7 @@ deserialized.`
 | `tools/render_map.py` | Orthophoto maps of the worlds (`pixi run sim-maps`) |
 | `tools/realism_report.py` | The realism report (`pixi run sim-realism`) |
 | `tools/make_relief_swatches.py`, `tools/terrain_targets.py` | Lidar relief swatches and the roughness targets (`data/relief`, `data/research/terrain_targets.json`) |
-| `tools/fetch_data.py`, `data/rasters.json` | `pixi run fetch-data`: fetches the git-ignored rasters from their official sources and checks them against the manifest; names those it cannot rebuild yet (the 0.5 m lidar DEMs, the NAIP 2021 route mosaic), the worlds that need them and how to get them |
+| `tools/fetch_data.py`, `tools/usgs_lidar.py`, `data/rasters.json` | `pixi run fetch-data`: fetches the git-ignored rasters from their official sources (ImageServer requests; the 0.5 m lidar DEMs and their source map rebuilt from USGS lidar tiles and point clouds by `usgs_lidar.py`) and checks them against the manifest |
 | `tools/fetch_dem.py`, `tools/link_data.sh` | Fetches a USGS 3DEP DEM for a new area; links the git-ignored rasters from another clone or a git worktree's main checkout |
 | `data/dem/`, `data/imagery/`, `data/soils/`, `data/relief/` | DEMs, imagery, the soil map, relief swatches; each `.tif` is git-ignored, its `.json` (tracked) says where it came from |
 | `data/research/` | The research files the code reads or writes: the roughness targets, the lidar windows' measurements, the realism report and its contact sheet; the rest of the research is in `docs/research/` |
@@ -606,7 +606,7 @@ micro-relief, ground types and clutter. URC has not released its own DEM
 **Terrain source.** `data/dem/route_area_lidar_0p5m.tif`: USGS 3DEP lidar,
 public domain. South of about 38.4163 N the 2018 UT_Southern_QL1 0.5 m DEM;
 north of it a 0.5 m grid of the ground returns of the 2020
-UT_StatewideSouth point clouds (9.4–9.6 ground returns/m²), feathered at the
+UT_StatewideSouth point clouds (9.2 ground returns/m²), feathered at the
 seam (the two differ by 1 cm median on flat ground); NAVD88 metres; shifted
 by (−0.89, +0.62) m east, north so it lines up with the 3DEP and NAIP
 services' datum (PROJ's default NAD83(2011) → WGS84 is a null
@@ -617,15 +617,16 @@ mile's centre at 0.5 m (4097² samples, gate G1: no step-time cost against
 2049², +0.6 s start-up). The 1 m 3DEP DEM (`route_area_3dep.tif`) stays as the
 cross-check and the source of the other worlds' altitudes.
 
-That processing (the gridding, the feathering, the shift) is not in the
-repository, so `pixi run fetch-data` cannot rebuild the file from official
-sources yet: a script that rebuilds it from the USGS tiles and point clouds
-its `.json` lists is planned. Until then
-link it from a teammate's clone that has it
-(`rover_sim/tools/link_data.sh <that clone>`) or copy it into `data/dem/`
-(`pixi run fetch-data --verify` checks it). Without it `sim-worlds` skips
-this world, `pixi run sim urc_autonomy` and `pixi run drive urc_autonomy`
-say what is missing, and its tests skip, saying why.
+`pixi run fetch-data` rebuilds the file from the USGS tiles and point clouds
+its `.json` lists (`tools/usgs_lidar.py`, recipe `route_area`: 5 OPR DEM
+tiles and 6 LAZ tiles, 371 MB, each pinned by its SHA-256), with the steps
+that made it on 2026-10-06. On the Mac that made `data/rasters.json`
+(osx-arm64, an Apple M4, with the pinned GDAL 3.13.3 and PROJ 9.8.1; the
+`.json`'s `rebuilt`) the rebuild is the file byte for byte. Another machine
+or library version may round differently (OpenCV's blur and GDAL's bilinear
+kernel may on Linux x86-64; no other Mac was tried): fetch-data then keeps
+a rebuild whose minimum, maximum and 16 × 16 block means are within 1 mm of
+the manifest's, and says it is not bit-identical and on which machine.
 
 **Imagery and ground.** `data/imagery/route_area_naip2024.tif`: NAIP
 2024-07-06, 0.6 m, 4 bands, public domain. It is resampled to the world and
@@ -978,7 +979,7 @@ deterministic; edit the layouts in `urc/missions/`, not the output. Its pixi
 inputs are `gen_worlds.py`, `rover_config.py`, `rover_description/config/rover.yaml`, `urc/**/*.py`, the DEMs, the NAIP
 rasters, the relief swatches, the soil map and the roughness targets.
 - A world whose raster fetch-data cannot rebuild yet (`data/rasters.json`:
-  not `official`; today Autonomy's lidar DEM) is skipped when that raster is
+  not `official`; none today) is skipped when that raster is
   not here, saying how to get it, and the other worlds are built. The run
   fails if that world was named, or when a raster fetch-data can fetch is
   missing. The tests skip what a missing raster leaves out
@@ -1226,18 +1227,14 @@ spin.
   (`sim-media` printed "no patched media"); run `python rover_sim/tools/gz_media.py`
   and read its warning.
 - **`gen_worlds.py` cannot read a raster** (`route_area_naip2024.tif`,
-  `far_dem_3dep_60km.tif`, ...) **or skips `autonomy`**
-  (`route_area_lidar_0p5m.tif`): the rasters are git-ignored. `pixi run
-  fetch-data` fetches the missing ones from their official sources and
-  checks them against `data/rasters.json` (each raster's `.json` says where
-  it came from). It cannot rebuild the 0.5 m lidar DEMs and their source map
-  yet (their processing is not in the repository; a script that rebuilds
-  them from USGS lidar is planned) nor the research's NAIP 2021 route
-  mosaic, and there is no other copy to fetch: it names them, the worlds that
-  need them, and exits 0 (1 only when a raster it can fetch fails;
-  `--help`). For those, when a source fails, or in a git worktree, link them
-  from a clone that has them, a teammate's or (by default) the worktree's
-  main checkout: `rover_sim/tools/link_data.sh [that clone]`.
+  `route_area_lidar_0p5m.tif`, ...): the rasters are git-ignored. `pixi run
+  fetch-data` fetches the missing ones from their official sources (the
+  lidar DEMs: rebuilt from USGS lidar, 5 to 20 minutes) and checks them
+  against `data/rasters.json` (each raster's `.json` says where it came
+  from); `--all` also the research's rasters. It exits 1 when one was not
+  fetched (`--help`). When a source is down, or in a git worktree, link the
+  rasters from a clone that has them, by default the worktree's main
+  checkout: `rover_sim/tools/link_data.sh [that clone]`.
 - **The referee prints "waiting for the simulation":** start or unpause the
   world; the referee needs `/model/rover/ground_truth`.
 - **The station exits with "another driver station is attached to …":** use
