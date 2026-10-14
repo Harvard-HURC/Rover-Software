@@ -53,12 +53,13 @@ plugin speaks Gazebo's twist, which nothing takes now; use the station or
 `ros2 topic pub`.
 
 `rover_sim/run.sh` runs `rover_sim/launch/sim.launch.py` (`ros2 launch
-rover_sim sim.launch.py world:=<name> gui:= station:= controller:=
-sensors:=`): Gazebo's server and its GUI as separate processes (macOS cannot
-run both in one; closing the GUI stops everything), robot_state_publisher,
-the controllers in the controller manager gz_ros2_control runs inside
-Gazebo, and the sensor bridge (`bridge.yaml`). The worlds include the ROS-free
-rover (`model://rover`); the launch runs a copy of the world with the rover
+rover_sim sim.launch.py world:=<name> gui:=true|false station:=true|false
+controller:=<name> sensors:=true|false`): Gazebo's server and its GUI as
+separate processes (macOS cannot run both in one; closing the GUI stops
+everything), robot_state_publisher, the controllers in the controller
+manager gz_ros2_control runs inside Gazebo, and the sensor bridge
+(`bridge.yaml`). The worlds include the ROS-free rover (`model://rover`);
+the launch runs a copy of the world with the rover
 that has ros2_control, at the same pose. With `station:=true` it also starts
 the driver station, attached, which opens its page in the browser.
 
@@ -928,9 +929,13 @@ New ground types go into `terrains.TYPES`, new rock colours into
 
 ### A new world
 
-1. Add `rover_sim/urc/missions/<name>.py` with `KEY` and `build(models_dir, worlds_dir, media)`.
+1. Add `rover_sim/urc/missions/<module>.py` with `KEY` and `build(models_dir, worlds_dir, media)`.
 2. Register it in `MISSIONS` (URC missions) or `COURSES` (test courses) in `missions/__init__.py`.
-3. Run `python rover_sim/gen_worlds.py <name>`.
+3. Run `python rover_sim/gen_worlds.py <KEY>` (or `pixi run sim-worlds <KEY>`): it takes the `KEY`.
+4. The world is `urc_<KEY>` unless `WorldBuilder` gets a `name`, as below (`name=KEY` makes
+   `worlds/demo.sdf` and `demo.json`). `.gitignore` ignores the generated worlds by name
+   (`worlds/urc_*`, `proving_ground.*`): give a world named otherwise its own line there, and in
+   the `sim-worlds` task's `outputs` in `pixi.toml`.
 
 ```python
 from .. import features, landscape, terrain, terrains

@@ -14,7 +14,7 @@ The rover's drive, the same on the real and the simulated rover (design spec `do
 From the workspace root, in `pixi shell`, after `colcon build`:
 
 ```bash
-source install/local_setup.bash
+source install/local_setup.bash        # local_setup.zsh in zsh
 ros2 launch rover_control rover.launch.py        # controller:=<name>, controllers:=<file>, hardware:=<plugin>, rover_yaml:=<file>
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/TwistStamped "{twist: {linear: {x: 0.3}}}"
 ```
@@ -22,7 +22,20 @@ ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/TwistStamped "{twist: {linear: {
 The stub warns that no motors are connected and logs the commands it would send (`would send wheel_fl_joint 2.00, ...`, rounded to 0.01 rad/s: at once when the wheels start, at most once a second while they turn, and `would send 0 to every wheel` once when they are back at zero); `/joint_states` and `/odom` stay at zero. The drive controller also warns `Velocity command timed out. Braking.` about once a second while no command comes, and once `Received TwistStamped with zero timestamp`: the stamp is left zero on purpose (`docs/topics.md`). Ctrl-C prints two harmless errors from the controller manager's statistics thread as it shuts down, `[controller_manager.pal_statistics]: Exception in publisher thread: context cannot be slept with because it's invalid!. Aborting!`, and sometimes `[ERROR] [ros2_control_node-2]: process has died [... exit code -2 ...]`: under `ros2 launch` one Ctrl-C reaches the node twice (`docs/sim/gazebo-lessons.md`).
 
 ### Change the drive controller
-Change `drive_controller`'s `type` in `config/controllers.yaml`, or add another controller beside it and start it with `controller:=<name>` (`rover.launch.py`, and `sim.launch.py` in the simulation). Its parameters go under its name in the same file. Keep the geometry `rover.yaml`'s: `test_controllers_yaml.cpp` checks `drive_controller`'s.
+Add another controller beside `drive_controller` in `config/controllers.yaml` (its `type` under `controller_manager`, its parameters under its name, its geometry `rover.yaml`'s) and start it with `controller:=<name>` (`rover.launch.py`, and `sim.launch.py` in the simulation). `rover.launch.py` reads the installed `controllers.yaml`, so run `colcon build` (or `pixi run build`) after editing it; `sim.launch.py` reads the source tree's. Changing `drive_controller`'s `type` instead fails the tests written for diff_drive_controller: `test_controllers_yaml.cpp` checks the type and its parameters, and `rover_sim`'s `test_wheel_cmd.py` and `test_ros2_control.py` read its acceleration limits, `publish_limited_velocity` and `/drive_controller/cmd_vel_out`; change them with it. [CONTRIBUTING.md](../CONTRIBUTING.md#swap-the-drive-controller) has the details.
+
+### Tests
+`pixi run colcon-test` runs them with the other packages' colcon tests; for this package alone, in `pixi shell` in the workspace root after `colcon build`: `colcon test --packages-select rover_control`, then `colcon test-result --verbose`. 19 tests, about 7 s on an Apple M4 (M, 2026-10-10): the GoogleTest cases of the kinematics, `controllers.yaml` against `rover.yaml` and the stub, and `test_rover_launch.py`, which runs `rover.launch.py` with the stub in a private ROS domain and checks the wheel commands the stub logs.
+
+### Drive it from a program
+Publish `/cmd_vel` and read `/odom` ([docs/topics.md](../docs/topics.md)); [CONTRIBUTING.md](../CONTRIBUTING.md#write-a-program-that-drives-the-rover) has a short rclpy program, run against this stack and the simulation, and the steps for a drive controller of the team's own ([Write a drive controller](../CONTRIBUTING.md#write-a-drive-controller)).
+
+### On the rover's computer
+The rover's computer builds this package and `rover_description` only, without Gazebo or a GPU (design spec, section 7). Neither way below has run on a rover's computer yet (2026-10-10): the computer is not chosen.
+- **pixi**, as on a laptop ([CONTRIBUTING.md](../CONTRIBUTING.md#set-up)), then in `pixi shell` in the workspace root `colcon build --packages-select rover_description rover_control`. `pixi.toml` lists `linux-64`; a Jetson needs `linux-aarch64` added and the lock resolved for it. `pixi install` also installs the simulation's libraries, about 5 GB in all.
+- **apt** ROS 2 Jazzy on Ubuntu 24.04: in the workspace root, after `source /opt/ros/jazzy/setup.bash`, `rosdep install --from-paths src/rover_description src/rover_control --ignore-src -y`, then `colcon build --packages-select rover_description rover_control`.
+
+Then `source install/local_setup.bash` and `ros2 launch rover_control rover.launch.py` (above).
 
 ### When the motor controllers are chosen
 Write their ros2_control hardware interface (a `hardware_interface::SystemInterface` with the stub's interfaces), export it with pluginlib, and give it as `hardware:=<package>/<Class>`, or make it `rover_description`'s default (`urdf/rover.urdf.xacro`'s `ros2_control_plugin`).
