@@ -389,11 +389,15 @@ class Prune(unittest.TestCase):
 class MissingRaster(unittest.TestCase):
     """The terrain rasters are git-ignored: when a world's raster is not here,
     gen_worlds says that pixi run fetch-data fetches it; when fetch-data
-    cannot rebuild it yet (rasters.json: not official), it skips that world,
-    says how to get the raster and builds the others, failing only if the
-    world was named; any other missing file is raised as it is."""
+    cannot rebuild it (rasters.json: not official; none is listed today, so
+    a made-up entry stands in), it skips that world, says how to get the
+    raster and builds the others, failing only if the world was named; any
+    other missing file is raised as it is."""
 
-    LIDAR = gen_worlds.DATA_DIR / "dem" / "route_area_lidar_0p5m.tif"  # fetch-data cannot rebuild it yet
+    LIDAR = gen_worlds.DATA_DIR / "dem" / "route_area_lidar_0p5m.tif"  # fetch-data rebuilds it from USGS lidar
+    UNOFFICIAL = gen_worlds.DATA_DIR / "dem" / "made_up_lidar.tif"
+    ENTRY = {"path": "dem/made_up_lidar.tif", "official": False, "required": True, "worlds": ["made_up"],
+             "rebuild": "a made-up script is planned"}
 
     def run_main(self, missing, *names):
         """gen_worlds.main on temporary directories with two worlds: made_up, whose build finds `missing` missing,
@@ -412,9 +416,15 @@ class MissingRaster(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         err = io.StringIO()
+        real = gen_worlds.fetch_data.entry_of
+
+        def entry_of(path, data_dir):  # the manifest, with the made-up raster fetch-data cannot rebuild
+            return self.ENTRY if Path(path) == self.UNOFFICIAL else real(path, data_dir)
+
         with mock.patch.multiple(gen_worlds, MODELS_DIR=Path(tmp.name) / "models",
                                  WORLDS_DIR=Path(tmp.name) / "worlds", MISSIONS={"made_up": World(), "other": Other()},
                                  COURSES={}), \
+                mock.patch.object(gen_worlds.fetch_data, "entry_of", entry_of), \
                 mock.patch.object(sys, "argv", ["gen_worlds.py", *names]), contextlib.redirect_stderr(err), \
                 contextlib.redirect_stdout(io.StringIO()):
             gen_worlds.main()
@@ -426,17 +436,22 @@ class MissingRaster(unittest.TestCase):
         self.assertEqual(caught.exception.code, "made_up: rover_sim/data/dem/made_up.tif is missing; pixi run "
                                                 "fetch-data fetches the terrain rasters (README, Simulation)")
 
+    def test_the_autonomy_lidar_is_fetched_like_the_other_rasters(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main(self.LIDAR)
+        self.assertEqual(caught.exception.code, "made_up: rover_sim/data/dem/route_area_lidar_0p5m.tif is missing; "
+                                                "pixi run fetch-data fetches the terrain rasters (README, Simulation)")
+
     def test_a_raster_fetch_data_cannot_rebuild_skips_its_world(self):
-        built, err = self.run_main(self.LIDAR)
+        built, err = self.run_main(self.UNOFFICIAL)
         self.assertEqual(built, ["other"])
-        self.assertEqual(err, "skipped made_up: rover_sim/data/dem/route_area_lidar_0p5m.tif is missing; fetch-data "
-                              "cannot rebuild it from official sources yet (a script that rebuilds it from the USGS "
-                              "lidar its provenance lists is planned); link it from a teammate's clone: "
-                              "rover_sim/tools/link_data.sh <that clone> (README, Simulation)\n")
+        self.assertEqual(err, "skipped made_up: rover_sim/data/dem/made_up_lidar.tif is missing; fetch-data cannot "
+                              "rebuild it from official sources yet (a made-up script is planned); link it from a "
+                              "clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)\n")
 
     def test_that_world_named_fails_the_run(self):
         with self.assertRaises(SystemExit) as caught:
-            self.run_main(self.LIDAR, "made_up", "other")
+            self.run_main(self.UNOFFICIAL, "made_up", "other")
         self.assertEqual(caught.exception.code, "not generated: made_up (above)")
 
     def test_another_missing_file_is_raised(self):
