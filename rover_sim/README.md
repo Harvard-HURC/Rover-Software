@@ -15,7 +15,7 @@ pixi run launcher               # every world as a tile
 pixi run test                   # the C++ tests and the simulation's suite
 ```
 
-Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). fetch-data cannot rebuild the Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) from official sources yet; a script that rebuilds it from USGS lidar is planned. Until then, link it from a teammate's clone that has it: `rover_sim/tools/link_data.sh <that clone>` (it links every raster that clone has, also when fetch-data cannot reach a source), or copy the file into `rover_sim/data/dem/` (`pixi run fetch-data --verify` checks it). Without it `sim-worlds` skips `urc_autonomy` (`pixi run sim urc_autonomy` and `pixi run drive urc_autonomy` say what is missing) and the tests that need it skip, saying why.
+Every world needs the rasters fetch-data fetches, the test ground too (the tasks generate all worlds). The Autonomy world's 0.5 m lidar DEM (`route_area_lidar_0p5m.tif`) is rebuilt from USGS lidar tiles and point clouds by `tools/usgs_lidar.py` (371 MB to download, 5 to 20 minutes; `--sources <folder>` keeps the downloads: give a folder outside the repository, such as `../lidar-sources`, as git does not ignore one inside it); like every raster it is checked against `data/rasters.json`.
 
 ### Layout
 | Path | What it is |
@@ -26,7 +26,7 @@ Every world needs the rasters fetch-data fetches, the test ground too (the tasks
 | `station/`, `launcher/`, `referee.py` | Driver station, launcher, URC referee |
 | `gzenv.py`, `run.sh`, `bridge.yaml` | The Gazebo environment (the one place it is set), `pixi run sim`, the ROS 2 bridge's topics |
 | `env-hooks/` | Points `GZ_SIM_SYSTEM_PLUGIN_PATH` at the installed plugins when a shell sources `install/` |
-| `tools/`, `patches/` | Fetching the rasters, the patched rendering media (`patches/`: the gz-rendering patch it applies), maps, the realism report, relief swatches |
+| `tools/`, `patches/` | Fetching the rasters (the lidar DEMs rebuilt from USGS lidar by `usgs_lidar.py`), the patched rendering media (`patches/`: the gz-rendering patch it applies), maps, the realism report, relief swatches |
 | `data/` | Terrain data: the rasters (git-ignored, `pixi run fetch-data`, listed in `data/rasters.json`) and the `.json` that says where each came from, relief swatches, the soil map, the research files the code reads |
 | `tests/` | The simulation's suite (`pixi run sim-test`) |
 
