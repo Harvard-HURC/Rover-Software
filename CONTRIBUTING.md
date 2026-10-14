@@ -256,7 +256,7 @@ The repository has no license yet (every `package.xml` says `TODO: License decla
 
 ### Fetch the terrain data
 
-`pixi run fetch-data` downloads the terrain rasters the simulation reads (USGS elevation, USDA NAIP imagery) from their official sources once, and checks them against `rover_sim/data/rasters.json`. `--verify` checks the rasters present and fetches nothing, `--dry-run` says what it would fetch, and `--all` adds the rasters only the research and the relief tool read. The rasters are git-ignored: never commit a `.tif`. Which raster fetch-data cannot rebuild yet, and how to get it from a teammate's clone, is in the [README, Simulation](README.md#simulation).
+`pixi run fetch-data` downloads the terrain rasters the simulation reads (USGS elevation, USDA NAIP imagery) from their official sources once, and checks them against `rover_sim/data/rasters.json`. `--verify` checks the rasters present and fetches nothing, `--dry-run` says what it would fetch, and `--all` adds the rasters only the research and the relief tool read. The rasters are git-ignored: never commit a `.tif`. The Autonomy world's 0.5 m lidar DEM is rebuilt from USGS's public lidar, which makes the first run the long one (371 MB to download, 5 to 20 minutes; `--sources <folder outside the repository>` keeps the downloads, so a run that failed part way goes on from them). When a source is down, `rover_sim/tools/link_data.sh <a clone that has the rasters>` links them from another clone ([README, Simulation](README.md#simulation)).
 
 ### Run the tests
 
