@@ -16,6 +16,7 @@ import time
 
 import rover_config
 import viewers
+import wheel_cmd
 from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.double_pb2 import Double
 from gz.msgs10.entity_factory_pb2 import EntityFactory
@@ -101,7 +102,10 @@ def wait_for_world(node, timeout, name=None, process=None):
 
 
 class GzLink:
-    def __init__(self, world, node=None):
+    """drive: where twist() goes, an object with twist(vx, wz): the station's main gives it the ROS stack's /cmd_vel
+    (station/ros_link.py); by default, and in the tests, wheel_cmd.TwistDrive on the drivetrain's ROS-free topic."""
+
+    def __init__(self, world, node=None, drive=None):
         self.world = world
         self.node = node or Node()
         self.id = f"{socket.gethostname()}:{os.getpid()}"
@@ -129,7 +133,7 @@ class GzLink:
         sub(StringMsg, "/urc/radio", lambda m: self._put("radio", m.data))
         # Advertise now: gz-transport drops messages published before the
         # subscribers have connected.
-        self._twist = self.node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+        self.drive = drive or wheel_cmd.TwistDrive(self.node)
         self._led = self.node.advertise(rover_config.LED_TOPIC, StringMsg)
         self._chase_cmd = self.node.advertise(viewers.CHASE_CMD_TOPIC, Vector3d)
         self._chase_mode = self.node.advertise(viewers.CHASE_MODE_TOPIC, StringMsg)
@@ -251,9 +255,7 @@ class GzLink:
     # --- Outputs -----------------------------------------------------------------
 
     def twist(self, vx, wz):
-        msg = Twist()
-        msg.linear.x, msg.angular.z = vx, wz
-        self._twist.publish(msg)
+        self.drive.twist(vx, wz)
 
     def led(self, state):
         msg = StringMsg()

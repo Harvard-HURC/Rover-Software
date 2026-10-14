@@ -1,8 +1,10 @@
 """Run the rover headless in Gazebo for the tests.
 
 Gazebo's Python TestFixture runs the server inside this process, so a run is
-repeatable: commands go out over gz-transport every 20 ms of sim time, and
-the state is read from the entity-component manager after the last step.
+repeatable: the rover's command, a twist every 20 ms of sim time, goes out
+over gz-transport as the wheel setpoints wheel_cmd.Driver makes of it step by
+step (the physical drivetrain) and as the twist (Gazebo's DiffDrive), and the
+state is read from the entity-component manager after the last step.
 The rover is model://rover (the physical drivetrain, its command timeout on
 the wall clock) or one built from a rover_config.Variant (physical(): the same
 with the timeout on sim time, so runs repeat exactly; diffdrive(): Gazebo's
@@ -39,15 +41,19 @@ from worldfiles import SIM_DIR, temp_sdf
 import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
 import gzenv  # noqa: E402
 import rover_config  # noqa: E402
-from rover_config import ROVER, Variant  # noqa: E402
+import wheel_cmd  # noqa: E402
+from rover_config import ROVER, SIM, Variant  # noqa: E402
 from urc import sdf, terrain, terrains  # noqa: E402
 
 # Set before Gazebo starts (gzenv): where model://rover and the plugins live,
-# and a private transport partition so tests never talk to a running simulation.
+# and a private transport partition and ROS domain so tests never talk to a
+# running simulation or another ROS 2 graph (the ROS tests start rclpy after this).
 os.environ.update(gzenv.environment(partition=f"rover_sim_test_{os.getpid()}",
-                                    ip=os.environ.get("GZ_IP", "127.0.0.1")))
+                                    ip=os.environ.get("GZ_IP", "127.0.0.1"),
+                                    ros_domain=gzenv.private_ros_domain(os.getpid())))
 
 import gz.math7  # noqa: E402,F401  (lets gz.sim8 return Pose3d values)
+from gz.msgs10.double_v_pb2 import Double_V  # noqa: E402
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
@@ -196,31 +202,33 @@ def twist_at(schedule, t):
 
 
 def simulate(seconds, extra="", spawn_z=0.02, cmd=(0.0, 0.0), subscribe=(), world=None, rover_uri=None, params=None,
-             default_surface=None, solver=None, trace_every=0, publish_until=None):
+             default_surface=None, solver=None, trace_every=0, publish_until=None, accel=None):
     """Run for `seconds` of sim time and return the final State.
 
     cmd: (vx [m/s], wz [rad/s]) sent from the start, or a schedule
     [(t [s], vx, wz), ...] (twist_at), sent every 20 ms from the start and,
-    with publish_until [s], only until then.
+    with publish_until [s], only until then: as the wheel setpoints
+    wheel_cmd.Driver makes of it, step by step, and as the twist.
     subscribe: (topic, message class) pairs to record during the run.
     world: an SDF file to run instead of world_sdf(extra, spawn_z).
     rover_uri, params, default_surface, solver: see world_file.
     trace_every: record base_link every that many steps (State.trace).
+    accel: the setpoints' ramp [rad/s^2]; default the wheel_cmd accel of
+    `params`, else sim.yaml's (give it for a world built with a variant).
     """
+    if accel is None:
+        accel = (params.sim if params is not None else SIM).wheel_cmd.accel
     with world_file(world, extra, spawn_z, rover_uri, params, default_surface, solver) as world_path:
-        return _run(seconds, cmd, subscribe, world_path, trace_every, publish_until)
+        return _run(seconds, cmd, subscribe, world_path, trace_every, publish_until, accel)
 
 
-def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None):
+def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None, accel=None):
     node = Node()
     messages = {topic: [] for topic, _ in subscribe}
     for topic, msg_type in subscribe:
         node.subscribe(msg_type, topic, messages[topic].append)
-    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+    driver = wheel_cmd.Driver(node, SIM.wheel_cmd.accel if accel is None else accel)
     scripted = bool(cmd) and isinstance(cmd[0], (tuple, list))
-    twist = Twist()
-    if not scripted:
-        twist.linear.x, twist.angular.z = cmd
     handles = {}
     last = {}
     peak = [0.0]
@@ -236,12 +244,10 @@ def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None)
             handles["links"]["base_link"].enable_velocity_checks(ecm, True)
         if publish_until is not None and info.iterations / 1000 > publish_until:
             return
-        if info.iterations % 20 == 0:
-            if scripted:
-                twist.linear.x, twist.angular.z = twist_at(cmd, info.iterations / 1000)
-                publisher.publish(twist)
-            elif any(cmd):
-                publisher.publish(twist)
+        beat = info.iterations % 20 == 0
+        if beat and (scripted or any(cmd)):
+            driver.command(*(twist_at(cmd, info.iterations / 1000) if scripted else cmd))
+        driver.step(force=beat)
 
     def post_update(info, ecm):
         last["rockers"] = {n: j.position(ecm) for n, j in handles["rockers"].items()}
@@ -297,28 +303,28 @@ def pursue(path, x, y, yaw, speed, lookahead=2.0, gain=1.5, min_radius=1.5):
     return vx, max(-vx / min_radius, min(vx / min_radius, gain * error))
 
 
-def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
+def follow(world, path, seconds, speed=0.8, tolerance=1.0, accel=None, **driver):
     """Drive the rover in the SDF file `world` along a world (x, y) polyline
     with a pure-pursuit driver (pursue) on its ground truth, a command every
-    20 ms of sim time, until it is within `tolerance` of the path's end
-    (then it stops) or `seconds` of sim time have passed."""
+    20 ms of sim time (wheel_cmd.Driver, ramped at accel, default sim.yaml's),
+    until it is within `tolerance` of the path's end (then it stops) or
+    `seconds` of sim time have passed."""
     node = Node()
-    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+    wheels = wheel_cmd.Driver(node, SIM.wheel_cmd.accel if accel is None else accel)
     goal = tuple(path[-1])
     handles, trace, arrived = {}, [], []
-    twist = Twist()
 
     def pre_update(info, ecm):
         if not handles:
             model = Model(World(world_entity(ecm)).model_by_name(ecm, "rover"))
             handles["base"] = Link(model.link_by_name(ecm, "base_link"))
-        if info.iterations % 20:
-            return
-        x, y, _, _, _, yaw = _xyzrpy(handles["base"].world_pose(ecm))
-        if not arrived and math.dist((x, y), goal) < tolerance:
-            arrived.append(info.iterations / 1000)
-        twist.linear.x, twist.angular.z = (0.0, 0.0) if arrived else pursue(path, x, y, yaw, speed, **driver)
-        publisher.publish(twist)
+        beat = info.iterations % 20 == 0
+        if beat:
+            x, y, _, _, _, yaw = _xyzrpy(handles["base"].world_pose(ecm))
+            if not arrived and math.dist((x, y), goal) < tolerance:
+                arrived.append(info.iterations / 1000)
+            wheels.command(*((0.0, 0.0) if arrived else pursue(path, x, y, yaw, speed, **driver)))
+        wheels.step(force=beat)
 
     def post_update(info, ecm):
         if info.iterations % 100 == 0:
@@ -462,10 +468,16 @@ def world_name(path):
 @contextlib.contextmanager
 def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
     """Drive the rover from a thread of this process: twist_at(schedule, sim
-    time) on its cmd_vel topic `rate` times a second, while any of the named
-    worlds runs in this partition. Sim time comes from the worlds' statistics
-    (10 Hz): /clock, sent every step, would add to the cost being measured.
-    Nothing is sent before the first statistics message."""
+    time) `rate` times a second while any of the named worlds runs in this
+    partition, as the twist (Gazebo's DiffDrive) and as wheel setpoints ramped
+    over the sim time since the last (wheel_cmd.Ramp; the physical drivetrain).
+    Sim time comes from the worlds' statistics (10 Hz): /clock, sent every
+    step, would add to the cost being measured. Nothing is sent before the
+    first statistics message. The ramp is therefore coarser than the
+    drivetrain's own before PR 3, which ramped in every step: up to 0.8 rad/s
+    per statistics message (more when the world runs faster than real time),
+    1 ms worth when the statistics have not advanced. The cost runs measure
+    the drivetrain's cost, not where the rover goes."""
     node = Node()
     now = []
 
@@ -474,15 +486,20 @@ def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
 
     for name in worlds:
         node.subscribe(WorldStatistics, f"/world/{name}/stats", on_stats)
-    publisher = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+    twists = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+    wheels = node.advertise(rover_config.WHEEL_CMD_TOPIC, Double_V)
     stop = threading.Event()
 
     def loop():
-        twist = Twist()
+        twist, ramp, last = Twist(), wheel_cmd.Ramp(), None
         while not stop.wait(1.0 / rate):
             if now:
-                twist.linear.x, twist.angular.z = twist_at(schedule, now[0])
-                publisher.publish(twist)
+                t = now[0]
+                twist.linear.x, twist.angular.z = twist_at(schedule, t)
+                twists.publish(twist)
+                dt = t - last if last is not None and t > last else wheel_cmd.STEP
+                wheels.publish(wheel_cmd.message(ramp.step(twist.linear.x, twist.angular.z, dt)))
+                last = t
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()

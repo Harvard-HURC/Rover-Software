@@ -2,9 +2,9 @@
 """The rover the simulation loads is the rover gen_model.py wrote, number for number (design spec 2026-10-09,
 section 5): tools/gen_rover.py's model of the description, and of each variant the tests build, against the frozen
 models in fixtures/rover_model (written by gen_model.py at import/simulation, 9208047; fixtures/rover_model/README.md
-lists them). SdfEquivalence checks the comparison itself; Drives runs the frozen and the generated rover side by
-side in Gazebo. When the rover changes on purpose, refreeze the fixtures from gen_rover.py in the same commit and say
-why (fixtures/rover_model/README.md)."""
+lists them), after ros2_control_boundary(), the one change since that is not physical. SdfEquivalence checks the
+comparison itself; Drives runs the frozen and the generated rover side by side in Gazebo. When the rover changes on
+purpose, refreeze the fixtures from gen_rover.py in the same commit and say why (fixtures/rover_model/README.md)."""
 import contextlib
 import copy
 import tempfile
@@ -19,6 +19,7 @@ from simulate import simulate
 from worldfiles import SIM_DIR
 
 import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
+import rover_config  # noqa: E402
 from rover_config import Variant  # noqa: E402
 from urc import sdf  # noqa: E402
 
@@ -34,7 +35,7 @@ VARIANTS = {
     "cues_off": V.replace(tread_tyre=False, dig_sink={"enabled": False}, ruts={"enabled": False}),
     "tyre_compliance": V.replace(tyre_compliance={"enabled": True}),
     "test_physical": V.replace(
-        drivetrain={"cmd_timeout_clock": "sim", "accel": 0.0, "state_rate": 1000.0, "cmd_timeout": 0.0},
+        drivetrain={"cmd_timeout_clock": "sim", "state_rate": 1000.0, "cmd_timeout": 0.0},
         contact={"dig": False, "mu_noise": 0.0, "default_surface": "sand"}, driveline={"backlash": 0.0},
         motor={"current_limit": 10.0}, ruts={"tracks": {"report": 1.0}}),
     "same_surfaces": V.replace(contact={"default_surface": "manmade"}),
@@ -46,6 +47,21 @@ SIM_CLOCK = "<cmd_timeout_clock>sim</cmd_timeout_clock>"
 
 def fixture(name):
     return (FIXTURES / f"{name}.sdf").read_text()
+
+
+def ros2_control_boundary(text):
+    """A frozen model as the generator writes it since the ros2_control boundary (design spec 2026-10-09, section 6.1;
+    PR 3): RoverDrivetrain no longer turns a twist into wheel setpoints, so its twist topic, track multiplier and ramp
+    (<topic>, <track_multiplier>, <controller><accel>) are gone, and it takes setpoints on <setpoint_topic>. Nothing
+    physical changes; a DiffDrive model is left as it is."""
+    root = ET.fromstring(text)
+    for plugin in root.iter("plugin"):
+        if plugin.get("filename") != "RoverDrivetrain":
+            continue
+        for parent, tag in ((plugin, "topic"), (plugin, "track_multiplier"), (plugin.find("controller"), "accel")):
+            parent.remove(parent.find(tag))
+        sdf.sub(plugin, "setpoint_topic", rover_config.WHEEL_CMD_TOPIC)
+    return sdf.document(root)
 
 
 class SdfEquivalence(unittest.TestCase):
@@ -135,13 +151,19 @@ class Equivalence(unittest.TestCase):
         self.assertEqual(sorted(p.stem for p in FIXTURES.glob("*.sdf")), sorted(VARIANTS))
         for name, variant in VARIANTS.items():
             with self.subTest(name):
-                self.assertEqual(differences(fixture(name), gen_rover.build_sdf(variant)), [])
+                self.assertEqual(differences(ros2_control_boundary(fixture(name)), gen_rover.build_sdf(variant)), [])
 
     def test_the_rover_is_the_tracked_model(self):
         """The tracked model://rover is the default rover (the comparison, not the bytes: gen_rover.py lays it out
         as the converter does)."""
         tracked = (SIM_DIR / "models" / "rover" / "model.sdf").read_text()
-        self.assertEqual(differences(fixture("default"), tracked), [])
+        self.assertEqual(differences(ros2_control_boundary(fixture("default")), tracked), [])
+
+    def test_the_boundary_changes_only_the_drives_command_interface(self):
+        """ros2_control_boundary changes four elements of a physical rover's drivetrain and nothing of a DiffDrive
+        rover's."""
+        self.assertEqual(len(differences(fixture("default"), ros2_control_boundary(fixture("default")))), 4)
+        self.assertEqual(differences(fixture("diffdrive"), ros2_control_boundary(fixture("diffdrive"))), [])
 
 
 @contextlib.contextmanager

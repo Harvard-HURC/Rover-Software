@@ -1,5 +1,6 @@
-# How the simulation models the rover and its ground: the drivetrain plugin's settings (its twist input, the stand-in
-# motor controller, the motor model's integration), the contact model, the dig-in and its visual cues, the tyre
+# How the simulation models the rover and its ground: the drivetrain plugin's settings (its setpoint watchdog, the
+# stand-in motor controller, the motor model's integration), the ROS-free helpers' ramp, the contact model, the dig-in
+# and its visual cues, the tyre
 # model, dust, and the names of the rover's Gazebo interface. urdf/rover_sim.urdf.xacro writes them into the rover's
 # model (`pixi run sim-model`); the rover's physical numbers are rover_description/config/rover.yaml. Units SI;
 # numbers that are not counts keep a decimal point.
@@ -11,13 +12,13 @@ drivetrain:
   # like the ground under it (the default); diffdrive: Gazebo's DiffDrive, every wheel a velocity servo on
   # anisotropic tyres (the diffdrive section), kept for A/B tests and cost comparisons (D22).
   mode: physical
-  # The twist input (PR 3 moves it into the drive controller). A command older than cmd_timeout counts as zero, so a
-  # commander that died cannot leave the rover driving (user decision 2026-10-06); 0 holds the last command, as
-  # Gazebo's GUI Teleop needs. The clock: wall (a dead process) or sim (deterministic tests).
+  # The motor controller's watchdog: a wheel setpoint older than cmd_timeout counts as zero, so a commander that died
+  # cannot leave the rover driving (user decision 2026-10-06); 0 holds the last setpoint. The clock: wall (a dead
+  # process) or sim (deterministic tests). The setpoints come from ros2_control (RoverSimSystem) or the ROS-free topic
+  # topics.wheel_cmd; since PR 3 the twist-to-wheel kinematics, the effective-track compensation and the ramp are the
+  # drive controller's (rover_control/config/controllers.yaml), and wheel_cmd's below for the ROS-free helpers.
   cmd_timeout: 0.5                  # [s]
   cmd_timeout_clock: wall
-  track_multiplier: 1.0             # effective-track compensation; 1 = the raw skid-steer response (D24, Q10)
-  accel: 8.0                        # [rad/s^2] wheel setpoint ramp, 1.2 m/s^2 (A: until the driver team reports theirs, Q7)
   # The speed loop of the motor controller the simulation stands in for, tuned against this motor model to the
   # design's response (6.9: < 60 ms). The real controller is not chosen; its gains will be tuned on the hardware and
   # live with its driver, so they are the simulation's, not facts of the rover (decision of the PR 2 plan).
@@ -34,6 +35,15 @@ drivetrain:
   tyre_mu: 1.0                      # isotropic tyre friction: the drivetrain sets the friction of every wheel contact
   odom_rate: 50.0                   # [Hz] the no-slip odometry (DiffDrive's too)
   state_rate: 50.0                  # [Hz] the drivetrain state topic
+
+# The ROS-free helpers (wheel_cmd.py: the tests, tools and scripts that speak twists to a rover without ROS) turn a
+# twist into wheel setpoints as the drivetrain did before the ros2_control boundary (PR 3): skid steer with the
+# geometric track, clamped to the top speed, each wheel's setpoint ramped at accel, so a run that keeps commanding
+# (every calibration run) drives as it did; one that stops commanding stops harder, the watchdog zeroing a stale
+# setpoint at once (docs/sim/design-notes.md, Watchdog). The ROS stack's drive controller ramps vx and wz at the same
+# wheel rate (rover_control/config/controllers.yaml; tests/test_wheel_cmd.py checks it).
+wheel_cmd:
+  accel: 8.0                        # [rad/s^2] each wheel's setpoint, 1.2 m/s^2 (A: until the driver team's, Q7)
 
 # Gazebo's DiffDrive (drivetrain mode diffdrive). Lateral friction below longitudinal emulates tyre scrub; with equal
 # values the physics engine's box friction stops the rover turning in place.
@@ -175,7 +185,8 @@ continuous_stops: 1.0e+16           # [rad]
 
 # The rover's Gazebo topics; {joint}, {link} and {emitter} are filled in.
 topics:
-  cmd_vel: /model/rover/cmd_vel
+  cmd_vel: /model/rover/cmd_vel                 # Gazebo's DiffDrive only (drivetrain mode diffdrive): gz.msgs.Twist
+  wheel_cmd: /model/rover/wheel_cmd             # the wheels' speed setpoints [rad/s]: gz.msgs.Double_V, fl rl fr rr
   odometry: /model/rover/odometry
   tf: /model/rover/tf
   joint_states: /model/rover/joint_states

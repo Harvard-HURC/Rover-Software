@@ -1,0 +1,9 @@
+<library path="rover_hardware_stub">
+  <class name="rover_control/RoverHardwareStub" type="rover_control::RoverHardwareStub"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      The real rover's ros2_control hardware until its motor controllers are chosen: the description's interfaces,
+      zero motion, and a log of the wheel commands it would send.
+    </description>
+  </class>
+</library>

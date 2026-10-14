@@ -13,8 +13,9 @@ version = "0.1.0"
 _workspace = '''python -c "import os, sys; os.path.basename(os.environ['PIXI_PROJECT_ROOT']) == 'src' or sys.exit('clone this repository into a folder called src in your workspace (README, Setup): the colcon tasks run in the folder above it')"'''
 # Every package (on Windows without the tests, see the target below), after the simulation's patched media.
 build = { cmd = "colcon build", cwd = "..", depends-on = ["_workspace", "sim-media"] }
-# The colcon tests: rover_description's (xacro and check_urdf, the team's linters), rover_control's (GoogleTest,
-# rover_state, viz.py) and rover_sim's three plugin test programs.
+# The colcon tests: rover_description's (xacro and check_urdf, the team's linters), rover_control's (GoogleTest: the
+# tank kinematics, controllers.yaml, the hardware stub; rover.launch.py with the stub) and rover_sim's C++ tests (the
+# plugins' parts, the rover's ECM components, RoverSimSystem).
 colcon-test = { cmd = "colcon test --packages-select rover_description rover_control rover_sim --return-code-on-test-failure --event-handlers console_cohesion+", cwd = "..", depends-on = ["build"] }
 # The colcon tests (rover_description, rover_control, rover_sim) and the simulation's suite. The rendering tests skip
 # where there is no GPU and say why.
@@ -23,8 +24,6 @@ test = { depends-on = ["colcon-test", "sim-test"] }
 # 0.5 m lidar DEMs rebuilt from USGS lidar (tools/usgs_lidar.py) (--all: every raster; --dry-run; --verify;
 # --sources DIR keeps the USGS lidar files).
 fetch-data = "python rover_sim/tools/fetch_data.py"
-# rover_control's interactive view of the swerve kinematics.
-control-viz = { cmd = "python rover_control/tools/viz.py", depends-on = ["build"] }
 # The patched gz-rendering media (sky, haze, terrain roughness) in the workspace's build/rover_sim. Soft: without it Gazebo uses its stock media.
 sim-media = "python rover_sim/tools/gz_media.py || echo 'sim-media: no patched media, Gazebo uses its stock media'"
 sim-build = { cmd = "colcon build --packages-select rover_sim", cwd = "..", depends-on = ["_workspace", "sim-media"] }
@@ -35,12 +34,14 @@ sim-relief = { cmd = "python rover_sim/tools/make_relief_swatches.py", inputs = 
 sim-worlds = { cmd = "python rover_sim/gen_worlds.py", depends-on = ["sim-model"], inputs = ["rover_sim/gen_worlds.py", "rover_sim/rover_config.py", "rover_description/config/rover.yaml", "rover_sim/urc/**/*.py", "rover_sim/data/dem/*", "rover_sim/data/imagery/*_naip2024.*", "rover_sim/data/imagery/naip2021_far_60km.*", "rover_sim/data/relief/*", "rover_sim/data/soils/*", "rover_sim/data/research/terrain_targets.json"], outputs = ["rover_sim/worlds/urc_*.sdf", "rover_sim/worlds/urc_*.json", "rover_sim/worlds/proving_ground.sdf", "rover_sim/worlds/proving_ground.json", "rover_sim/models/urc_*/**"] }
 # Orthophoto maps of the worlds for the station's Map view (needs the GPU, so not part of sim-test).
 sim-maps = { cmd = "python rover_sim/tools/render_map.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The world in Gazebo's GUI with the rover's ROS 2 stack (rover_sim/launch/sim.launch.py): pixi run sim [world]
+# [--follow]. /cmd_vel drives it: pixi run drive, or ros2 topic pub (README, Simulation).
 sim = { cmd = "bash rover_sim/run.sh", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
+# The driver station: with a world it starts sim.launch.py headless, without one it attaches to the running world.
 drive = { cmd = "python rover_sim/station/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # Every world as a tile on one page: a click starts it with its driver station, Exit stops it.
 launcher = { cmd = "python rover_sim/launcher/__main__.py", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 referee = "python rover_sim/referee.py"
-sim-bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=rover_sim/bridge.yaml"
 sim-test = { cmd = "python -m unittest discover -s rover_sim/tests -v", depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 # The performance budgets (physics speed, start-up, memory, the drivetrain's cost against DiffDrive): slow, so opt-in.
 sim-perf = { cmd = "python -m unittest -v test_perf test_drivetrain.Cost", cwd = "rover_sim/tests", env = { ROVER_PERF = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
@@ -66,9 +67,17 @@ ros-dev-tools = ">=1.0.3,<2"
 # rover_description: xacro builds the description from rover.yaml; the view launch file's joint sliders
 ros2-xacro = ">=2.1.1,<3"
 ros2-joint-state-publisher-gui = ">=2.4.3,<3"
-# rover_control: the kinematics library and its tests
-eigen = ">=5.0.1,<6"
+# rover_control: the tank kinematics' rover.yaml loader and the tests
 gtest = ">=1.18.0,<2"
+yaml-cpp = ">=0.8.0,<0.9"
+# The drive boundary (design spec 2026-10-09, section 6): the controller manager and the hardware interface that the
+# rover's hardware stub and the simulation's RoverSimSystem implement, the drive controller, the joint state
+# broadcaster and `ros2 control`; the packages themselves, not the ros2_control and ros2_controllers metapackages
+ros2-controller-manager = ">=4.47.0,<5"
+ros2-hardware-interface = ">=4.47.0,<5"
+ros2-diff-drive-controller = ">=4.42.1,<5"
+ros2-joint-state-broadcaster = ">=4.42.1,<5"
+ros2-ros2controlcli = ">=4.47.0,<5"
 
 # rover_sim: Gazebo's libraries for the plugins and the simulation's Python. macOS and Linux only: on Windows the
 # simulation runs in WSL2.
@@ -86,6 +95,8 @@ py-opencv = ">=4.13.0,<5"
 pillow = ">=12.3.0,<13"
 matplotlib-base = ">=3.11.2,<4"
 aiohttp = ">=3.14.3,<4"
+# gz_ros2_control: the Gazebo system that runs the controller manager inside the simulation, with RoverSimSystem
+ros2-gz-ros2-control = ">=1.2.19,<2"
 # fetch-data's lidar rebuild (tools/usgs_lidar.py): GDAL's command-line tools and PROJ (until now only there through
 # gz-common5) and the LAZ reader. rasters.json's hashes of the lidar DEMs were made with GDAL 3.13.3 and PROJ 9.8.1
 # (R: their provenance); another minor version may round differently, which fetch-data then accepts only within its

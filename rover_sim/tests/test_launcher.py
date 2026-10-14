@@ -16,9 +16,10 @@ import worldfiles  # (also puts sim/ on the path)
 from launcher import __main__ as launcher  # noqa: E402
 
 FAKE_STATION = textwrap.dedent("""\
-    import signal, sys, time
+    import os, signal, sys, time
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     print("\\x1b[1;33mWarning\\x1b[0m starting", flush=True)
+    print("ROS domain", os.environ.get("ROS_DOMAIN_ID"), os.environ.get("ROS_AUTOMATIC_DISCOVERY_RANGE"), flush=True)
     print("driver station on http://127.0.0.1:9/ (Ctrl-C to stop)", flush=True)
     while True:
         time.sleep(0.05)
@@ -87,6 +88,8 @@ class Life(AioHTTPTestCase):
                 state = await ws.receive_json()
             self.assertEqual((state["world"], state["url"]), ("rover_test", "http://127.0.0.1:9/"))
             self.assertIn("Warning starting", state["log"], "terminal colours are stripped")
+            self.assertIn(f"ROS domain {self.launcher.domain} LOCALHOST", state["log"])  # its own ROS 2 graph
+            self.assertTrue(50 <= self.launcher.domain < 100)
             await self.client.post("/api/stop")
             await self.until("idle")
             self.assertIsNotNone(process.returncode, "Exit stops the station")

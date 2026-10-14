@@ -1,6 +1,6 @@
 """The rover's numbers for the simulation's Python, read once: rover_description/config/rover.yaml, the physical
 rover (ROVER), and rover_sim/config/sim.yaml, how the simulation models it (SIM), as read-only trees with attribute
-access (ROVER.wheel.radius, SIM.drivetrain.accel; YAML lists become tuples). Variant is a rover with some of those
+access (ROVER.wheel.radius, SIM.wheel_cmd.accel; YAML lists become tuples). Variant is a rover with some of those
 numbers changed, which tools/gen_rover.py builds (the tests drive such variants). The names of the rover's Gazebo
 interface (topics, joints, files in its model) are here too.
 
@@ -17,6 +17,8 @@ SIM_DIR = Path(__file__).resolve().parent
 DESCRIPTION_DIR = SIM_DIR.parent / "rover_description"  # the package beside this one in the repository
 ROVER_YAML = DESCRIPTION_DIR / "config" / "rover.yaml"
 SIM_YAML = SIM_DIR / "config" / "sim.yaml"
+CONTROL_DIR = SIM_DIR.parent / "rover_control"  # the package beside this one: the controllers the ROS rover runs
+CONTROLLERS_YAML = CONTROL_DIR / "config" / "controllers.yaml"
 
 
 class Tree(Mapping):
@@ -108,6 +110,7 @@ class Variant:
 
 # The rover's Gazebo interface (sim.yaml topics; the joint and visual names are the description's).
 CMD_VEL_TOPIC = SIM.topics.cmd_vel
+WHEEL_CMD_TOPIC = SIM.topics.wheel_cmd  # the drivetrain's wheel setpoints: gz.msgs.Double_V, fl rl fr rr (wheel_cmd.py)
 ODOM_TOPIC = SIM.topics.odometry
 TF_TOPIC = SIM.topics.tf
 JOINT_STATE_TOPIC = SIM.topics.joint_states

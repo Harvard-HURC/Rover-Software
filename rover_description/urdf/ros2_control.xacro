@@ -2,8 +2,9 @@
 <!-- The rover's ros2_control block (design spec 2026-10-09, section 5): each wheel takes a velocity command and
      reports its position, velocity and effort (the motor current); the rockers and the camera head report position
      and velocity only. `plugin` is the hardware interface: rover_control's real-hardware stub by default
-     (rover.urdf.xacro's ros2_control_plugin argument); the simulation sets its own (PR 3). Nothing loads this block
-     yet: the controllers come with PR 3. -->
+     (rover.urdf.xacro's ros2_control_plugin argument); the simulation sets RoverSimSystem (rover_sim's
+     rover_sim.urdf.xacro with ros2_control:=true). The controller manager loads it: rover_control's rover.launch.py
+     on the rover, gz_ros2_control in the simulation. -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:macro name="rover_ros2_control" params="plugin">
     <xacro:macro name="driven_joint" params="name">
