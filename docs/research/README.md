@@ -21,14 +21,12 @@ code reads or writes stay in `rover_sim/data/research/`
 
 The lidar and colour measurements were made on the git-ignored rasters that
 `rover_sim/data/rasters.json` lists. `pixi run fetch-data --all` fetches
-them from their official sources, except four it cannot rebuild yet: the
-0.5 m lidar DEMs (`route_area_lidar_0p5m.tif`, which the gate runs used,
-its source map and `mdrs_area_lidar2018_0p5m.tif`), made by processing that
-is not in the repository, and the NAIP 2021 route mosaic
-(`naip2021_route_area.tif`, which `render/prototype/make_ortho.py` reads).
-A script that rebuilds the lidar DEMs from USGS's public lidar is planned;
-until then link them from a teammate's clone that has them,
-`rover_sim/tools/link_data.sh <that clone>`.
+them from their official sources: the 0.5 m lidar DEMs
+(`route_area_lidar_0p5m.tif`, which the gate runs used, its source map and
+`mdrs_area_lidar2018_0p5m.tif`) rebuilt from USGS lidar tiles and point
+clouds by `rover_sim/tools/usgs_lidar.py`, and the NAIP 2021 route mosaic
+(`naip2021_route_area.tif`, which `render/prototype/make_ortho.py` reads)
+from the USGS National Map's NAIP service.
 
 Code comments cite these files as `sim/data/research/<file>`: read
 `docs/research/<file>`. The gate and prototype scripts expect the tree as it
