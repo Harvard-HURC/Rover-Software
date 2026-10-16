@@ -14,8 +14,9 @@ import socket
 import threading
 import time
 
-import gen_model
+import rover_config
 import viewers
+import wheel_cmd
 from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.double_pb2 import Double
 from gz.msgs10.entity_factory_pb2 import EntityFactory
@@ -32,18 +33,18 @@ from gz.transport13 import Node, SubscribeOptions
 
 from .video import Feed
 
-ROVER = gen_model.Params()
+ROVER = rover_config.ROVER
 CAMERAS = {  # page name -> image topic
-    "eye": gen_model.EYE_IMAGE_TOPIC,
-    "chase": gen_model.CHASE_IMAGE_TOPIC,
-    "rgb": gen_model.CAMERA_TOPIC + "/image",
-    "depth": gen_model.CAMERA_TOPIC + "/depth_image",
+    "eye": viewers.EYE_IMAGE_TOPIC,
+    "chase": viewers.CHASE_IMAGE_TOPIC,
+    "rgb": rover_config.CAMERA_TOPIC + "/image",
+    "depth": rover_config.CAMERA_TOPIC + "/depth_image",
     "fly": viewers.FLY_IMAGE_TOPIC,
 }
 # The station's camera models, the snapshot key of their state and the state
 # topic their ChaseCamera plugin publishes at 5 Hz.
-VIEWERS = ((gen_model.EYE_MODEL, "eye", gen_model.EYE_STATE_TOPIC),
-           (gen_model.CHASE_MODEL, "chase", gen_model.CHASE_STATE_TOPIC))
+VIEWERS = ((viewers.EYE_MODEL, "eye", viewers.EYE_STATE_TOPIC),
+           (viewers.CHASE_MODEL, "chase", viewers.CHASE_STATE_TOPIC))
 # The fly camera (FlyCamera plugin, state at 10 Hz of sim time) is spawned
 # only when the Fly or Map view is first used: an idle one costs 1.5-3.5 % of
 # the step time, and its first step reads the heightmap (20-310 ms).
@@ -101,7 +102,10 @@ def wait_for_world(node, timeout, name=None, process=None):
 
 
 class GzLink:
-    def __init__(self, world, node=None):
+    """drive: where twist() goes, an object with twist(vx, wz): the station's main gives it the ROS stack's /cmd_vel
+    (station/ros_link.py); by default, and in the tests, wheel_cmd.TwistDrive on the drivetrain's ROS-free topic."""
+
+    def __init__(self, world, node=None, drive=None):
         self.world = world
         self.node = node or Node()
         self.id = f"{socket.gethostname()}:{os.getpid()}"
@@ -112,36 +116,36 @@ class GzLink:
         self._stations = {}  # id of another driver station -> (its announcement, time.monotonic())
         self._yaw = (None, 0.0, 0.0)  # the latest ground truth: sim time [s], yaw, yaw rate [rad/s]
         sub = self.node.subscribe
-        sub(Odometry, gen_model.GROUND_TRUTH_TOPIC, self._on_odometry)
+        sub(Odometry, rover_config.GROUND_TRUTH_TOPIC, self._on_odometry)
         throttled = SubscribeOptions()
         throttled.msgs_per_sec = JOINT_RATE
-        sub(Model, gen_model.JOINT_STATE_TOPIC, self._on_joints, throttled)
-        sub(NavSat, gen_model.NAVSAT_TOPIC, self._on_navsat)
+        sub(Model, rover_config.JOINT_STATE_TOPIC, self._on_joints, throttled)
+        sub(NavSat, rover_config.NAVSAT_TOPIC, self._on_navsat)
         sub(WorldStatistics, f"/world/{world}/stats", self._on_stats)
-        sub(StringMsg, gen_model.LED_TOPIC, lambda m: self._put("led", m.data.strip().lower()))
+        sub(StringMsg, rover_config.LED_TOPIC, lambda m: self._put("led", m.data.strip().lower()))
         for _, key, topic in (*VIEWERS, FLY_VIEWER):
             sub(StringMsg, topic, lambda m, key=key: self._put(key, json.loads(m.data)))
         drivetrain = SubscribeOptions()
         drivetrain.msgs_per_sec = DRIVETRAIN_RATE
-        sub(StringMsg, gen_model.DRIVETRAIN_TOPIC, lambda m: self._put("drivetrain", json.loads(m.data)), drivetrain)
+        sub(StringMsg, rover_config.DRIVETRAIN_TOPIC, lambda m: self._put("drivetrain", json.loads(m.data)), drivetrain)
         sub(StringMsg, STATION_TOPIC, self._on_station)
         sub(StringMsg, "/urc/score", lambda m: self._put("score", json.loads(m.data)))
         sub(StringMsg, "/urc/radio", lambda m: self._put("radio", m.data))
         # Advertise now: gz-transport drops messages published before the
         # subscribers have connected.
-        self._twist = self.node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
-        self._led = self.node.advertise(gen_model.LED_TOPIC, StringMsg)
-        self._chase_cmd = self.node.advertise(gen_model.CHASE_CMD_TOPIC, Vector3d)
-        self._chase_mode = self.node.advertise(gen_model.CHASE_MODE_TOPIC, StringMsg)
-        self._eye = self.node.advertise(gen_model.EYE_LOOK_TOPIC, Vector3d)
-        self._head = {joint: self.node.advertise(gen_model.HEAD_TOPIC.format(joint=joint), Double)
-                      for joint in (gen_model.PAN_JOINT, gen_model.TILT_JOINT)}
+        self.drive = drive or wheel_cmd.TwistDrive(self.node)
+        self._led = self.node.advertise(rover_config.LED_TOPIC, StringMsg)
+        self._chase_cmd = self.node.advertise(viewers.CHASE_CMD_TOPIC, Vector3d)
+        self._chase_mode = self.node.advertise(viewers.CHASE_MODE_TOPIC, StringMsg)
+        self._eye = self.node.advertise(viewers.EYE_LOOK_TOPIC, Vector3d)
+        self._head = {joint: self.node.advertise(rover_config.HEAD_TOPIC.format(joint=joint), Double)
+                      for joint in (rover_config.PAN_JOINT, rover_config.TILT_JOINT)}
         self._fly_cmd = self.node.advertise(viewers.FLY_CMD_TOPIC, Twist)
         self._fly_speed = self.node.advertise(viewers.FLY_SPEED_TOPIC, Double)
         self._fly_look = self.node.advertise(viewers.FLY_LOOK_TOPIC, Vector3d)
         self._fly_goto = self.node.advertise(viewers.FLY_GOTO_TOPIC, Pose)
         self._fly_mode = self.node.advertise(viewers.FLY_MODE_TOPIC, StringMsg)
-        self.feeds = {name: Feed(name, topic, self._watch, self._unwatch, ROVER.camera_clip)
+        self.feeds = {name: Feed(name, topic, self._watch, self._unwatch, ROVER.camera.clip)
                       for name, topic in CAMERAS.items()}
         # Advertised by the first announce(): until then the topic in the list
         # means another station.
@@ -251,9 +255,7 @@ class GzLink:
     # --- Outputs -----------------------------------------------------------------
 
     def twist(self, vx, wz):
-        msg = Twist()
-        msg.linear.x, msg.angular.z = vx, wz
-        self._twist.publish(msg)
+        self.drive.twist(vx, wz)
 
     def led(self, state):
         msg = StringMsg()
@@ -276,7 +278,7 @@ class GzLink:
         self._eye.publish(msg)
 
     def head(self, pan, tilt):
-        for joint, angle in ((gen_model.PAN_JOINT, pan), (gen_model.TILT_JOINT, tilt)):
+        for joint, angle in ((rover_config.PAN_JOINT, pan), (rover_config.TILT_JOINT, tilt)):
             msg = Double()
             msg.data = angle
             self._head[joint].publish(msg)

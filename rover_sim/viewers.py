@@ -1,5 +1,5 @@
 """The driver station's cameras (sim/station), generated with the rover by
-`pixi run sim-model` (gen_model.main calls write_all): the chase camera that
+`pixi run sim-model` (tools/gen_rover.py calls write_all): the chase camera that
 follows the rover, sim/models/chase_camera; the rover eye at its camera
 pivot, sim/models/eye_camera; and the free-flying inspection camera,
 sim/models/fly_camera.
@@ -10,12 +10,12 @@ the chase camera and the eye, the FlyCamera plugin (plugins/fly_camera.cpp)
 the fly camera; the offline map tool (tools/render_map.py) flies a variant of
 it. Every dimension lives in ChaseParams, EyeParams and FlyParams; the eye
 takes its mount, start and limits from the rover's pan-tilt head
-(gen_model.Params).
+(rover_description/config/rover.yaml, rover_config.ROVER).
 """
 from dataclasses import dataclass
 from pathlib import Path
 
-from gen_model import Params
+from rover_config import ROVER
 from urc import sdf  # the SDF writer every generated model shares
 
 # Chase camera (plugins/chase_camera.cpp has the details).
@@ -80,17 +80,17 @@ class ChaseParams:
 @dataclass(frozen=True)
 class EyeParams:
     """The driver station's first-person camera (plugins/chase_camera.cpp in
-    eye mode): it rides at the rover's camera pivot, Params.camera_xyz, where
+    eye mode): it rides at the rover's camera pivot, rover.yaml's camera xyz, where
     the pan and tilt axes meet, and turns there like the pan-tilt head and
     within its joint limits. Only the picture differs from the RGB-D sensor's."""
     target: str = "rover"
     rate: float = 20.0  # [Hz]
     size: tuple[int, int] = (960, 540)
-    hfov: float = Params.camera_hfov  # [rad] as wide as the sensor
+    hfov: float = ROVER.camera.hfov  # [rad] as wide as the sensor
     # The near clip also hides the camera's own housing and yoke, all within
     # 0.1 m of the pivot; far reaches the far-field ring (decision D14; the
     # sensor's depth stops at 40 m).
-    clip: tuple[float, float] = (Params.camera_clip[0], 80_000.0)  # [m]
+    clip: tuple[float, float] = (ROVER.camera.clip[0], 80_000.0)  # [m]
 
 
 @dataclass(frozen=True)
@@ -153,14 +153,16 @@ def build_chase_sdf(c: ChaseParams) -> str:
         ("cmd_topic", CHASE_CMD_TOPIC), ("mode_topic", CHASE_MODE_TOPIC), ("state_topic", CHASE_STATE_TOPIC)))
 
 
-def build_eye_sdf(e: EyeParams, p: Params) -> str:
+def build_eye_sdf(e: EyeParams, rover=ROVER) -> str:
     """The rover eye as an SDF 1.11 document: the plugin's eye mode at the
-    camera pivot, starting and limited like the pan-tilt head."""
+    camera pivot, starting and limited like the pan-tilt head (rover: the
+    numbers of rover.yaml, rover_config.ROVER)."""
+    head = rover.head
     return _viewer_sdf(EYE_MODEL, EYE_IMAGE_TOPIC, e.rate, e.size, e.hfov, e.clip, (
-        ("target", e.target), ("mount", p.camera_xyz),
-        ("yaw", 0.0), ("pitch", p.camera_pitch),
-        ("min_yaw", -p.camera_pan_limit), ("max_yaw", p.camera_pan_limit),
-        ("min_pitch", p.camera_tilt_limits[0]), ("max_pitch", p.camera_tilt_limits[1]),
+        ("target", e.target), ("mount", rover.camera.xyz),
+        ("yaw", 0.0), ("pitch", head.home_tilt),
+        ("min_yaw", -head.pan_limit), ("max_yaw", head.pan_limit),
+        ("min_pitch", head.tilt_limits[0]), ("max_pitch", head.tilt_limits[1]),
         ("look_topic", EYE_LOOK_TOPIC), ("state_topic", EYE_STATE_TOPIC)))
 
 
@@ -183,7 +185,7 @@ def write_all(models_dir):
     cameras = ((CHASE_MODEL, build_chase_sdf(ChaseParams()),
                 "Third-person camera for the driver station (sim/station), moved by the ChaseCamera plugin "
                 "(edit ChaseParams)."),
-               (EYE_MODEL, build_eye_sdf(EyeParams(), Params()),
+               (EYE_MODEL, build_eye_sdf(EyeParams(), ROVER),
                 "First-person camera for the driver station (sim/station): the ChaseCamera plugin keeps it at "
                 "the rover's camera pivot (edit EyeParams)."),
                (FLY_MODEL, build_fly_sdf(FlyParams()),
@@ -193,5 +195,5 @@ def write_all(models_dir):
         directory = Path(models_dir) / name
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "model.sdf").write_text(text)
-        (directory / "model.config").write_text(sdf.model_config(name, description, "sim/gen_model.py"))
+        (directory / "model.config").write_text(sdf.model_config(name, description, "rover_sim/tools/gen_rover.py"))
         print(f"wrote {directory / 'model.sdf'}")

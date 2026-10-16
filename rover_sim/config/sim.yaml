@@ -1,0 +1,200 @@
+# How the simulation models the rover and its ground: the drivetrain plugin's settings (its setpoint watchdog, the
+# stand-in motor controller, the motor model's integration), the ROS-free helpers' ramp, the contact model, the dig-in
+# and its visual cues, the tyre
+# model, dust, and the names of the rover's Gazebo interface. urdf/rover_sim.urdf.xacro writes them into the rover's
+# model (`pixi run sim-model`); the rover's physical numbers are rover_description/config/rover.yaml. Units SI;
+# numbers that are not counts keep a decimal point.
+# Sources: (A) assumed, (M) measured, (R) from a reference; the realism design spec
+# docs/superpowers/specs/2026-10-06-urc-realism-design.md (sections, D and Q numbers).
+
+drivetrain:
+  # physical: plugins/rover_drivetrain.cpp, a DC motor per wheel driving it by torque, every wheel contact gripping
+  # like the ground under it (the default); diffdrive: Gazebo's DiffDrive, every wheel a velocity servo on
+  # anisotropic tyres (the diffdrive section), kept for A/B tests and cost comparisons (D22).
+  mode: physical
+  # The motor controller's watchdog: a wheel setpoint older than cmd_timeout counts as zero, so a commander that died
+  # cannot leave the rover driving (user decision 2026-10-06); 0 holds the last setpoint. The clock: wall (a dead
+  # process) or sim (deterministic tests). The setpoints come from ros2_control (RoverSimSystem) or the ROS-free topic
+  # topics.wheel_cmd; since PR 3 the twist-to-wheel kinematics, the effective-track compensation and the ramp are the
+  # drive controller's (rover_control/config/controllers.yaml), and wheel_cmd's below for the ROS-free helpers.
+  cmd_timeout: 0.5                  # [s]
+  cmd_timeout_clock: wall
+  # The speed loop of the motor controller the simulation stands in for, tuned against this motor model to the
+  # design's response (6.9: < 60 ms). The real controller is not chosen; its gains will be tuned on the hardware and
+  # live with its driver, so they are the simulation's, not facts of the rover (decision of the PR 2 plan).
+  kp: 4.0                           # [V/(rad/s)] (M: prototype tuning)
+  # [V/rad] integral time kp / ki 25 ms (A: retuned from the prototype's 40, whose 0.1 s left a turn without the ramp
+  # at 90 % only after 118 ms; at 160 it takes 53 ms, design spec 6.9: < 60 ms; measured 2026-10-07).
+  ki: 160.0
+  speed_filter: 0.005               # [s] measured-speed time constant, also the contact rule's (A)
+  substeps: 4                       # motor integration steps per 1 ms physics step
+  # The wheel joints' limits under the physical drivetrain: DART never clamps the torque, and the velocity limit
+  # (1.5 x the 21.6 rad/s free speed) never acts as a hidden brake (6.2); the motor model is the only limit.
+  wheel_effort: 1000.0              # [N m]
+  wheel_velocity: 32.0              # [rad/s]
+  tyre_mu: 1.0                      # isotropic tyre friction: the drivetrain sets the friction of every wheel contact
+  odom_rate: 50.0                   # [Hz] the no-slip odometry (DiffDrive's too)
+  state_rate: 50.0                  # [Hz] the drivetrain state topic
+
+# The ROS-free helpers (wheel_cmd.py: the tests, tools and scripts that speak twists to a rover without ROS) turn a
+# twist into wheel setpoints as the drivetrain did before the ros2_control boundary (PR 3): skid steer with the
+# geometric track, clamped to the top speed, each wheel's setpoint ramped at accel, so a run that keeps commanding
+# (every calibration run) drives as it did; one that stops commanding stops harder, the watchdog zeroing a stale
+# setpoint at once (docs/sim/design-notes.md, Watchdog). The ROS stack's drive controller ramps vx and wz at the same
+# wheel rate (rover_control/config/controllers.yaml; tests/test_wheel_cmd.py checks it).
+wheel_cmd:
+  accel: 8.0                        # [rad/s^2] each wheel's setpoint, 1.2 m/s^2 (A: until the driver team's, Q7)
+
+# Gazebo's DiffDrive (drivetrain mode diffdrive). Lateral friction below longitudinal emulates tyre scrub; with equal
+# values the physics engine's box friction stops the rover turning in place.
+diffdrive:
+  wheel_effort: 30.0                # [N m] each wheel servo's torque limit (A: rover model design 2026-10-05)
+  mu_longitudinal: 1.0
+  mu_lateral: 0.5
+
+# Wheel contacts (6.4): a friction circle while sliding, an aligned box while sticking; the names are the
+# drivetrain's <contact> elements.
+contact:
+  v_stribeck: 0.03                  # [m/s] (A)
+  v_align: 0.005                    # [m/s] below it a contact sticks (A)
+  perp_ratio: 0.0                   # mu across the slip while sliding: 0 is a friction circle
+  stick_perp_ratio: 0.3             # mu across the expected load while sticking: holds within 4.4 % of mu_s
+  mu_noise: 0.2                     # spatial mu variation (A)
+  mu_noise_length: 0.3              # [m] (A)
+  # [rad/s] rolling resistance and bulldozing fade in over rr_w0 x radius of hub speed, 7.5 mm/s (A; design spec 6.2
+  # has 0.2, but over 3 cm/s a rover dug in by the strong preset creeps round at 0.25 x the fresh rate instead of
+  # sticking; at 0.05 it turns 0.07 x, measured).
+  rr_w0: 0.05
+  # Dig-in on loose ground (6.5, D21); how strong is the ground's (urc/terrains.py DIG, the one switch: strong by
+  # default, the user's choice, Q12).
+  dig: true
+  dig_heal_length: 0.3              # [m] one wheel diameter of travel heals a dug wheel by 1/e (A)
+  default_surface: regolith         # urc/terrains.py TYPES key: the ground where the world has no ground map
+  object_surface: manmade           # urc/terrains.py TYPES key: objects whose SDF sets no friction
+
+# Tyre compliance (6.7, D18; phase 2, off): a hub between rocker and wheel on two sprung prismatic joints, axial then
+# radial, with the tyre's stiffness, damping and travel (rover.yaml tyre). It turns 400-480 Hz contact chatter into a
+# 12-16 Hz wheel hop (M); revisit when the wheel type is known (Q8).
+tyre_compliance:
+  enabled: false
+  hub_mass: 0.1                     # [kg] each hub
+  hub_inertia: 1.0e-4               # [kg m^2] each principal moment
+
+# The dig-in made visible, the one switch (user decision 2026-10-07): each tyre's visual, never its collision, is
+# drawn gain x (D - 1) x the ground's static sinkage lower, straight down, at most max, through a tau lag
+# (rover_drivetrain.cpp ShowSink; physics never reads a visual's pose). At gain 1, the true scale the user chose over
+# the research's x3, it is the spec's extra sinkage z_d: 2 cm on sand and clay at D_max 2, 3 cm on wash sand, under
+# 4 mm on the sand sheet, nothing on rock, pavement and crusts. Off: no <dig_sink>, and the drivetrain writes no visual.
+dig_sink:
+  enabled: true
+  gain: 1.0                         # true scale (user decision 2026-10-07)
+  max: 0.06                         # [m] 0.4 x the wheel radius (A); not reached at gain 1 (wash sand: 3 cm)
+  tau: 0.1                          # [s] a wheel off the ground for a few steps does not flicker (A)
+
+# Ruts and pits behind the wheels (plugins/rover_tracks.hh), the one switch: on by default (user decision 2026-10-07:
+# dig made visible on all soft ground). Off, the drivetrain gets no <tracks> and draws, reads and costs nothing.
+ruts:
+  enabled: true
+  # The drivetrain's <tracks> group, with the wheel's width (rover.yaml). Visual only: a wheel lays a cross-section
+  # every `spacing` of its travel from its own state (ground point, heading, dig factor D, slip); camera sensors draw
+  # them (the station's views and the rover's RGB-D, not the Gazebo GUI). s: the ground's static sinkage.
+  tracks:
+    spacing: 0.05                   # [m] of a wheel's travel per cross-section (A: the research prototype's)
+    chunk: 128                      # records per chunk: one marker per darkness level and ground (M: 128/512/2048 alike)
+    # The ring: 8000 records are about 100 m of the rover's travel (4 wheels x 20 per metre), the oldest go first.
+    # The station's frame rate and real-time factor with 8000 were those without ruts within noise (M 2026-10-07,
+    # Delivery and the proving ground, eye + chase + RGB-D; the research saw -2-3 % at 4000, -3.5-6 % at 16000).
+    max_segments: 8000
+    # Berm crest above the visual surface: berm_gain x s x (max(D - 1, 0) + berm_base), at most berm_max, drawn from
+    # berm_min: the wheel already sits s into the surface (the carve), so the rut looks about s (D + 0.3) deep, true
+    # scale (sand 6 mm at D 1, 2.6 cm at D 2; regolith 1.5 mm: no berm, only the faint floor) (A).
+    berm_base: 0.3
+    berm_gain: 1.0
+    berm_max: 0.06                  # [m]
+    berm_min: 0.004                 # [m]
+    # Floor overlay opacity (opacity_base + opacity_dig (D - 1)) x clamp(s / 2 cm, 0.6, 1.5), in levels of 15, 28, 39
+    # and 48 % (A: the prototype's look; it writes no depth).
+    opacity_base: 0.14
+    opacity_dig: 0.30
+    floor_offset: 0.004             # [m] the overlay above the visual surface, with a depth bias (M: no dropouts)
+    pit_dig: 0.05                   # D grown while moving under `spacing` that digs a pit (A)
+    smear_slip: 0.3                 # slip over the tyre's surface speed above which tread marks smear (A)
+    # Records one frame builds at most: a station that connects late (no frame is drawn while no camera is watched)
+    # catches up over frames instead of stalling the simulation, which waits for the frame's scene update (M: 512
+    # records took 7-12 ms on Delivery under load; 256, half that, catches up a full ring in about 1.6 s).
+    frame_budget: 256
+    stress: 0                       # synthetic records laid round the rover at the first step (cost measurements)
+    report: 0.0                     # [s] of sim time between cost lines on stderr (measurements); 0: none
+
+# Dust behind the rear wheels (6.5, D15), the one switch. Off, the default: the rover raises no visible dust and the
+# model has no particle emitter (user decision 2026-10-07: clean depth images and point clouds over visible dust).
+# gz-rendering 8.2.2's depth shader takes any visible particle for a return, so with dust on the depth image and point
+# cloud see it (Q11 "depth does not see dust" not met, tests/test_render.py); with none they cannot. On: an emitter
+# behind each rear wheel in both drive modes, its rate set by the physical drivetrain (<dust>, <dust_rule>), for when
+# gz-rendering honours the emitters' <particle_scatter_ratio> (scatter_ratio).
+dust:
+  enabled: false
+  rate: 10.0                        # [Hz] commands to the emitters
+  # Particles per second = dust factor x (speed_gain x hub speed + slip_gain x slip speed) x dig factor, at most
+  # max_rate (A gains); the drivetrain's <dust_rule>.
+  rule:
+    speed_gain: 8.0                 # [1/m]
+    slip_gain: 25.0                 # [1/m]
+    max_rate: 40.0                  # [1/s]
+    min_speed: 0.05                 # [m/s]
+  # The emitter (M: tuned in the render research, 6.5): a box at the ground behind each rear wheel blowing back and
+  # up, each particle the catalogue's dust colour (terrains.DUST_RGB) at alpha times the sprite's own alpha.
+  # gz-rendering 8 applies no colour range (SetColorRange is disabled, a <color_range_image> changed nothing,
+  # measured), so the tuned fade 0.28 -> 0 cannot be had: the sprite bakes in the plume's opacity at birth, and a
+  # particle keeps it for its lifetime.
+  box: 0.25                         # [m]
+  particle: 0.2                     # [m]
+  lifetime: 1.6                     # [s]
+  speed: [0.15, 0.5]                # [m/s]
+  alpha: 0.28
+  pitch: 0.6                        # [rad] above the horizontal, backwards (A)
+  # The share of particle pixels depth and lidar take for a return (D15, Q11): as near none as gz-rendering takes.
+  # With no ratio it would apply 0.65, SDF's default too, and it ignores a ratio not above 0 (R: gz-rendering 8's
+  # BaseParticleEmitter). In 8.2.2 no ratio reaches the depth shader (M, tests/test_render.py).
+  scatter_ratio: 1.0e-6
+
+# The tyres' look (user decision 2026-10-07): a dark tyre with light tread bars and spokes, one spoke ochre, so a
+# wheel spinning while the rover stands still shows (rover_description/meshes/wheel.glb; the 16 bars alias above
+# about 3.9 rad/s at a 20 Hz view, the one ochre spoke only above 63 rad/s, past the 20 rad/s top speed). Visual only:
+# the collision stays the cylinder. Off: the plain dark cylinder.
+tread_tyre: true
+
+# The RGB image sees the far field to 80 km while the depth stays clipped at rover.yaml's camera clip (design spec 7,
+# D14). No SDF <noise> (design spec 4's stddev 0.06): on an rgbd_camera it aborts gz on Metal (measured: Ogre
+# RenderingAPIException, float4 output to an RGBA32Uint attachment), so noise belongs in the station.
+camera_far: 80000.0                 # [m]
+
+# Each head joint has a JointPositionController in velocity mode: it slews at rover.yaml's head speed to the angle
+# last sent on its topic and holds it (the astronaut's arms in urc/props.py work the same way).
+head_p_gain: 10.0
+
+# Gazebo applies NavSat's horizontal noise to latitude and longitude in degrees: the model converts at this many
+# metres per degree, so east-west noise is rover.yaml's gnss noise_horizontal times cos(latitude).
+meters_per_degree: 111320.0
+
+ground_truth_rate: 50.0             # [Hz] OdometryPublisher, the world-frame pose (3 dimensions)
+
+# Joints without position limits (the wheels, continuous in the description) get these stops, as the model has had
+# since 2026-10-05 (the conversion would leave them infinite; neither is ever reached).
+continuous_stops: 1.0e+16           # [rad]
+
+# The rover's Gazebo topics; {joint}, {link} and {emitter} are filled in.
+topics:
+  cmd_vel: /model/rover/cmd_vel                 # Gazebo's DiffDrive only (drivetrain mode diffdrive): gz.msgs.Twist
+  wheel_cmd: /model/rover/wheel_cmd             # the wheels' speed setpoints [rad/s]: gz.msgs.Double_V, fl rl fr rr
+  odometry: /model/rover/odometry
+  tf: /model/rover/tf
+  joint_states: /model/rover/joint_states
+  ground_truth: /model/rover/ground_truth
+  imu: /model/rover/imu
+  navsat: /model/rover/navsat
+  camera: /model/rover/camera                 # rgbd: /image, /depth_image, /points, /camera_info
+  led: /model/rover/led                       # set by the rover's software, shown by referee.py
+  drivetrain: /model/rover/drivetrain         # physical drivetrain: gz.msgs.StringMsg, JSON (design spec 9.3)
+  dust: /model/rover/link/{link}/particle_emitter/{emitter}/cmd   # gz.msgs.ParticleEmitter
+  head: /model/rover/joint/{joint}/0/cmd_pos  # gz.msgs.Double target angle [rad]

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Start the rover simulation: pixi run sim [world] [--follow]
-# world: a path to an .sdf, or a name in sim/worlds (e.g. urc_autonomy).
-# --follow: the GUI camera follows the rover (drive it with pixi run drive).
-# macOS cannot run Gazebo's server and GUI in one process, so the server runs
-# in the background and the GUI in the foreground; closing the GUI stops both.
+# Start the rover simulation with its ROS 2 stack: pixi run sim [world] [--follow]
+# world: a path to an .sdf, or a name in rover_sim/worlds (e.g. urc_autonomy).
+# --follow: the GUI camera follows the rover (drive it with pixi run drive, or
+# ros2 topic pub /cmd_vel). launch/sim.launch.py starts Gazebo's server and GUI
+# as separate processes (macOS cannot run both in one), the rover's controllers
+# and the sensor bridge; closing the GUI stops everything.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -50,15 +51,7 @@ look_at_rover() {
   done
 }
 
-if [[ "$(uname)" == "Darwin" ]]; then
-  gz sim -s -r "$world" &
-  server=$!
-  look_at_rover &
-  helper=$!
-  trap 'kill "$server" "$helper" 2>/dev/null || true' EXIT
-  gz sim -g
-else
-  look_at_rover &
-  trap 'kill $! 2>/dev/null || true' EXIT
-  gz sim -r "$world"
-fi
+look_at_rover &
+helper=$!
+trap 'kill "$helper" 2>/dev/null || true' EXIT
+ros2 launch "$here/launch/sim.launch.py" "world:=$world" gui:=true

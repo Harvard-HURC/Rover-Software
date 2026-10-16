@@ -12,7 +12,7 @@ namespace drive = rover_sim::drive;
 namespace {
 
 constexpr double kDt = 0.001;              // [s] the worlds' physics step
-constexpr double kWheelInertia = 0.028125;  // [kg m2] gen_model.wheel_inertia(2.5, 0.15, 0.1), about the axle
+constexpr double kWheelInertia = 0.028125;  // [kg m2] rover.yaml's wheel (2.5 kg, r 0.15 m) about the axle
 
 Traction Sand() {  // spec 5.6, mild dig
   Traction t;

@@ -81,7 +81,7 @@ cost a wrong first attempt.
   with a command timeout stops after the timeout; it needs `cmd_timeout` 0.
 - **OdometryPublisher's twist can spike** (one yaw rate of 4π/dt in 1233
   messages while spinning); its pose is right.
-- **NavSat noise is in degrees** for latitude/longitude; `gen_model.py`
+- **NavSat noise is in degrees** for latitude/longitude; `rover_sim.urdf.xacro`
   converts metres. NavSat reports the ellipsoidal height of the world
   origin's altitude plus z: give the origin an ellipsoidal altitude.
 - **Lidar and imagery datums**: PROJ's default NAD83(2011) → WGS84 is a null
@@ -183,7 +183,7 @@ cost a wrong first attempt.
   particle pixel with any red for a return at a fixed scatter ratio:
   `particle_scatter_ratio` (SDF or the emitter's topic) never reaches it, nor
   does a camera `<visibility_mask>`. Hence the rover has no dust by default
-  (`DriveParams.dust`).
+  (`sim.yaml` `dust`).
 - **Orthographic near plane**: an orthographic camera clips at its near plane
   just under it, and a custom projection with a near plane behind the camera
   changed nothing; draw it from above whatever it must show (the window
@@ -251,3 +251,47 @@ cost a wrong first attempt.
   "stock" runs with the patched media. `test_render` imports it only in the
   parent and hands the subprocess precomputed commands.
 
+**ROS 2 and ros2_control** (gz_ros2_control 1.2.19, ros2_control 4.47.0,
+ros2_controllers 4.42.1, Jazzy; measured in PR 3, 2026-10-10)
+- **gz_ros2_control in a model holds Gazebo's start until
+  `/robot_description` arrives**, so a world whose rover carries it cannot
+  run without ROS: the worlds keep the ROS-free rover, and `sim.launch.py`
+  runs a copy of the world with the ROS one.
+- **ros2_control 4.47 ignores the time gz_ros2_control passes it**: the
+  hardware's `read()`/`write()` and the controllers get the controller
+  manager's clock, sim time from the bridged `/clock`, up to 16 ms behind
+  the step. Without the `/clock` bridge nothing drives. The stamps of
+  `cmd_vel_out` and `/joint_states` come 5 to 17 ms apart: find steps from
+  the simulation's own per-step state, not from them.
+- **gz_ros2_control's place in a step**: `write()` in every PreUpdate,
+  `read()` and the controllers' update in the PostUpdate of every 10th step
+  (100 Hz on the 1 ms step, counted from sim time 0). A system plugin after
+  it in the model runs its PreUpdate after `write()` and uses a setpoint in
+  the step it was written (`tests/test_ros2_control.py`). A system priority
+  would also move that plugin against the tests' fixture helper.
+- **A component registered by two libraries is one type** (gz-sim's
+  component factory): the `WheelSetpoint` that `rover_sim_system` writes is
+  the one `RoverDrivetrain` reads. Gazebo's GUI loads neither library; at
+  `-v 2` it warns once per type that the component "has not been registered
+  in this process".
+- **Gazebo's console colours each `<<` operand of `gzerr` separately**: the
+  log has colour codes between the operands, so a line a test searches for
+  must be one operand.
+- **The ROS packages' link lines bring Python**: they name their messages'
+  `*__rosidl_generator_py` libraries, which need libpython. A plugin linked
+  with them loads only in a process that has it (Gazebo does,
+  `ros2_control_node` does not); link with `-dead_strip_dylibs` (macOS) or
+  `--as-needed` (Linux), as `rover_control` and the Gazebo system plugins do.
+- **macOS refuses a signal to a process group whose only member is an
+  unreaped zombie** (EPERM, the spawner once its controllers are active):
+  reap the leader first (`tests/rosstack.py`, `stop`).
+- **rclpy's default signal handlers shut its context down on SIGINT and
+  SIGTERM before the program's own handler runs**, and a publish after that
+  fails (`publisher's context is invalid`): the station starts rclpy with
+  `SignalHandlerOptions.NO`. asyncio puts Python's default SIGINT handler
+  back when its loop closes, so a second SIGINT comes as a KeyboardInterrupt
+  in the cleanup. Under `ros2 launch` one Ctrl-C is two: the terminal's
+  reaches the child, then the launch sends its own. The station ignores the
+  stop signals while it stops (`station/__main__.py`, `shut_down`).
+- **`ros2 launch` does not handle SIGHUP, and `ros2 run` does not pass a
+  signal on to its child**: stop them by process group.

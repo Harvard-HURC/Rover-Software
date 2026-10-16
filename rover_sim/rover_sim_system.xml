@@ -1,0 +1,9 @@
+<library path="rover_sim_system">
+  <class name="rover_sim/RoverSimSystem" type="rover_sim::RoverSimSystem"
+         base_class_type="gz_ros2_control::GazeboSimSystemInterface">
+    <description>
+      The simulated rover's ros2_control hardware: hands each wheel's velocity command to the RoverDrivetrain
+      plugin's motor model and reports the joints' state and the motor currents (rover_sim/ros2_control).
+    </description>
+  </class>
+</library>

@@ -33,7 +33,7 @@ East of the road, stations run east:
 """
 import math
 
-import gen_model  # the rover's geometry; sim/ is on sys.path wherever urc is used
+import rover_config  # the rover's geometry; sim/ is on sys.path wherever urc is used
 
 from .. import features, landscape, props, terrain, terrains
 from ..features import Lane, Natural, Step, Surface
@@ -47,9 +47,9 @@ SOLVER = "pgs"  # each wheel grips mu times its own load; physics fast enough (g
 
 ROVER = (0.0, 0.0, math.pi / 2)
 GATE = (0.0, 4.0)
-ROVER_PARAMS = gen_model.Params()
-ROVER_TRACK = 2 * ROVER_PARAMS.pivot_y  # [m] between the wheel planes
-ROVER_WHEELBASE = 2 * ROVER_PARAMS.wheel_dx  # [m]
+ROVER_PARAMS = rover_config.ROVER  # rover.yaml (ROVER above is the rover's start)
+ROVER_TRACK = 2 * ROVER_PARAMS.rocker.pivot_y  # [m] between the wheel planes
+ROVER_WHEELBASE = 2 * ROVER_PARAMS.wheel.dx  # [m]
 WEST, EAST = math.pi, 0.0
 
 FRICTION_MU = (0.2, 0.35, 0.5, 0.7, 0.95)
@@ -71,7 +71,7 @@ SIDE_SLOPES = [Lane(f"side_slope_{grade}", (-8.0, y), WEST, 6.0, ((20.0, 0.0),),
 BUMPS = features.AlternatingBumps("bumps", (8.0, 62.0), EAST, (0.1, 0.2, 0.3), 3.0, ROVER_TRACK / 2)
 # Deep enough for a wheel in it to turn its rocker to the limit.
 TWIST_DITCH = features.TwistDitch("twist_ditch", 32.0, 62.0, EAST, math.atan2(ROVER_TRACK, ROVER_WHEELBASE),
-                                  round(ROVER_WHEELBASE * math.tan(ROVER_PARAMS.rocker_limit), 2))
+                                  round(ROVER_WHEELBASE * math.tan(ROVER_PARAMS.rocker.limit), 2))
 WASHBOARD = features.Washboard("washboard", (8.0, 74.0), EAST, 20.0, 4.0)
 STEPS = [Step(f"step_{round(top * 100)}cm", 16.0, y, EAST, 4.0, 3.0, top) for top, y in ((0.1, 84.0), (0.2, 90.0),
                                                                                           (0.3, 96.0))]
@@ -152,14 +152,14 @@ def build(models_dir, worlds_dir, media):
         w.rock_garden(key, x, y, length, width, size)
         w.station(key, x - length / 2, y, f"Rock garden {size * 100:.0f} cm",
                   f"A {length:.0f} x {width:.0f} m plot of {size * 100:.0f} cm rocks (+-20 %), one per "
-                  f"{garden_spacing(size):.1f} m cell; the wheel radius is {ROVER_PARAMS.wheel_radius * 100:.0f} cm.",
+                  f"{garden_spacing(size):.1f} m cell; the wheel radius is {ROVER_PARAMS.wheel.radius * 100:.0f} cm.",
                   ["ROCK GARDEN", f"{size * 100:.0f} CM"],
                   (east_sign, y + 4.5), WEST, rock_size_m=size, length_m=length, width_m=width, heading_deg=0.0)
     heights = " ".join(f"{h * 100:.0f}" for h in BUMPS.heights)
     w.station("articulation", *BUMPS.start, "Articulation track",
               f"Humps of {heights} cm under the left wheels, then the right, every {BUMPS.spacing:.0f} m; then a "
               f"{TWIST_DITCH.depth * 100:.0f} cm diagonal ditch that takes a front wheel and the opposite rear wheel "
-              f"together, turning the rockers to their {ROVER_PARAMS.rocker_limit} rad limit.",
+              f"together, turning the rockers to their {ROVER_PARAMS.rocker.limit} rad limit.",
               ["ARTICULATION", f"BUMPS {heights}", "TWIST DITCH"], (east_sign, BUMPS.start[1] + 3.5), WEST,
               humps=[dict(w.geo(*BUMPS.at(u, v)), height_m=h, side="left" if v > 0 else "right")
                      for u, v, h in BUMPS.humps()],

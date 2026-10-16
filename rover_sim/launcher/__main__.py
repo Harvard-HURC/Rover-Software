@@ -2,10 +2,12 @@
 
 One page with a tile for every world in sim/worlds. A click starts that world
 with its driver station (sim/station, the world headless) and shows the
-station inside the page; Exit, or closing the page, stops both. One
-simulation at a time, in a GZ_PARTITION of its own (on GZ_IP 127.0.0.1 unless
-set, as the tests run), so it never meets a world started from a terminal or
-by the tests.
+station inside the page; Exit, or closing the page, stops both. The station
+starts the world with the rover's ROS 2 stack (launch/sim.launch.py). One
+simulation at a time, in a GZ_PARTITION and a ROS domain of its own
+(gzenv.private_ros_domain; on GZ_IP 127.0.0.1 unless set, as the tests run),
+so it never meets a world or a ROS 2 graph started from a terminal or by the
+tests; the console names both (ROS_DOMAIN_ID=<n> ros2 topic list sees it).
 """
 import argparse
 import asyncio
@@ -30,6 +32,8 @@ HERE = Path(__file__).resolve().parent
 SIM_DIR = HERE.parent
 WORLDS = SIM_DIR / "worlds"
 STATION = SIM_DIR / "station" / "__main__.py"
+sys.path.insert(0, str(SIM_DIR))
+import gzenv  # noqa: E402
 PORT = 8790
 PORT_TRIES = 10
 GRACE = 5.0  # [s] with no page open before the simulation stops (a reload reconnects sooner)
@@ -109,6 +113,7 @@ class Launcher:
 
     def __init__(self):
         self.partition = f"rover_launcher_{os.getpid()}"
+        self.domain = gzenv.private_ros_domain(os.getpid())
         self.process = None
         self.reader = None
         self.world = None
@@ -151,12 +156,13 @@ class Launcher:
             self.world, self.url, self.status = world, None, "starting"
             self.log.clear()
             self.changed()
-            print(f"starting {world} (GZ_PARTITION={self.partition})", flush=True)
+            print(f"starting {world} (GZ_PARTITION={self.partition}, ROS_DOMAIN_ID={self.domain})", flush=True)
             self.process = await asyncio.create_subprocess_exec(
                 sys.executable, "-u", str(STATION), str(WORLDS / f"{world}.sdf"),
                 "--no-browser", "--port", str(free_port()),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, limit=1 << 20,
-                env={"GZ_IP": "127.0.0.1", **os.environ, "GZ_PARTITION": self.partition, "PYTHONUNBUFFERED": "1"},
+                env={"GZ_IP": "127.0.0.1", **os.environ, "GZ_PARTITION": self.partition, "PYTHONUNBUFFERED": "1",
+                     "ROS_DOMAIN_ID": str(self.domain), "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST"},
                 start_new_session=True)  # the terminal's Ctrl-C reaches the launcher, which stops it
             self.reader = asyncio.create_task(self._read(self.process))
 

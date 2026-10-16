@@ -16,13 +16,12 @@ import random
 import string
 from dataclasses import dataclass, field
 
-import gen_model  # the rover's geometry; sim/ is on sys.path wherever urc is used
+from rover_config import ROVER as _ROVER  # the rover's geometry; sim/ is on sys.path wherever urc is used
 
 from . import lander, props, rules, sheet as sheets
 
-_ROVER = gen_model.Params()
-ROVER_HALF_LENGTH = _ROVER.wheel_dx + _ROVER.wheel_radius  # [m] wheel centres plus the wheel radius
-ROVER_HALF_WIDTH = _ROVER.pivot_y + _ROVER.wheel_width / 2
+ROVER_HALF_LENGTH = _ROVER.wheel.dx + _ROVER.wheel.radius  # [m] wheel centres plus the wheel radius
+ROVER_HALF_WIDTH = _ROVER.rocker.pivot_y + _ROVER.wheel.width / 2
 STOPPED_SPEED = 0.05  # [m/s]
 STOPPED_TIME = 2.0  # [s]
 

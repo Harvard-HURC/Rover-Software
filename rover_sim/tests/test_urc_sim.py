@@ -26,7 +26,8 @@ import gz.math7  # noqa: F401  (lets gz.sim8 return Pose3d values)
 from gz.sim8 import Joint, Model, TestFixture, World, world_entity
 from gz.transport13 import Node
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+from rover_config import ROVER  # noqa: E402
 from urc import geo, landscape, routes, terrains  # noqa: E402
 from urc.world import COLLIDING  # noqa: E402
 from urc import judge as J  # noqa: E402
@@ -61,7 +62,7 @@ print("FRAMES", len(means), "brightness of the last", means[-5:])
 CAMERA_RANGE = 5.0  # [m] rover centre to the post; the camera is 0.35 m ahead of it
 DUG = 0.5  # how far a route planner takes digging ground's wheels to be dug in (A: half way to its dig_max)
 ROCK_STOP = 0.25  # [m] a rock standing higher than this stops the rover (proving ground: 0.2 m crossed, 0.3 m not)
-ROVER_HALF_WIDTH = gen_model.Params().pivot_y + gen_model.Params().wheel_width / 2  # [m] over the wheels
+ROVER_HALF_WIDTH = ROVER.rocker.pivot_y + ROVER.wheel.width / 2  # [m] over the wheels
 SLOW = unittest.skipUnless(os.environ.get("ROVER_SLOW"), "slow (many minutes of sim time): set ROVER_SLOW=1")
 
 
@@ -161,7 +162,7 @@ class Worlds(unittest.TestCase):
                 self.assertLess(max(abs(roll), abs(pitch)), math.radians(8))
                 for wheel in ("wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"):
                     wx, wy, wz = state.poses[wheel][:3]
-                    self.assertAlmostEqual(wz - gen_model.Params().wheel_radius, ground.height(wx, wy), delta=0.06,
+                    self.assertAlmostEqual(wz - ROVER.wheel.radius, ground.height(wx, wy), delta=0.06,
                                            msg=f"{mission} {wheel}")
 
     @needs_world("urc_autonomy")
@@ -169,8 +170,8 @@ class Worlds(unittest.TestCase):
         from gz.msgs10.navsat_pb2 import NavSat
         s = sheet("urc_autonomy")
         with world_copy("urc_autonomy") as world:
-            state = simulate(4.0, world=world, subscribe=[(gen_model.NAVSAT_TOPIC, NavSat)])
-        fixes = state.messages[gen_model.NAVSAT_TOPIC][5:]
+            state = simulate(4.0, world=world, subscribe=[(rover_config.NAVSAT_TOPIC, NavSat)])
+        fixes = state.messages[rover_config.NAVSAT_TOPIC][5:]
         self.assertGreater(len(fixes), 20)
         start = s["rover_start"]
         lat = np.mean([m.latitude_deg for m in fixes])
@@ -221,7 +222,7 @@ class Worlds(unittest.TestCase):
         post = sheet("urc_autonomy")["objects"]["route_start"]
         x, y = post["x"] + CAMERA_RANGE * math.cos(post["yaw"]), post["y"] + CAMERA_RANGE * math.sin(post["yaw"])
         with world_copy("urc_autonomy", rover=(x, y, post["yaw"] + math.pi), sensors=True) as world:
-            code = CAMERA_CHECK.format(tests=str(SIM_DIR / "tests"), topic=gen_model.CAMERA_TOPIC + "/image",
+            code = CAMERA_CHECK.format(tests=str(SIM_DIR / "tests"), topic=rover_config.CAMERA_TOPIC + "/image",
                                        world=world)
             result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
         line = next((l for l in result.stdout.splitlines() if l.startswith("IDS")), None)
@@ -277,7 +278,7 @@ class RefereeRun(unittest.TestCase):
             path = sheets.path("urc_autonomy")
             judge = J.make_judge("autonomy", sheets.load(path), path)
             ref = referee.Referee("autonomy", path, judge)
-            led = Node().advertise(gen_model.LED_TOPIC, StringMsg)
+            led = Node().advertise(rover_config.LED_TOPIC, StringMsg)
             msg = StringMsg()
             msg.data = "green"
             deadline = time.time() + 60

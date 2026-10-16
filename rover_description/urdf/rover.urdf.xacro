@@ -1,0 +1,251 @@
+<?xml version="1.0"?>
+<!-- The rover: links, joints, visuals, collisions and sensor frames, every number from config/rover.yaml.
+     Frames follow REP 103: x forward, y left, z up; base_link's origin is on the ground midway between the wheels
+     with the rockers at zero. Expand it with `xacro rover.urdf.xacro`; view it with
+     `ros2 launch rover_description view.launch.py`. It names no simulator: rover_sim/urdf/rover_sim.urdf.xacro adds
+     Gazebo's parts.
+
+     Arguments:
+       rover_yaml           the numbers (default config/rover.yaml beside this folder; xacro reads a relative path
+                            from this folder, so give another file's absolute path)
+       ros2_control         true: add the ros2_control block (ros2_control.xacro)
+       ros2_control_plugin  its hardware interface (default rover_control/RoverHardwareStub, the real rover's until
+                            its motor controllers are chosen)
+     Properties a file that includes this one may set first (xacro:property default): wheel_effort_limit and
+     wheel_velocity_limit (the wheel joints' limits; default the motor's peak torque at the wheel and the top speed),
+     tread_tyre (the wheels' visual: the tread mesh, or False: a plain cylinder) and wheel_mount (the macro that
+     hangs a wheel from its rocker; rover_sim's tyre model hangs it through sprung hubs). -->
+<robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="rover_yaml" default="../config/rover.yaml"/>
+  <xacro:arg name="ros2_control" default="true"/>
+  <xacro:arg name="ros2_control_plugin" default="rover_control/RoverHardwareStub"/>
+  <xacro:include filename="inertials.xacro"/>
+
+  <xacro:property name="rover" value="${xacro.load_yaml(xacro.arg('rover_yaml'))}"/>
+  <xacro:property name="chassis" value="${rover.chassis}"/>
+  <xacro:property name="rocker" value="${rover.rocker}"/>
+  <xacro:property name="wheel" value="${rover.wheel}"/>
+  <xacro:property name="motor" value="${rover.motor}"/>
+  <xacro:property name="head" value="${rover.head}"/>
+  <xacro:property name="looks" value="${rover.looks}"/>
+
+  <xacro:property name="wheel_effort_limit" default="${motor.current_limit * motor.kt * motor.gear * motor.efficiency}"/>
+  <xacro:property name="wheel_velocity_limit" default="${wheel.top_speed}"/>
+  <xacro:property name="tread_tyre" default="${True}"/>
+  <xacro:property name="wheel_mount" default="rocker_wheel_mount"/>
+
+  <xacro:property name="chassis_top" value="${chassis.z + chassis.size[2] / 2}"/>
+  <!-- A list of numbers as URDF text. -->
+  <xacro:macro name="color" params="name rgba">
+    <material name="${name}"><color rgba="${' '.join(str(v) for v in rgba)}"/></material>
+  </xacro:macro>
+  <!-- A thin pole from the chassis top up to top_z. -->
+  <xacro:macro name="mast" params="name x y top_z">
+    <xacro:property name="height" value="${top_z - chassis_top}"/>
+    <visual name="${name}">
+      <origin xyz="${x} ${y} ${top_z - height / 2}" rpy="0 0 0"/>
+      <geometry><cylinder radius="${looks.mast_radius}" length="${height}"/></geometry>
+      <material name="frame"/>
+    </visual>
+  </xacro:macro>
+  <!-- A sensor or part frame fixed to its link (the conversion to SDF merges it into that link). -->
+  <xacro:macro name="frame" params="name parent xyz">
+    <link name="${name}"/>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}"/>
+      <origin xyz="${' '.join(str(v) for v in xyz)}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:color name="chassis" rgba="${looks.colors.chassis}"/>
+  <xacro:color name="frame" rgba="${looks.colors.frame}"/>
+  <xacro:color name="tyre" rgba="${looks.colors.tyre}"/>
+  <xacro:color name="antenna" rgba="${looks.colors.antenna}"/>
+  <xacro:color name="camera" rgba="${looks.colors.camera}"/>
+  <xacro:color name="lens" rgba="${looks.colors.lens}"/>
+  <xacro:color name="led_off" rgba="${looks.colors.led_off}"/>
+
+  <!-- The chassis, with the masts of the GNSS antenna and the camera head. -->
+  <link name="base_link">
+    <xacro:box_inertial mass="${chassis.mass}" size="${chassis.size}" xyz="0 0 ${chassis.z}"/>
+    <collision name="chassis">
+      <origin xyz="0 0 ${chassis.z}" rpy="0 0 0"/>
+      <geometry><box size="${' '.join(str(v) for v in chassis.size)}"/></geometry>
+    </collision>
+    <visual name="chassis">
+      <origin xyz="0 0 ${chassis.z}" rpy="0 0 0"/>
+      <geometry><box size="${' '.join(str(v) for v in chassis.size)}"/></geometry>
+      <material name="chassis"/>
+    </visual>
+    <xacro:mast name="gnss_mast" x="${rover.gnss.xyz[0]}" y="${rover.gnss.xyz[1]}" top_z="${rover.gnss.xyz[2]}"/>
+    <visual name="gnss_antenna">
+      <origin xyz="${' '.join(str(v) for v in rover.gnss.xyz)}" rpy="0 0 0"/>
+      <geometry><cylinder radius="${looks.antenna.radius}" length="${looks.antenna.length}"/></geometry>
+      <material name="antenna"/>
+    </visual>
+    <xacro:mast name="camera_mast" x="${rover.camera.xyz[0]}" y="${rover.camera.xyz[1]}"
+                top_z="${rover.camera.xyz[2] - head.pan_height - looks.camera_mast_gap}"/>
+  </link>
+  <xacro:frame name="imu" parent="base_link" xyz="${rover.imu.xyz}"/>
+  <xacro:frame name="gnss" parent="base_link" xyz="${rover.gnss.xyz}"/>
+  <!-- The LED, a frame of its own; rover_sim gives its visual an emissive material. -->
+  <link name="led">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${' '.join(str(v) for v in rover.led.size)}"/></geometry>
+      <material name="led_off"/>
+    </visual>
+  </link>
+  <joint name="led_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="led"/>
+    <origin xyz="${' '.join(str(v) for v in rover.led.xyz)}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- The camera's pan-tilt head: pan about z below the camera, tilt about y through it. -->
+  <link name="camera_pan_link">
+    <xacro:box_inertial mass="${head.pan_mass}" size="${head.pan_box}"/>
+    <visual name="turntable">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="${looks.turntable.radius}" length="${looks.turntable.length}"/></geometry>
+      <material name="frame"/>
+    </visual>
+    <xacro:macro name="yoke_arm" params="side sign">
+      <visual name="yoke_${side}">
+        <origin xyz="0 ${sign * looks.yoke.y} ${head.pan_height / 2}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${looks.yoke.size[0]} ${looks.yoke.size[1]} ${head.pan_height + looks.yoke.extra_height}"/>
+        </geometry>
+        <material name="frame"/>
+      </visual>
+    </xacro:macro>
+    <xacro:yoke_arm side="left" sign="1"/>
+    <xacro:yoke_arm side="right" sign="-1"/>
+    <visual name="yoke_base">
+      <origin xyz="0 0 ${looks.yoke_base.z}" rpy="0 0 0"/>
+      <geometry><box size="${' '.join(str(v) for v in looks.yoke_base.size)}"/></geometry>
+      <material name="frame"/>
+    </visual>
+  </link>
+  <joint name="camera_pan_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="camera_pan_link"/>
+    <origin xyz="${rover.camera.xyz[0]} ${rover.camera.xyz[1]} ${rover.camera.xyz[2] - head.pan_height}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${-head.pan_limit}" upper="${head.pan_limit}" effort="${head.effort}" velocity="${head.speed}"/>
+    <dynamics damping="${head.damping}"/>
+  </joint>
+  <link name="camera_tilt_link">
+    <xacro:box_inertial mass="${head.tilt_mass}" size="${looks.camera_box}"/>
+    <visual name="camera">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="${' '.join(str(v) for v in looks.camera_box)}"/></geometry>
+      <material name="camera"/>
+    </visual>
+    <visual name="lens">
+      <origin xyz="${' '.join(str(v) for v in looks.lens.xyz)}" rpy="0 ${pi / 2} 0"/>
+      <geometry><cylinder radius="${looks.lens.radius}" length="${looks.lens.length}"/></geometry>
+      <material name="lens"/>
+    </visual>
+  </link>
+  <joint name="camera_tilt_joint" type="revolute">
+    <parent link="camera_pan_link"/>
+    <child link="camera_tilt_link"/>
+    <origin xyz="0 0 ${head.pan_height}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${head.tilt_limits[0]}" upper="${head.tilt_limits[1]}" effort="${head.effort}"
+           velocity="${head.speed}"/>
+    <dynamics damping="${head.damping}"/>
+  </joint>
+  <xacro:frame name="camera" parent="camera_tilt_link" xyz="${[0.0, 0.0, 0.0]}"/>
+
+  <!-- A wheel's joint: continuous about y. -->
+  <xacro:macro name="wheel_joint" params="name parent xyz">
+    <joint name="${name}_joint" type="continuous">
+      <parent link="${parent}"/>
+      <child link="${name}"/>
+      <origin xyz="${xyz}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="${wheel_effort_limit}" velocity="${wheel_velocity_limit}"/>
+    </joint>
+  </xacro:macro>
+  <!-- The default wheel_mount: the wheel's joint straight from its rocker. -->
+  <xacro:macro name="rocker_wheel_mount" params="name rocker xyz">
+    <xacro:wheel_joint name="${name}" parent="${rocker}" xyz="${xyz}"/>
+  </xacro:macro>
+
+  <!-- A wheel at its rocker's front (ahead 1) or rear (-1) end. The tyre's collision is named after its wheel:
+       sdformat applies a <gazebo> block's collision settings only to collisions whose names start with their
+       link's (rover_sim sets the tyres' friction that way). -->
+  <xacro:macro name="rover_wheel" params="name rocker ahead">
+    <link name="${name}">
+      <xacro:wheel_inertial mass="${wheel.mass}" radius="${wheel.radius}" width="${wheel.width}"/>
+      <collision name="${name}_tire">
+        <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+        <geometry><cylinder radius="${wheel.radius}" length="${wheel.width}"/></geometry>
+      </collision>
+      <xacro:if value="${tread_tyre}">
+        <!-- The tread tyre: unit size, scaled to the wheel, with its own materials. -->
+        <visual name="tire">
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <geometry>
+            <mesh filename="package://rover_description/meshes/wheel.glb"
+                  scale="${wheel.radius} ${wheel.width} ${wheel.radius}"/>
+          </geometry>
+        </visual>
+      </xacro:if>
+      <xacro:unless value="${tread_tyre}">
+        <visual name="tire">
+          <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
+          <geometry><cylinder radius="${wheel.radius}" length="${wheel.width}"/></geometry>
+          <material name="tyre"/>
+        </visual>
+      </xacro:unless>
+    </link>
+    <xacro:call macro="${wheel_mount}" name="${name}" rocker="${rocker}" xyz="${ahead * wheel.dx} 0 ${wheel.dz}"/>
+  </xacro:macro>
+
+  <!-- A rocker on its pivot, its two arms down to the wheels, and the wheels. -->
+  <xacro:macro name="rover_rocker" params="side sign">
+    <xacro:property name="inset" value="${-sign * rocker.arm_inset}"/>
+    <xacro:property name="pitch" value="${math.atan2(-wheel.dz, wheel.dx)}"/>
+    <link name="rocker_${side}">
+      <xacro:rocker_inertial mass="${rocker.mass}" dx="${wheel.dx}" dz="${wheel.dz}" xyz="0 ${inset} ${wheel.dz / 2}"/>
+      <xacro:macro name="arm" params="end ahead">
+        <xacro:property name="arm_origin" value="${ahead * wheel.dx / 2} ${inset} ${wheel.dz / 2}"/>
+        <xacro:property name="arm_size"
+                        value="${math.hypot(wheel.dx, wheel.dz)} ${rocker.arm_thickness} ${rocker.arm_height}"/>
+        <collision name="${end}_arm">
+          <origin xyz="${arm_origin}" rpy="0 ${ahead * pitch} 0"/>
+          <geometry><box size="${arm_size}"/></geometry>
+        </collision>
+        <visual name="${end}_arm">
+          <origin xyz="${arm_origin}" rpy="0 ${ahead * pitch} 0"/>
+          <geometry><box size="${arm_size}"/></geometry>
+          <material name="frame"/>
+        </visual>
+      </xacro:macro>
+      <xacro:arm end="front" ahead="1"/>
+      <xacro:arm end="rear" ahead="-1"/>
+    </link>
+    <joint name="rocker_${side}_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="rocker_${side}"/>
+      <origin xyz="0 ${sign * rocker.pivot_y} ${rocker.pivot_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <!-- A passive pivot: no effort or velocity limit (URDF needs the values; -1 is none to SDF and Gazebo). -->
+      <limit lower="${-rocker.limit}" upper="${rocker.limit}" effort="-1" velocity="-1"/>
+      <dynamics damping="${rocker.damping}"/>
+    </joint>
+    <xacro:rover_wheel name="wheel_f${side[0]}" rocker="rocker_${side}" ahead="1"/>
+    <xacro:rover_wheel name="wheel_r${side[0]}" rocker="rocker_${side}" ahead="-1"/>
+  </xacro:macro>
+  <xacro:rover_rocker side="left" sign="1"/>
+  <xacro:rover_rocker side="right" sign="-1"/>
+
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:include filename="ros2_control.xacro"/>
+    <xacro:rover_ros2_control plugin="$(arg ros2_control_plugin)"/>
+  </xacro:if>
+</robot>

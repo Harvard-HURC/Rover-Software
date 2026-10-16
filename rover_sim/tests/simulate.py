@@ -1,10 +1,12 @@
 """Run the rover headless in Gazebo for the tests.
 
 Gazebo's Python TestFixture runs the server inside this process, so a run is
-repeatable: commands go out over gz-transport every 20 ms of sim time, and
-the state is read from the entity-component manager after the last step.
+repeatable: the rover's command, a twist every 20 ms of sim time, goes out
+over gz-transport as the wheel setpoints wheel_cmd.Driver makes of it step by
+step (the physical drivetrain) and as the twist (Gazebo's DiffDrive), and the
+state is read from the entity-component manager after the last step.
 The rover is model://rover (the physical drivetrain, its command timeout on
-the wall clock) or one built from gen_model Params (physical(): the same
+the wall clock) or one built from a rover_config.Variant (physical(): the same
 with the timeout on sim time, so runs repeat exactly; diffdrive(): Gazebo's
 DiffDrive), on flat ground (world_sdf) or on a synthetic terrain with a
 ground map (ground_world: heightmap, ground.png and ground.json as the
@@ -36,16 +38,22 @@ import numpy as np
 from PIL import Image
 from worldfiles import SIM_DIR, temp_sdf
 
-import gen_model  # noqa: E402  (worldfiles puts sim/ on the path)
+import gen_rover  # noqa: E402  (worldfiles puts sim/ and sim/tools on the path)
 import gzenv  # noqa: E402
+import rover_config  # noqa: E402
+import wheel_cmd  # noqa: E402
+from rover_config import ROVER, SIM, Variant  # noqa: E402
 from urc import sdf, terrain, terrains  # noqa: E402
 
 # Set before Gazebo starts (gzenv): where model://rover and the plugins live,
-# and a private transport partition so tests never talk to a running simulation.
+# and a private transport partition and ROS domain so tests never talk to a
+# running simulation or another ROS 2 graph (the ROS tests start rclpy after this).
 os.environ.update(gzenv.environment(partition=f"rover_sim_test_{os.getpid()}",
-                                    ip=os.environ.get("GZ_IP", "127.0.0.1")))
+                                    ip=os.environ.get("GZ_IP", "127.0.0.1"),
+                                    ros_domain=gzenv.private_ros_domain(os.getpid())))
 
 import gz.math7  # noqa: E402,F401  (lets gz.sim8 return Pose3d values)
+from gz.msgs10.double_v_pb2 import Double_V  # noqa: E402
 from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
@@ -132,42 +140,45 @@ def variant_sdf(text, rover_uri=None, solver=None):
 
 @contextlib.contextmanager
 def rover_model(params):
-    """URI of a temporary rover model built from gen_model Params `params`."""
+    """URI of a temporary rover model built from the rover_config.Variant `params` (gen_rover.build_sdf)."""
     with tempfile.TemporaryDirectory(prefix="rover_model_") as directory:
         model = Path(directory) / "rover"
         model.mkdir()
-        (model / "model.sdf").write_text(gen_model.build_sdf(params))
+        (model / "model.sdf").write_text(gen_rover.build_sdf(params))
         (model / "model.config").write_text(sdf.model_config("rover", "A test variant of the rover.",
                                                              "sim/tests/simulate.py"))
         yield model.as_uri()
 
 
-def physical(**drive):
-    """Params of the rover with the physical drivetrain (the default), its
-    DriveParams changed by `drive`; the command timeout runs on sim time, so
-    runs repeat exactly."""
-    return gen_model.Params(drive=gen_model.DriveParams(mode="physical", cmd_timeout_clock="sim", **drive))
+def physical(**sections):
+    """The rover with the physical drivetrain (the default) as a
+    rover_config.Variant, sections of rover.yaml and sim.yaml changed by
+    `sections` (Variant.replace: physical(contact={"dig": False})); the
+    command timeout runs on sim time, so runs repeat exactly."""
+    drivetrain = {"mode": "physical", "cmd_timeout_clock": "sim", **sections.pop("drivetrain", {})}
+    return Variant().replace(drivetrain=drivetrain, **sections)
 
 
-def diffdrive(**params):
-    """Params of the rover with Gazebo's DiffDrive (design spec D22: the A/B
-    and cost reference), other Params changed by `params`."""
-    return gen_model.Params(drive=gen_model.DriveParams(mode="diffdrive"), **params)
+def diffdrive(**sections):
+    """The rover with Gazebo's DiffDrive (design spec D22: the A/B and cost
+    reference) as a rover_config.Variant, other sections changed by
+    `sections` (diffdrive(diffdrive={"mu_lateral": 1.0}))."""
+    drivetrain = {"mode": "diffdrive", **sections.pop("drivetrain", {})}
+    return Variant().replace(drivetrain=drivetrain, **sections)
 
 
 @contextlib.contextmanager
 def world_file(world=None, extra="", spawn_z=0.02, rover_uri=None, params=None, default_surface=None, solver=None):
     """Path of the world to run: world_sdf(extra, spawn_z, ...) when world is
     None, else the SDF file `world` (a copy when its rover or solver change).
-    The rover: rover_uri, or one built from Params `params`, or model://rover.
-    A physical rover built from params takes default_surface as its
-    drivetrain's default surface, which is what it feels on a plane."""
+    The rover: rover_uri, or one built from the rover_config.Variant `params`,
+    or model://rover. A physical rover built from params takes default_surface
+    as its drivetrain's default surface, which is what it feels on a plane."""
     with contextlib.ExitStack() as stack:
         if params is not None:
             assert rover_uri is None, "rover_uri or params, not both"
-            if default_surface is not None and params.drive.mode == "physical":
-                drive = dataclasses.replace(params.drive, default_surface=default_surface)
-                params, default_surface = dataclasses.replace(params, drive=drive), None
+            if default_surface is not None and params.sim.drivetrain.mode == "physical":
+                params, default_surface = params.replace(contact={"default_surface": default_surface}), None
             rover_uri = stack.enter_context(rover_model(params))
         if world is None:
             text = world_sdf(extra, spawn_z, rover_uri or ROVER_URI, default_surface, solver)
@@ -191,31 +202,33 @@ def twist_at(schedule, t):
 
 
 def simulate(seconds, extra="", spawn_z=0.02, cmd=(0.0, 0.0), subscribe=(), world=None, rover_uri=None, params=None,
-             default_surface=None, solver=None, trace_every=0, publish_until=None):
+             default_surface=None, solver=None, trace_every=0, publish_until=None, accel=None):
     """Run for `seconds` of sim time and return the final State.
 
     cmd: (vx [m/s], wz [rad/s]) sent from the start, or a schedule
     [(t [s], vx, wz), ...] (twist_at), sent every 20 ms from the start and,
-    with publish_until [s], only until then.
+    with publish_until [s], only until then: as the wheel setpoints
+    wheel_cmd.Driver makes of it, step by step, and as the twist.
     subscribe: (topic, message class) pairs to record during the run.
     world: an SDF file to run instead of world_sdf(extra, spawn_z).
     rover_uri, params, default_surface, solver: see world_file.
     trace_every: record base_link every that many steps (State.trace).
+    accel: the setpoints' ramp [rad/s^2]; default the wheel_cmd accel of
+    `params`, else sim.yaml's (give it for a world built with a variant).
     """
+    if accel is None:
+        accel = (params.sim if params is not None else SIM).wheel_cmd.accel
     with world_file(world, extra, spawn_z, rover_uri, params, default_surface, solver) as world_path:
-        return _run(seconds, cmd, subscribe, world_path, trace_every, publish_until)
+        return _run(seconds, cmd, subscribe, world_path, trace_every, publish_until, accel)
 
 
-def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None):
+def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None, accel=None):
     node = Node()
     messages = {topic: [] for topic, _ in subscribe}
     for topic, msg_type in subscribe:
         node.subscribe(msg_type, topic, messages[topic].append)
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    driver = wheel_cmd.Driver(node, SIM.wheel_cmd.accel if accel is None else accel)
     scripted = bool(cmd) and isinstance(cmd[0], (tuple, list))
-    twist = Twist()
-    if not scripted:
-        twist.linear.x, twist.angular.z = cmd
     handles = {}
     last = {}
     peak = [0.0]
@@ -231,12 +244,10 @@ def _run(seconds, cmd, subscribe, world_path, trace_every=0, publish_until=None)
             handles["links"]["base_link"].enable_velocity_checks(ecm, True)
         if publish_until is not None and info.iterations / 1000 > publish_until:
             return
-        if info.iterations % 20 == 0:
-            if scripted:
-                twist.linear.x, twist.angular.z = twist_at(cmd, info.iterations / 1000)
-                publisher.publish(twist)
-            elif any(cmd):
-                publisher.publish(twist)
+        beat = info.iterations % 20 == 0
+        if beat and (scripted or any(cmd)):
+            driver.command(*(twist_at(cmd, info.iterations / 1000) if scripted else cmd))
+        driver.step(force=beat)
 
     def post_update(info, ecm):
         last["rockers"] = {n: j.position(ecm) for n, j in handles["rockers"].items()}
@@ -292,28 +303,28 @@ def pursue(path, x, y, yaw, speed, lookahead=2.0, gain=1.5, min_radius=1.5):
     return vx, max(-vx / min_radius, min(vx / min_radius, gain * error))
 
 
-def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
+def follow(world, path, seconds, speed=0.8, tolerance=1.0, accel=None, **driver):
     """Drive the rover in the SDF file `world` along a world (x, y) polyline
     with a pure-pursuit driver (pursue) on its ground truth, a command every
-    20 ms of sim time, until it is within `tolerance` of the path's end
-    (then it stops) or `seconds` of sim time have passed."""
+    20 ms of sim time (wheel_cmd.Driver, ramped at accel, default sim.yaml's),
+    until it is within `tolerance` of the path's end (then it stops) or
+    `seconds` of sim time have passed."""
     node = Node()
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    wheels = wheel_cmd.Driver(node, SIM.wheel_cmd.accel if accel is None else accel)
     goal = tuple(path[-1])
     handles, trace, arrived = {}, [], []
-    twist = Twist()
 
     def pre_update(info, ecm):
         if not handles:
             model = Model(World(world_entity(ecm)).model_by_name(ecm, "rover"))
             handles["base"] = Link(model.link_by_name(ecm, "base_link"))
-        if info.iterations % 20:
-            return
-        x, y, _, _, _, yaw = _xyzrpy(handles["base"].world_pose(ecm))
-        if not arrived and math.dist((x, y), goal) < tolerance:
-            arrived.append(info.iterations / 1000)
-        twist.linear.x, twist.angular.z = (0.0, 0.0) if arrived else pursue(path, x, y, yaw, speed, **driver)
-        publisher.publish(twist)
+        beat = info.iterations % 20 == 0
+        if beat:
+            x, y, _, _, _, yaw = _xyzrpy(handles["base"].world_pose(ecm))
+            if not arrived and math.dist((x, y), goal) < tolerance:
+                arrived.append(info.iterations / 1000)
+            wheels.command(*((0.0, 0.0) if arrived else pursue(path, x, y, yaw, speed, **driver)))
+        wheels.step(force=beat)
 
     def post_update(info, ecm):
         if info.iterations % 100 == 0:
@@ -332,13 +343,13 @@ def follow(world, path, seconds, speed=0.8, tolerance=1.0, **driver):
     return Drive(np.array(trace), arrived[0] if arrived else None)
 
 
-def spin_ratio(traction, dig=1.0, params=gen_model.Params()):
+def spin_ratio(traction, dig=1.0, rover=ROVER):
     """The yaw rate of the rover turning in place on ground `traction`
     (terrains.Traction) over the commanded rate, quasi-static and fresh or at
     dig factor `dig` (design spec 5.6): the root r of mu_k (c sx - a sy) / |s|
     = crr D c + bulldoze D^2 a, wheels at (+-a, +-c), sx = c (1 - r), sy = a r;
-    0 if it cannot turn."""
-    a, c = params.wheel_dx, params.pivot_y
+    0 if it cannot turn. rover: rover.yaml's numbers (rover_config.ROVER)."""
+    a, c = rover.wheel.dx, rover.rocker.pivot_y
     resist = traction.crr * dig * c + traction.bulldoze * dig * dig * a
 
     def surplus(r):
@@ -399,7 +410,7 @@ def ground_world(hf, ground, rows, rover=(0.0, 0.0, 0.0), *, lift=0.02, ground_o
     needs; a flat one gets a 1 mm north-west corner sample, because Gazebo
     scales by the highest pixel). ground: (n, n) type indices, ground.png;
     rows and ground_options (ground_json's keywords): ground.json. The rover:
-    model rover_uri, or one built from Params `params`, at rover = (x, y,
+    model rover_uri, or one built from the rover_config.Variant `params`, at rover = (x, y,
     yaw), `lift` above the terrain and tilted to its slope. terrain_extra:
     SDF of more shapes in the terrain's link; extra: SDF of more models;
     gravity [m/s^2] (SDF's default; tilted, flat ground stands in for a slope
@@ -457,10 +468,16 @@ def world_name(path):
 @contextlib.contextmanager
 def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
     """Drive the rover from a thread of this process: twist_at(schedule, sim
-    time) on its cmd_vel topic `rate` times a second, while any of the named
-    worlds runs in this partition. Sim time comes from the worlds' statistics
-    (10 Hz): /clock, sent every step, would add to the cost being measured.
-    Nothing is sent before the first statistics message."""
+    time) `rate` times a second while any of the named worlds runs in this
+    partition, as the twist (Gazebo's DiffDrive) and as wheel setpoints ramped
+    over the sim time since the last (wheel_cmd.Ramp; the physical drivetrain).
+    Sim time comes from the worlds' statistics (10 Hz): /clock, sent every
+    step, would add to the cost being measured. Nothing is sent before the
+    first statistics message. The ramp is therefore coarser than the
+    drivetrain's own before PR 3, which ramped in every step: up to 0.8 rad/s
+    per statistics message (more when the world runs faster than real time),
+    1 ms worth when the statistics have not advanced. The cost runs measure
+    the drivetrain's cost, not where the rover goes."""
     node = Node()
     now = []
 
@@ -469,15 +486,20 @@ def twist_publisher(worlds, schedule=DRIVE_SCHEDULE, rate=20.0):
 
     for name in worlds:
         node.subscribe(WorldStatistics, f"/world/{name}/stats", on_stats)
-    publisher = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
+    twists = node.advertise(rover_config.CMD_VEL_TOPIC, Twist)
+    wheels = node.advertise(rover_config.WHEEL_CMD_TOPIC, Double_V)
     stop = threading.Event()
 
     def loop():
-        twist = Twist()
+        twist, ramp, last = Twist(), wheel_cmd.Ramp(), None
         while not stop.wait(1.0 / rate):
             if now:
-                twist.linear.x, twist.angular.z = twist_at(schedule, now[0])
-                publisher.publish(twist)
+                t = now[0]
+                twist.linear.x, twist.angular.z = twist_at(schedule, t)
+                twists.publish(twist)
+                dt = t - last if last is not None and t > last else wheel_cmd.STEP
+                wheels.publish(wheel_cmd.message(ramp.step(twist.linear.x, twist.angular.z, dt)))
+                last = t
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()

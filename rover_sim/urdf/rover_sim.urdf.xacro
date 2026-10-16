@@ -1,0 +1,406 @@
+<?xml version="1.0"?>
+<!-- The simulated rover: rover_description's rover with what only Gazebo needs, set from config/sim.yaml (how the
+     simulation models the rover) and the description's rover.yaml: the sensors (IMU, NavSat, RGB-D camera), the LED's
+     emissive material, the tyres' friction, the rocker differential, the drivetrain and motor model with its ground
+     surfaces, the joint state and ground-truth publishers, the camera head's controllers, the visual cues (tyre sink,
+     ruts, tread tyre), the opt-in dust and tyre compliance. tools/gen_rover.py expands it, converts it with
+     `gz sdf -p` and writes models/rover/model.sdf (`pixi run sim-model`). With ros2_control:=true it is the rover
+     sim.launch.py runs: the description's ros2_control block with the hardware interface RoverSimSystem, and the
+     gz_ros2_control system that runs the controller manager in Gazebo (gen_rover.build_urdf(..., ros2_control=True)).
+
+     Arguments:
+       description_dir  rover_description's folder (default: the package's, found through the ROS package index)
+       rover_yaml       the rover's numbers (default: the description's config/rover.yaml)
+       sim_yaml         the simulation's (default config/sim.yaml beside this folder)
+       surfaces_yaml    the drivetrain's ground surfaces (default config/surfaces.yaml, written from urc/terrains.py)
+       ros2_control     true: the description's ros2_control block and the gz_ros2_control system (default false:
+                        the ROS-free rover, the worlds' model://rover and the tests')
+       ros2_control_plugin  the block's hardware interface (default rover_sim/RoverSimSystem)
+       controllers      with ros2_control: the controller manager's parameters, rover_control's
+                        config/controllers.yaml (an absolute path)
+     xacro reads a relative path from the folder of the file that loads it (rover_yaml: the description's urdf/;
+     sim_yaml and surfaces_yaml: this folder), so give other files' absolute paths. -->
+<robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="description_dir" default="$(find rover_description)"/>
+  <xacro:arg name="sim_yaml" default="../config/sim.yaml"/>
+  <xacro:arg name="surfaces_yaml" default="../config/surfaces.yaml"/>
+  <!-- Declared before the description declares them: the first declaration's default wins. -->
+  <xacro:arg name="ros2_control" default="false"/>
+  <xacro:arg name="ros2_control_plugin" default="rover_sim/RoverSimSystem"/>
+  <xacro:arg name="controllers" default=""/>
+
+  <xacro:property name="sim" value="${xacro.load_yaml(xacro.arg('sim_yaml'))}"/>
+  <xacro:property name="surfaces" value="${xacro.load_yaml(xacro.arg('surfaces_yaml'))}"/>
+  <xacro:property name="topics" value="${sim.topics}"/>
+  <!-- The slots of the topic templates (${} cannot hold a brace): topics.head.replace(joint_slot, name). -->
+  <xacro:property name="joint_slot" value="{joint}"/>
+  <xacro:property name="link_slot" value="{link}"/>
+  <xacro:property name="emitter_slot" value="{emitter}"/>
+  <xacro:property name="drive" value="${sim.drivetrain}"/>
+  <xacro:if value="${drive.mode not in ('physical', 'diffdrive')}">
+    ${xacro.fatal("sim.yaml drivetrain mode " + repr(drive.mode) + ": 'physical' or 'diffdrive'")}
+  </xacro:if>
+  <xacro:property name="physical" value="${drive.mode == 'physical'}"/>
+
+  <!-- Set before the description reads them (its xacro:property defaults). -->
+  <xacro:if value="${physical}">
+    <xacro:property name="wheel_effort_limit" value="${drive.wheel_effort}"/>
+    <xacro:property name="wheel_velocity_limit" value="${drive.wheel_velocity}"/>
+  </xacro:if>
+  <xacro:unless value="${physical}">
+    <xacro:property name="wheel_effort_limit" value="${sim.diffdrive.wheel_effort}"/>
+  </xacro:unless>
+  <xacro:property name="tread_tyre" value="${sim.tread_tyre}"/>
+  <xacro:if value="${sim.tyre_compliance.enabled}">
+    <xacro:property name="wheel_mount" value="compliant_wheel_mount"/>
+  </xacro:if>
+
+  <!-- Tyre compliance: the wheel hangs from its rocker through a hub on an axial, then a radial sprung prismatic
+       joint, each within the tyre's travel (rover.yaml tyre). -->
+  <xacro:macro name="tyre_hub" params="name parent tag axis xyz spring">
+    <link name="${name}_hub_${tag}">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${sim.tyre_compliance.hub_mass}"/>
+        <inertia ixx="${sim.tyre_compliance.hub_inertia}" ixy="0" ixz="0" iyy="${sim.tyre_compliance.hub_inertia}"
+                 iyz="0" izz="${sim.tyre_compliance.hub_inertia}"/>
+      </inertial>
+    </link>
+    <joint name="${name}_tire_${tag}" type="prismatic">
+      <parent link="${parent}"/>
+      <child link="${name}_hub_${tag}"/>
+      <origin xyz="${xyz}" rpy="0 0 0"/>
+      <axis xyz="${axis}"/>
+      <limit lower="${-rover.tyre.travel}" upper="${rover.tyre.travel}" effort="-1" velocity="-1"/>
+      <dynamics damping="${spring.damping}"/>
+    </joint>
+    <gazebo reference="${name}_tire_${tag}">
+      <springStiffness>${spring.stiffness}</springStiffness>
+      <springReference>0</springReference>
+    </gazebo>
+  </xacro:macro>
+  <xacro:macro name="compliant_wheel_mount" params="name rocker xyz">
+    <xacro:tyre_hub name="${name}" parent="${rocker}" tag="axial" axis="0 1 0" xyz="${xyz}" spring="${rover.tyre.axial}"/>
+    <xacro:tyre_hub name="${name}" parent="${name}_hub_axial" tag="radial" axis="0 0 1" xyz="0 0 0"
+                    spring="${rover.tyre.radial}"/>
+    <xacro:wheel_joint name="${name}" parent="${name}_hub_radial" xyz="0 0 0"/>
+  </xacro:macro>
+
+  <xacro:include filename="$(arg description_dir)/urdf/rover.urdf.xacro"/>
+
+  <!-- A YAML mapping's items as elements: <key>value</key>, booleans as true/false. -->
+  <xacro:macro name="elements" params="items">
+    <xacro:if value="${items}">
+      <xacro:element xacro:name="${items[0][0]}">${str(items[0][1]).lower() if python.isinstance(items[0][1], bool) else items[0][1]}</xacro:element>
+      <xacro:elements items="${items[1:]}"/>
+    </xacro:if>
+  </xacro:macro>
+
+  <!-- Sensors, on the description's frames. -->
+  <xacro:macro name="gaussian" params="stddev">
+    <noise type="gaussian">
+      <mean>0</mean>
+      <stddev>${stddev}</stddev>
+    </noise>
+  </xacro:macro>
+  <gazebo reference="imu">
+    <!-- Reported in base_link (the same orientation): only the linear acceleration differs, by lever-arm terms,
+         from a sensor at base_link's origin. -->
+    <sensor name="imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>${rover.imu.rate}</update_rate>
+      <topic>${topics.imu}</topic>
+      <gz_frame_id>base_link</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><xacro:gaussian stddev="${rover.imu.gyro_noise}"/></x>
+          <y><xacro:gaussian stddev="${rover.imu.gyro_noise}"/></y>
+          <z><xacro:gaussian stddev="${rover.imu.gyro_noise}"/></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><xacro:gaussian stddev="${rover.imu.accel_noise}"/></x>
+          <y><xacro:gaussian stddev="${rover.imu.accel_noise}"/></y>
+          <z><xacro:gaussian stddev="${rover.imu.accel_noise}"/></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+  <gazebo reference="gnss">
+    <sensor name="gnss" type="navsat">
+      <always_on>true</always_on>
+      <update_rate>${rover.gnss.rate}</update_rate>
+      <topic>${topics.navsat}</topic>
+      <gz_frame_id>gnss</gz_frame_id>
+      <navsat>
+        <position_sensing>
+          <horizontal><xacro:gaussian stddev="${rover.gnss.noise_horizontal / sim.meters_per_degree}"/></horizontal>
+          <vertical><xacro:gaussian stddev="${rover.gnss.noise_vertical}"/></vertical>
+        </position_sensing>
+      </navsat>
+    </sensor>
+  </gazebo>
+  <gazebo reference="camera">
+    <sensor name="camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <update_rate>${rover.camera.rate}</update_rate>
+      <topic>${topics.camera}</topic>
+      <gz_frame_id>camera</gz_frame_id>
+      <camera>
+        <horizontal_fov>${rover.camera.hfov}</horizontal_fov>
+        <image>
+          <width>${rover.camera.size[0]}</width>
+          <height>${rover.camera.size[1]}</height>
+        </image>
+        <clip>
+          <near>${rover.camera.clip[0]}</near>
+          <far>${sim.camera_far}</far>
+        </clip>
+        <depth_camera>
+          <clip>
+            <near>${rover.camera.clip[0]}</near>
+            <far>${rover.camera.clip[1]}</far>
+          </clip>
+        </depth_camera>
+      </camera>
+    </sensor>
+  </gazebo>
+  <!-- The LED is off (dark grey, no glow) until the referee shows a colour on its topic. -->
+  <gazebo reference="led">
+    <visual>
+      <material>
+        <emissive>0 0 0 1</emissive>
+      </material>
+    </visual>
+  </gazebo>
+
+  <!-- The tyres' friction: isotropic under the physical drivetrain, which sets every wheel contact's friction itself;
+       under DiffDrive mu along the axle (fdir1, in the collision frame: lateral) and mu2 across it (longitudinal). -->
+  <xacro:macro name="tyre_friction" params="wheel">
+    <gazebo reference="${wheel}">
+      <collision>
+        <surface>
+          <friction>
+            <ode>
+              <xacro:if value="${physical}">
+                <mu>${drive.tyre_mu}</mu>
+                <mu2>${drive.tyre_mu}</mu2>
+              </xacro:if>
+              <xacro:unless value="${physical}">
+                <mu>${sim.diffdrive.mu_lateral}</mu>
+                <mu2>${sim.diffdrive.mu_longitudinal}</mu2>
+                <fdir1>0 0 1</fdir1>
+              </xacro:unless>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+    </gazebo>
+  </xacro:macro>
+  <xacro:tyre_friction wheel="wheel_fl"/>
+  <xacro:tyre_friction wheel="wheel_rl"/>
+  <xacro:tyre_friction wheel="wheel_fr"/>
+  <xacro:tyre_friction wheel="wheel_rr"/>
+
+  <!-- Dust (off by default): an emitter at the ground behind each rear wheel, on its rocker (a wheel link spins),
+       idle until the physical drivetrain sets its rate. It starts not emitting (SDF's default is to emit). Each
+       particle is the soft puff sprite, which carries the dust's colour and opacity; the material needs its white
+       diffuse (particles without one render black, measured). -->
+  <xacro:property name="dust" value="${sim.dust}"/>
+  <xacro:macro name="dust_emitter" params="side">
+    <gazebo reference="rocker_${side}">
+      <particle_emitter name="dust_r${side[0]}" type="box">
+        <pose>${-(rover.wheel.dx + rover.wheel.radius + dust.box / 4)} 0 ${rover.wheel.dz - rover.wheel.radius + dust.box / 2} 0 ${-dust.pitch} ${pi}</pose>
+        <emitting>false</emitting>
+        <size>${dust.box} ${dust.box} ${dust.box}</size>
+        <particle_size>${dust.particle} ${dust.particle} ${dust.particle}</particle_size>
+        <lifetime>${dust.lifetime}</lifetime>
+        <rate>0</rate>
+        <min_velocity>${dust.speed[0]}</min_velocity>
+        <max_velocity>${dust.speed[1]}</max_velocity>
+        <scale_rate>1</scale_rate>
+        <topic>${topics.dust.replace(link_slot, 'rocker_' + side).replace(emitter_slot, 'dust_r' + side[0])}</topic>
+        <particle_scatter_ratio>${dust.scatter_ratio}</particle_scatter_ratio>
+        <material>
+          <diffuse>1 1 1 1</diffuse>
+          <pbr><metal><albedo_map>model://rover/materials/textures/dust_puff.png</albedo_map></metal></pbr>
+        </material>
+      </particle_emitter>
+    </gazebo>
+  </xacro:macro>
+  <xacro:if value="${dust.enabled}">
+    <xacro:dust_emitter side="left"/>
+    <xacro:dust_emitter side="right"/>
+  </xacro:if>
+
+  <!-- The camera head: a JointPositionController per joint in velocity mode slews at the head's speed to the angle
+       last sent on its topic and holds it. -->
+  <xacro:macro name="head_controller" params="joint start">
+    <gazebo>
+      <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+        <joint_name>${joint}</joint_name>
+        <topic>${topics.head.replace(joint_slot, joint)}</topic>
+        <use_velocity_commands>true</use_velocity_commands>
+        <p_gain>${sim.head_p_gain}</p_gain>
+        <cmd_max>${rover.head.speed}</cmd_max>
+        <cmd_min>${-rover.head.speed}</cmd_min>
+        <initial_position>${start}</initial_position>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+  <xacro:head_controller joint="camera_pan_joint" start="0.0"/>
+  <xacro:head_controller joint="camera_tilt_joint" start="${rover.head.home_tilt}"/>
+
+  <!-- The rocker differential: a torsion spring and damper on the sum of the rocker angles. -->
+  <gazebo>
+    <plugin filename="RockerDifferential" name="rover_sim::RockerDifferential">
+      <left_joint>rocker_left_joint</left_joint>
+      <right_joint>rocker_right_joint</right_joint>
+      <stiffness>${rover.differential.stiffness}</stiffness>
+      <damping>${rover.differential.damping}</damping>
+    </plugin>
+  </gazebo>
+
+  <!-- The drive: the physical drivetrain (plugins/rover_drivetrain.cpp), never beside DiffDrive, which would override
+       its torques (D22). Its dust elements only with dust on; <dig_sink> and <tracks> only with their switches. -->
+  <xacro:macro name="drivetrain_wheel" params="name side">
+    <wheel>
+      <name>${name}</name>
+      <joint>wheel_${name}_joint</joint>
+      <link>wheel_${name}</link>
+      <side>${side}</side>
+    </wheel>
+  </xacro:macro>
+  <xacro:macro name="surface_row" params="key">
+    <xacro:if value="${key in surfaces}">
+      <surface>
+        <key>${key}</key>
+        <xacro:elements items="${list(surfaces[key].items())}"/>
+      </surface>
+    </xacro:if>
+  </xacro:macro>
+  <!-- ros2_control (sim.launch.py's rover): gz_ros2_control runs the controller manager inside Gazebo with
+       `controllers`, and the controller manager runs the description's ros2_control block through RoverSimSystem
+       (ros2_control/rover_sim_system.cpp), which hands each wheel's velocity command to the drivetrain's motors.
+       Before the drivetrain's plugin: Gazebo runs the plugins' PreUpdates in this order, so a setpoint the controller
+       manager writes at the start of a step drives the motors in that step (tests/test_ros2_control.py). -->
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:unless value="${physical}">
+      ${xacro.fatal("ros2_control:=true needs sim.yaml drivetrain mode physical (RoverDrivetrain's motors)")}
+    </xacro:unless>
+    <xacro:if value="${xacro.arg('controllers') == ''}">
+      ${xacro.fatal("ros2_control:=true needs controllers:= rover_control's controllers.yaml (absolute)")}
+    </xacro:if>
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(arg controllers)</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+  <xacro:if value="${physical}">
+    <gazebo>
+      <plugin filename="RoverDrivetrain" name="rover_sim::RoverDrivetrain">
+        <setpoint_topic>${topics.wheel_cmd}</setpoint_topic>
+        <cmd_timeout>${drive.cmd_timeout}</cmd_timeout>
+        <cmd_timeout_clock>${drive.cmd_timeout_clock}</cmd_timeout_clock>
+        <odom_topic>${topics.odometry}</odom_topic>
+        <tf_topic>${topics.tf}</tf_topic>
+        <frame_id>odom</frame_id>
+        <child_frame_id>base_link</child_frame_id>
+        <odom_publish_frequency>${drive.odom_rate}</odom_publish_frequency>
+        <state_topic>${topics.drivetrain}</state_topic>
+        <state_rate>${drive.state_rate}</state_rate>
+        <xacro:if value="${dust.enabled}">
+          <dust_rate>${dust.rate}</dust_rate>
+        </xacro:if>
+        <track>${2 * rover.rocker.pivot_y}</track>
+        <radius>${rover.wheel.radius}</radius>
+        <xacro:drivetrain_wheel name="fl" side="left"/>
+        <xacro:drivetrain_wheel name="rl" side="left"/>
+        <xacro:drivetrain_wheel name="fr" side="right"/>
+        <xacro:drivetrain_wheel name="rr" side="right"/>
+        <xacro:if value="${dust.enabled}">
+          <dust>
+            <wheel>wheel_rl</wheel>
+            <topic>${topics.dust.replace(link_slot, 'rocker_left').replace(emitter_slot, 'dust_rl')}</topic>
+          </dust>
+          <dust>
+            <wheel>wheel_rr</wheel>
+            <topic>${topics.dust.replace(link_slot, 'rocker_right').replace(emitter_slot, 'dust_rr')}</topic>
+          </dust>
+        </xacro:if>
+        <motor>
+          <xacro:elements items="${list(rover.motor.items())}"/>
+        </motor>
+        <driveline>
+          <xacro:elements items="${list(rover.driveline.items())}"/>
+        </driveline>
+        <controller>
+          <kp>${drive.kp}</kp>
+          <ki>${drive.ki}</ki>
+          <speed_filter>${drive.speed_filter}</speed_filter>
+          <max_speed>${rover.wheel.top_speed}</max_speed>
+          <substeps>${drive.substeps}</substeps>
+        </controller>
+        <contact>
+          <xacro:elements items="${list(sim.contact.items())}"/>
+          <!-- The default and object surfaces' traction, for worlds without a ground map. -->
+          <xacro:surface_row key="${sim.contact.default_surface}"/>
+          <xacro:if value="${sim.contact.object_surface != sim.contact.default_surface}">
+            <xacro:surface_row key="${sim.contact.object_surface}"/>
+          </xacro:if>
+        </contact>
+        <xacro:if value="${dust.enabled}">
+          <dust_rule>
+            <xacro:elements items="${list(dust.rule.items())}"/>
+          </dust_rule>
+        </xacro:if>
+        <xacro:if value="${sim.dig_sink.enabled}">
+          <dig_sink>
+            <gain>${sim.dig_sink.gain}</gain>
+            <max>${sim.dig_sink.max}</max>
+            <tau>${sim.dig_sink.tau}</tau>
+          </dig_sink>
+        </xacro:if>
+        <xacro:if value="${sim.ruts.enabled}">
+          <tracks>
+            <xacro:elements items="${list(sim.ruts.tracks.items())}"/>
+            <width>${rover.wheel.width}</width>
+          </tracks>
+        </xacro:if>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+  <xacro:unless value="${physical}">
+    <gazebo>
+      <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+        <left_joint>wheel_fl_joint</left_joint>
+        <left_joint>wheel_rl_joint</left_joint>
+        <right_joint>wheel_fr_joint</right_joint>
+        <right_joint>wheel_rr_joint</right_joint>
+        <wheel_separation>${2 * rover.rocker.pivot_y}</wheel_separation>
+        <wheel_radius>${rover.wheel.radius}</wheel_radius>
+        <topic>${topics.cmd_vel}</topic>
+        <odom_topic>${topics.odometry}</odom_topic>
+        <tf_topic>${topics.tf}</tf_topic>
+        <frame_id>odom</frame_id>
+        <child_frame_id>base_link</child_frame_id>
+        <odom_publish_frequency>${drive.odom_rate}</odom_publish_frequency>
+      </plugin>
+    </gazebo>
+  </xacro:unless>
+
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>${topics.joint_states}</topic>
+    </plugin>
+  </gazebo>
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_topic>${topics.ground_truth}</odom_topic>
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>${sim.ground_truth_rate}</odom_publish_frequency>
+    </plugin>
+  </gazebo>
+</robot>

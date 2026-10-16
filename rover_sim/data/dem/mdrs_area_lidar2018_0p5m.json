@@ -2,62 +2,86 @@
   "source": "USGS 3DEP Original Product Resolution (OPR) DEM, project UT_StateWide_2018_A18 / UT_Southern_QL1_2018 (lidar flown 2018-04-27; QL1: >= 8 pulses/m2, RMSEz <= 10 cm; tiles 0.5 m, NAD83(2011) UTM 12N + NAVD88 GEOID12B)",
   "license": "public domain (USGS)",
   "fetched": "2026-10-06",
+  "recipe": "mdrs_area",
+  "rebuilt": "2026-10-10: tools/usgs_lidar.py (recipe mdrs_area) makes this raster from the files listed here with its content_sha256 in rasters.json, on osx-arm64 with GDAL 3.13.3, PROJ 9.8.1, OpenCV 4.13.0, numpy 2.5.3, laspy 2.7.0",
   "found_via": "https://tnmaccess.nationalmap.gov/api/v1/products?datasets=Original Product Resolution (OPR) Digital Elevation Model (DEM)&bbox=-110.81,38.39,-110.764,38.432",
   "source_tiles": [
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1648.tif",
       "size_bytes": 28429086,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "e82d50325e2260a12dbf1cd64ec04ee4",
+      "sha256": "ba69c1843796edc66031973a5baf5b652069212586cac9e12d61d05ed1bebc14"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1650.tif",
       "size_bytes": 26010499,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "1d5dd1121b7d35c20b4fa98ddacdccfc",
+      "sha256": "0a041269d62feb8e99dd9c44b7ef1293b4796456c55dbc8493d9fab73b9a267e"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1652.tif",
       "size_bytes": 313146,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "381d3f4b4a2a958fc78c35c8382b7166",
+      "sha256": "92f7ea59ec45830a1fdc210034c9c623c27c295fb1fb530db9b4230f3baaee0f"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1752.tif",
       "size_bytes": 1347935,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "c15f815c42a3a47cd1df34be812e9646",
+      "sha256": "afa7d1fa4495370df2793ace221253c8ba8a98ef629a2e6cf6d486a13186a3f7"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1848.tif",
       "size_bytes": 31081331,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "bb579c38ac58c019e90daf4e01bd5dc1",
+      "sha256": "e94f1f657ebb41ecf44e9d52866f34d79986c30d1657644285bbca75a9837e2e"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1850.tif",
       "size_bytes": 32255622,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "78bf8511ae8595ddbd2aec502076e0ee",
+      "sha256": "9f38cb6d030e242e66f687e9548fd87d6aba08f1f2d4282b23e745d9a523c333"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1852.tif",
       "size_bytes": 2522713,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "27470c9befdf3e767aca38db3c94950e",
+      "sha256": "7a1ff5fdd9ee50ae0e1c21e06d61ca702314ee816399d734e6ea3d07152f0961"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH1952.tif",
       "size_bytes": 3649743,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "2d33c1199384b7a9ad28e8e9e55cbb86",
+      "sha256": "0b2ab3a390c4865c3f647efefa3cbb940483ce432d20063249a8e2e3e9c17152"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2048.tif",
       "size_bytes": 30729327,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "59ead725867eb34c2122592a6acca9f2",
+      "sha256": "bca9e144a50378f7b42a15bbd6f0e231edac191961ba953242c046a47246559d"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2050.tif",
       "size_bytes": 33575511,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "5ea175ce6d0939383ffc8980487f6b02",
+      "sha256": "7b3ebb68677b240df70849f78ddeaf12ff9a27c31b710eb6db3ffa848ab484a6"
     },
     {
       "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/OPR/Projects/UT_StateWide_2018_A18/UT_Southern_QL1_2018/TIFF/USGS_OPR_UT_StateWide_2018_A18_12SWH2052.tif",
       "size_bytes": 4770879,
-      "published": "2019-06-03"
+      "published": "2019-06-03",
+      "md5": "156a8b6632a3fd7760aabe976b925521",
+      "sha256": "8b3bf4a8690473b145ad266a765df3a32aa99f1c262b31ad367a6365e60fb890"
     }
   ],
   "processing": "gdalbuildvrt of the 2018 tiles; gdalwarp bilinear to EPSG:4326 on a 0.5 m x 0.5 m grid whose columns continue the 3DEP lattice (dlon = half the 3DEP pixel); cropped north to 38.41633, where the 2018 survey stops being complete; horizontal datum shift below",

@@ -7,6 +7,8 @@ driving rover in Gazebo and keeping above the ground, the rover eye riding
 on it, the drivetrain readout of a physical rover, and the station as a
 process, flown from a WebSocket client."""
 import asyncio
+import contextlib
+import io
 import json
 import math
 import os
@@ -28,11 +30,15 @@ import numpy as np
 from aiohttp import WSMsgType
 from aiohttp.test_utils import AioHTTPTestCase
 
+import rosstack
 import simulate
-from simulate import gen_model, world_sdf
+from simulate import world_sdf
 from worldfiles import SENSORS, SIM_DIR, WORLDS, temp_sdf
 
-import viewers  # noqa: E402  (worldfiles puts sim/ on the path)
+import rover_config  # noqa: E402  (worldfiles puts sim/ on the path)
+import viewers  # noqa: E402
+import wheel_cmd  # noqa: E402
+from rover_config import ROVER, SIM  # noqa: E402
 from station import drive, minimap, server, video  # noqa: E402
 from urc import sheet as sheets  # noqa: E402
 from urc import terrain as terrains  # noqa: E402
@@ -42,17 +48,20 @@ from gz.msgs10.image_pb2 import Image  # noqa: E402
 from gz.msgs10.odometry_pb2 import Odometry  # noqa: E402
 from gz.msgs10.stringmsg_pb2 import StringMsg  # noqa: E402
 from gz.msgs10.world_stats_pb2 import WorldStatistics  # noqa: E402
-from gz.msgs10.twist_pb2 import Twist  # noqa: E402
 from gz.msgs10.vector3d_pb2 import Vector3d  # noqa: E402
 from gz.sim8 import Joint, Link, Model, TestFixture, World, world_entity  # noqa: E402
 from gz.transport13 import Node  # noqa: E402
 
 from station import __main__ as station_main  # noqa: E402
 from station import link as gz_link  # noqa: E402
+from station import ros_link  # noqa: E402
+
+
+def tearDownModule():
+    rosstack.shutdown()
 from test_fly_camera import heightmap_model, write_hill  # noqa: E402
 import render_map  # noqa: E402  (server.py puts sim/tools on the path)
 
-P = gen_model.Params()
 FLY = viewers.FlyParams()
 ASPECT = FLY.size[0] / FLY.size[1]
 
@@ -75,7 +84,7 @@ class DriveMapping(unittest.TestCase):
         vx, wz = drive.target(command("KeyW", "KeyA", "ShiftRight"), 3)
         self.assertEqual((vx, wz), (min(2 * drive.PRESETS[3][0], drive.MAX_LINEAR),
                                     min(2 * drive.PRESETS[3][1], drive.MAX_ANGULAR)))
-        self.assertLessEqual(vx, P.wheel_speed * P.wheel_radius)
+        self.assertLessEqual(vx, ROVER.wheel.top_speed * ROVER.wheel.radius)
         self.assertEqual(drive.target(command("KeyW", "GamepadFast"), 1)[0], 2 * linear)
 
     def test_brake_wins(self):
@@ -163,7 +172,7 @@ class DriveLoop(unittest.TestCase):
             with self.assertRaises(ValueError, msg=msg):
                 station.handle(msg, 0.0)
         self.assertEqual(link.sent, [])
-        self.assertEqual((station.look.pan, station.look.tilt), (0.0, P.camera_pitch))
+        self.assertEqual((station.look.pan, station.look.tilt), (0.0, ROVER.head.home_tilt))
 
 
 class LookMapping(unittest.TestCase):
@@ -171,20 +180,20 @@ class LookMapping(unittest.TestCase):
 
     def test_nudges_add_up_inside_the_head_limits(self):
         look = drive.Look()
-        self.assertEqual((look.pan, look.tilt), (0.0, P.camera_pitch))
+        self.assertEqual((look.pan, look.tilt), (0.0, ROVER.head.home_tilt))
         look.nudge(0.3, 0.1)
         look.nudge(-0.1, 0.05)
         self.assertAlmostEqual(look.pan, 0.2)
-        self.assertAlmostEqual(look.tilt, P.camera_pitch + 0.15)
+        self.assertAlmostEqual(look.tilt, ROVER.head.home_tilt + 0.15)
         look.nudge(10.0, -10.0)
-        self.assertEqual((look.pan, look.tilt), (P.camera_pan_limit, P.camera_tilt_limits[0]))
+        self.assertEqual((look.pan, look.tilt), (ROVER.head.pan_limit, ROVER.head.tilt_limits[0]))
         look.nudge(-20.0, 20.0)
-        self.assertEqual((look.pan, look.tilt), (-P.camera_pan_limit, P.camera_tilt_limits[1]))
+        self.assertEqual((look.pan, look.tilt), (-ROVER.head.pan_limit, ROVER.head.tilt_limits[1]))
         look.center()
-        self.assertEqual((look.pan, look.tilt), (0.0, P.camera_pitch))
+        self.assertEqual((look.pan, look.tilt), (0.0, ROVER.head.home_tilt))
 
     def test_the_eye_model_starts_and_stops_like_the_head(self):
-        plugin = ET.fromstring(gen_model.build_eye_sdf(gen_model.EyeParams(), P)).find("model/plugin")
+        plugin = ET.fromstring(viewers.build_eye_sdf(viewers.EyeParams(), ROVER)).find("model/plugin")
         value = lambda tag: float(plugin.findtext(tag))  # noqa: E731
         look = drive.Look()
         self.assertEqual((value("yaw"), value("pitch")), (look.pan, look.tilt))
@@ -197,19 +206,20 @@ class LookMapping(unittest.TestCase):
         link = FakeLink()
         station = server.Station(link, "test")
         station.handle({"t": "look", "pan": 0.5, "tilt": -0.2}, 0.0)
-        self.assertEqual(link.sent, [("eye", 0.5, P.camera_pitch - 0.2), ("head", 0.5, P.camera_pitch - 0.2)])
+        self.assertEqual(link.sent, [("eye", 0.5, ROVER.head.home_tilt - 0.2),
+                                     ("head", 0.5, ROVER.head.home_tilt - 0.2)])
         station.set_control(False)
         link.sent.clear()
         station.handle({"t": "look", "pan": 0.1}, 0.1)
         station.handle({"t": "look_center"}, 0.2)
-        self.assertEqual(link.sent, [("eye", 0.6, P.camera_pitch - 0.2), ("eye", 0.0, P.camera_pitch)])
+        self.assertEqual(link.sent, [("eye", 0.6, ROVER.head.home_tilt - 0.2), ("eye", 0.0, ROVER.head.home_tilt)])
 
     def test_resent_every_period_for_late_subscribers(self):
         link = FakeLink()
         station = server.Station(link, "test", control=False)
         for k in range(61):  # 3 s of control ticks
             station.tick(k * server.CONTROL_PERIOD)
-        self.assertEqual(link.of("eye"), [("eye", 0.0, P.camera_pitch)] * 4)  # at 0, 1, 2 and 3 s
+        self.assertEqual(link.of("eye"), [("eye", 0.0, ROVER.head.home_tilt)] * 4)  # at 0, 1, 2 and 3 s
         self.assertEqual(link.of("head") + link.of("twist"), [])  # released: the head is autonomy's
 
 
@@ -383,7 +393,7 @@ def image(pixel_format, width=32, height=24):
 
 class Video(unittest.TestCase):
     def test_depth_is_coloured_and_no_return_is_black(self):
-        bgr = video.to_bgr(image(video.R_FLOAT32), P.camera_clip)
+        bgr = video.to_bgr(image(video.R_FLOAT32), ROVER.camera.clip)
         self.assertEqual(bgr.shape, (24, 32, 3))
         self.assertEqual(bgr[0, 0].tolist(), [0, 0, 0])  # inf: no return
         self.assertEqual(bgr[-1, -1].tolist(), [0, 0, 0])  # beyond the far clip
@@ -508,14 +518,14 @@ class Telemetry(unittest.TestCase):
     def test_rockers_and_wheels(self):
         link = FakeLink()
         link.state["joints"] = {"rocker_left_joint": (0.03, 0.0), "rocker_right_joint": (-0.028, 0.0),
-                                "wheel_fl_joint": (1.0, 2.0), gen_model.PAN_JOINT: (0.1, 0.0),
-                                gen_model.TILT_JOINT: (0.2, 0.0)}
+                                "wheel_fl_joint": (1.0, 2.0), rover_config.PAN_JOINT: (0.1, 0.0),
+                                rover_config.TILT_JOINT: (0.2, 0.0)}
         t = server.Station(link, "test").telemetry(0.0)
         self.assertEqual(t["rockers"]["left"], 0.03)
         self.assertAlmostEqual(t["rockers"]["error"], 0.002)  # what the differential keeps at 0
-        self.assertEqual(t["wheels"], {"fl": 2.0 * P.wheel_radius})  # ground speed of the wheel
+        self.assertEqual(t["wheels"], {"fl": 2.0 * ROVER.wheel.radius})  # ground speed of the wheel
         self.assertEqual(t["head"], {"pan": 0.1, "tilt": 0.2})
-        self.assertEqual(t["look"], {"pan": 0.0, "tilt": P.camera_pitch})  # what the station commands
+        self.assertEqual(t["look"], {"pan": 0.0, "tilt": ROVER.head.home_tilt})  # what the station commands
         json.dumps(t)
 
     def test_released_station_asks_for_nothing(self):
@@ -854,12 +864,12 @@ class App(AioHTTPTestCase):
         self.assertEqual(info["world"], "urc_equipment_servicing")
         self.assertEqual(info["map"]["size"], [256.0, 256.0])
         self.assertEqual(info["map"]["photo"], {"status": "missing", "changed": [], "url": None})
-        self.assertEqual(info["rover"]["wheel_dx"], P.wheel_dx)
+        self.assertEqual(info["rover"]["wheel_dx"], ROVER.wheel.dx)
         self.assertEqual(sorted(info["presets"]), ["1", "2", "3", "4", "5"])
-        self.assertEqual(info["hfov"], {"eye": gen_model.EyeParams().hfov, "chase": gen_model.ChaseParams().hfov,
-                                        "rgb": P.camera_hfov, "depth": P.camera_hfov, "fly": FLY.hfov})
+        self.assertEqual(info["hfov"], {"eye": viewers.EyeParams().hfov, "chase": viewers.ChaseParams().hfov,
+                                        "rgb": ROVER.camera.hfov, "depth": ROVER.camera.hfov, "fly": FLY.hfov})
         self.assertEqual(info["fly"]["aspect"], ASPECT)
-        self.assertEqual(info["drivetrain"]["current_limit"], P.drive.current_limit)
+        self.assertEqual(info["drivetrain"]["current_limit"], ROVER.motor.current_limit)
 
     async def test_minimap(self):
         async with self.client.get("/minimap.png") as response:
@@ -940,8 +950,8 @@ class App(AioHTTPTestCase):
         self.assertEqual(self.link.of("chase_mode"), [("chase_mode", "orbit")])
         for kind in ("eye", "head"):  # the head follows the look
             sent = self.link.of(kind)
-            self.assertIn((kind, 0.3, P.camera_pitch + 0.1), sent)
-            self.assertEqual(sent[-1], (kind, 0.0, P.camera_pitch))
+            self.assertIn((kind, 0.3, ROVER.head.home_tilt + 0.1), sent)
+            self.assertEqual(sent[-1], (kind, 0.0, ROVER.head.home_tilt))
         self.assertEqual(self.station.drive.preset, 3)
 
     async def test_cameras_come_back_with_the_world(self):
@@ -971,11 +981,11 @@ class App(AioHTTPTestCase):
             await ws.send_json({"t": "look", "pan": 0.2})
             await asyncio.sleep(0.1)
             self.assertEqual(len(rover()), count)  # cmd_vel, LED and head left alone
-            self.assertEqual(self.link.of("eye")[-1], ("eye", 0.2, P.camera_pitch))  # the eye still looks
+            self.assertEqual(self.link.of("eye")[-1], ("eye", 0.2, ROVER.head.home_tilt))  # the eye still looks
             await ws.send_json({"t": "control", "on": True})
             await asyncio.sleep(0.1)
             self.assertIn(("led", "blue"), rover()[count:])
-            self.assertIn(("head", 0.2, P.camera_pitch), rover()[count:])  # the head catches up
+            self.assertIn(("head", 0.2, ROVER.head.home_tilt), rover()[count:])  # the head catches up
 
     async def test_bad_messages_are_answered_not_fatal(self):
         async with self.client.ws_connect("/ws") as ws:
@@ -1105,15 +1115,13 @@ class ChaseCameraFlight(unittest.TestCase):
     camera itself does not render)."""
 
     def test_follows_orbits_and_stays_above(self):
-        c = gen_model.ChaseParams()
-        extra = (f"<include><uri>model://{gen_model.CHASE_MODEL}</uri><name>{gen_model.CHASE_MODEL}</name>"
+        c = viewers.ChaseParams()
+        extra = (f"<include><uri>model://{viewers.CHASE_MODEL}</uri><name>{viewers.CHASE_MODEL}</name>"
                  "<pose>-5 0 2 0 0 0</pose></include>")
         node = Node()
-        twist_pub = node.advertise(gen_model.CMD_VEL_TOPIC, Twist)
-        cmd_pub = node.advertise(gen_model.CHASE_CMD_TOPIC, Vector3d)
-        mode_pub = node.advertise(gen_model.CHASE_MODE_TOPIC, StringMsg)
-        twist = Twist()
-        twist.linear.x, twist.angular.z = 0.6, 0.35
+        driver = wheel_cmd.Driver(node)
+        cmd_pub = node.advertise(viewers.CHASE_CMD_TOPIC, Vector3d)
+        mode_pub = node.advertise(viewers.CHASE_MODE_TOPIC, StringMsg)
         zoom = math.log(1.5)
         # (sim time [s], action): commands go out once (cmd deltas add up); the
         # one at 5 s is not finite and must be dropped.
@@ -1131,9 +1139,11 @@ class ChaseCameraFlight(unittest.TestCase):
             if not models:
                 world = World(world_entity(ecm))
                 models["rover"] = Model(world.model_by_name(ecm, "rover"))
-                models["camera"] = Model(world.model_by_name(ecm, gen_model.CHASE_MODEL))
-            if info.iterations % 20 == 0:
-                twist_pub.publish(twist)
+                models["camera"] = Model(world.model_by_name(ecm, viewers.CHASE_MODEL))
+            beat = info.iterations % 20 == 0
+            if beat:
+                driver.command(0.6, 0.35)
+            driver.step(force=beat)
             t = info.iterations / 1000
             for when, action in plan:
                 if abs(t - when) < 5e-4:
@@ -1278,18 +1288,18 @@ class EyeCameraRide(unittest.TestCase):
         extra = ("<model name='plank'><static>true</static><link name='link'><pose>1.2 0.4 0.03 0 0 0</pose>"
                  "<collision name='c'><geometry><box><size>0.4 0.3 0.06</size></box></geometry></collision>"
                  "</link></model>"
-                 f"<include><uri>model://{gen_model.EYE_MODEL}</uri><name>{gen_model.EYE_MODEL}</name>"
+                 f"<include><uri>model://{viewers.EYE_MODEL}</uri><name>{viewers.EYE_MODEL}</name>"
                  "<pose>0 0 3 0 0 0</pose></include>")
         station = server.Station(gz_link.GzLink("test", Node()), "test")
         # Its callbacks would otherwise keep the node, and its subscriptions, alive for the other tests.
         self.addCleanup(lambda node=station.link.node: [node.unsubscribe(t) for t in node.subscribed_topics()])
-        raw_look = Node().advertise(gen_model.EYE_LOOK_TOPIC, Vector3d)  # one advertiser per node and topic
-        mount = gz.math7.Pose3d(gz.math7.Vector3d(*P.camera_xyz), gz.math7.Quaterniond())
+        raw_look = Node().advertise(viewers.EYE_LOOK_TOPIC, Vector3d)  # one advertiser per node and topic
+        mount = gz.math7.Pose3d(gz.math7.Vector3d(*ROVER.camera.xyz), gz.math7.Quaterniond())
         # (sim time [s], message to the station); keys W from 0.5 s, W + A (turn left) from 4.5 s.
         looks = {1.0: {"t": "look", "pan": 0.8, "tilt": 0.3}, 4.0: {"t": "look", "pan": -1.5, "tilt": -0.6},
                  7.0: {"t": "look_center"}}
-        expected = {3.0: (0.8, P.camera_pitch + 0.3), 6.0: (-0.7, P.camera_pitch - 0.3),
-                    8.5: (0.0, P.camera_pitch)}
+        expected = {3.0: (0.8, ROVER.head.home_tilt + 0.3), 6.0: (-0.7, ROVER.head.home_tilt - 0.3),
+                    8.5: (0.0, ROVER.head.home_tilt)}
         handles = {}
         worst = {"offset": 0.0, "roll": 0.0}
         samples = {}
@@ -1299,9 +1309,9 @@ class EyeCameraRide(unittest.TestCase):
                 world = World(world_entity(ecm))
                 rover = Model(world.model_by_name(ecm, "rover"))
                 handles["base"] = Link(rover.link_by_name(ecm, "base_link"))
-                handles["eye"] = Link(Model(world.model_by_name(ecm, gen_model.EYE_MODEL)).canonical_link(ecm))
-                handles["joints"] = [Joint(rover.joint_by_name(ecm, j)) for j in (gen_model.PAN_JOINT,
-                                                                                 gen_model.TILT_JOINT)]
+                handles["eye"] = Link(Model(world.model_by_name(ecm, viewers.EYE_MODEL)).canonical_link(ecm))
+                handles["joints"] = [Joint(rover.joint_by_name(ecm, j)) for j in (rover_config.PAN_JOINT,
+                                                                                 rover_config.TILT_JOINT)]
                 for joint in handles["joints"]:
                     joint.enable_position_check(ecm, True)
             if info.iterations % 50:
@@ -1350,9 +1360,9 @@ class EyeCameraRide(unittest.TestCase):
         # Out of range: the plugin clamps to the head's limits (and drops the
         # look that is not finite); the head was not commanded.
         _, pitch, yaw = samples[8.9]["look"]
-        self.assertAlmostEqual(yaw, P.camera_pan_limit, delta=0.01)
-        self.assertAlmostEqual(pitch, P.camera_tilt_limits[0], delta=0.01)
-        for got, want in zip(samples[8.9]["joints"], (0.0, P.camera_pitch)):
+        self.assertAlmostEqual(yaw, ROVER.head.pan_limit, delta=0.01)
+        self.assertAlmostEqual(pitch, ROVER.head.tilt_limits[0], delta=0.01)
+        for got, want in zip(samples[8.9]["joints"], (0.0, ROVER.head.home_tilt)):
             self.assertAlmostEqual(got, want, delta=0.02)
         # The rover did drive and turn.
         x0, y0, yaw0 = samples[4.5]["base"]
@@ -1400,12 +1410,89 @@ class DrivetrainReadout(unittest.TestCase):
         for name, w in d["wheels"].items():
             self.assertGreater(abs(w["i"]), 1.0, name)
             self.assertGreater(abs(w["tau"]), 1.0, name)
-            self.assertEqual(w["surface"], P.drive.default_surface, name)
+            self.assertEqual(w["surface"], SIM.contact.default_surface, name)
             self.assertFalse(w["sat"], name)
             self.assertAlmostEqual(w["dig"], 1.0, places=3, msg=name)  # packed ground does not dig
         # Skid-steer turning slips: about 0.38 of the asked rate on regolith (design spec 5.6).
         ratio = seen["pose"]["yaw_rate"] / asked
         self.assertTrue(0.25 < ratio < 0.5, ratio)
+
+
+class RosLink(unittest.TestCase):
+    """station/ros_link.py, the station's /cmd_vel (docs/topics.md): TwistStamped with a zero stamp, which the drive
+    controller stamps on arrival with its own clock, in this process's private ROS domain."""
+
+    def test_twists_go_out_on_cmd_vel_with_a_zero_stamp(self):
+        from geometry_msgs.msg import TwistStamped
+        probe = rosstack.Probe(topics=[("/cmd_vel", TwistStamped)])  # first: it owns rclpy's context
+        self.addCleanup(probe.close)
+        cmd_vel = ros_link.CmdVel()
+        self.addCleanup(cmd_vel.close)
+        probe.wait(lambda: cmd_vel.subscribers() > 0, 10, "subscriber of the station's /cmd_vel")
+        for _ in range(5):
+            cmd_vel.twist(0.6, 0.8)
+            time.sleep(0.05)
+        probe.wait(lambda: probe.messages["/cmd_vel"], 5, "/cmd_vel message")
+        msg = probe.messages["/cmd_vel"][-1]
+        self.assertEqual((msg.twist.linear.x, msg.twist.angular.z), (0.6, 0.8))
+        self.assertEqual((msg.header.stamp.sec, msg.header.stamp.nanosec), (0, 0))
+
+    def test_it_says_so_when_nothing_listens(self):
+        cmd_vel = ros_link.CmdVel()
+        self.addCleanup(cmd_vel.close)
+        for subscribers, said in ((0, 1), (1, 0)):
+            lines = []
+            with mock.patch.object(cmd_vel, "subscribers", return_value=subscribers):
+                cmd_vel.warn_if_unheard(after=0.05, out=lines.append).join(5)
+            self.assertEqual(len(lines), said)
+        with mock.patch.object(cmd_vel, "subscribers", return_value=0):
+            lines = []
+            cmd_vel.warn_if_unheard(after=0.05, out=lines.append).join(5)
+        self.assertIn("nothing subscribes to /cmd_vel", lines[0])
+
+    def test_the_warning_does_not_outlive_close(self):
+        """A station stopped within the warning's 10 s, still waiting for the world it started to stop, closes its
+        /cmd_vel first: the timer neither says anything nor touches the destroyed node (InvalidHandle, seen in the
+        launcher's log), and a twist after close() sends nothing."""
+        failures = []
+        saved = threading.excepthook
+        threading.excepthook = lambda args: failures.append(args.exc_value)
+        self.addCleanup(setattr, threading, "excepthook", saved)
+        cmd_vel = ros_link.CmdVel()
+        lines = []
+        timer = cmd_vel.warn_if_unheard(after=0.2, out=lines.append)
+        cmd_vel.close()
+        timer.join(2)
+        time.sleep(0.3)
+        cmd_vel.twist(0.5, 0.0)
+        cmd_vel.close()  # twice is harmless
+        self.assertEqual((failures, lines, cmd_vel.subscribers()), ([], [], 0))
+
+
+class StartsTheStack(unittest.TestCase):
+    def test_a_world_starts_with_sim_launch_in_its_own_session(self):
+        path = WORLDS / "rover_test.sdf"
+        with mock.patch.object(station_main.subprocess, "Popen") as popen, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            station_main.start_simulation(path)
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0][1:], ["launch", str(SIM_DIR / "launch" / "sim.launch.py"), f"world:={path}",
+                                       "gui:=false", "station:=false"])
+        self.assertTrue(args[0][0].endswith("ros2"))
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertIn(str(SIM_DIR / "models"), kwargs["env"]["GZ_SIM_RESOURCE_PATH"])  # gzenv's environment
+        self.assertIn("headless", out.getvalue())
+
+    def test_a_second_stop_signal_does_not_cut_the_way_out_short(self):
+        """Under ros2 launch (sim.launch.py station:=true) Ctrl-C reaches the station from the terminal and again from
+        ros2 launch: the second, while the station closes its /cmd_vel, is not a KeyboardInterrupt."""
+        cmd_vel = mock.Mock()
+        cmd_vel.close.side_effect = lambda: os.kill(os.getpid(), signal.SIGINT)
+        saved = {sig: signal.getsignal(sig) for sig in station_main.STOP_SIGNALS}
+        self.addCleanup(lambda: [signal.signal(sig, handler) for sig, handler in saved.items()])
+        signal.signal(signal.SIGINT, station_main.interrupt)  # the station's handler outside serve()
+        station_main.shut_down(cmd_vel, None)
+        cmd_vel.close.assert_called_once_with()
 
 
 class WorldArgument(unittest.TestCase):
@@ -1433,10 +1520,11 @@ class WorldArgument(unittest.TestCase):
 
 
 class StationProcess(unittest.TestCase):
-    """pixi run drive as a process, in a private transport partition: it
-    stops the world it started however it is stopped (DiffDrive would keep
-    the last twist forever), one world has one station, and a world that
-    cannot start ends the wait at once."""
+    """pixi run drive as a process, in a private transport partition and ROS
+    domain: the world it starts runs with the rover's ROS 2 stack
+    (sim.launch.py), which the station drives through the drive controller;
+    it stops all of it however it is stopped, one world has one station, and
+    a world that cannot start ends the wait at once."""
 
     def station(self, *args):
         """A running station process; its output collects in .output."""
@@ -1477,6 +1565,12 @@ class StationProcess(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["pkill", "-KILL", "-f", path]))  # in case the test fails
         return path
 
+    @staticmethod
+    def copy_of(process):
+        """The world's copy that sim.launch.py runs (its line "world: <copy> (a copy of ...)")."""
+        found = re.search(r"world: (\S+) \(a copy of", "".join(process.output))
+        return found.group(1) if found else None
+
     def assert_world_stops(self, path, timeout=15.0):
         deadline = time.monotonic() + timeout
         while subprocess.run(["pgrep", "-f", path], capture_output=True).returncode == 0:
@@ -1486,7 +1580,9 @@ class StationProcess(unittest.TestCase):
     def test_closing_the_terminal_stops_the_world_and_one_station_per_world(self):
         path = self.world()
         first = self.station(path)
-        self.wait_for(first, "driver station on", 90)
+        self.wait_for(first, "driver station on", 120)
+        copy = self.copy_of(first)
+        self.assertIsNotNone(copy, "".join(first.output))
         self.assertIn("eye_camera: spawned", "".join(first.output))
         self.assertIn("chase_camera: spawned", "".join(first.output))
         self.assertEqual(subprocess.run(["pgrep", "-f", path], capture_output=True).returncode, 0)
@@ -1497,6 +1593,7 @@ class StationProcess(unittest.TestCase):
         first.send_signal(signal.SIGHUP)
         self.assertEqual(first.wait(30), 0, "".join(first.output))  # stopped by the station, not by the signal
         self.assert_world_stops(path)
+        self.assert_world_stops(copy)  # the Gazebo server sim.launch.py ran
 
     def test_fly_view_over_the_websocket(self):
         """The Fly view as the page uses it, from a WebSocket client: entering
@@ -1505,7 +1602,7 @@ class StationProcess(unittest.TestCase):
         holds still."""
         path = self.world()
         process = self.station(path)
-        self.wait_for(process, "driver station on", 90)
+        self.wait_for(process, "driver station on", 120)
         url = re.search(r"driver station on (\S+)", "".join(process.output)).group(1)
         info, states = asyncio.run(self.fly_session(url))
         self.wait_for(process, "fly_camera: spawned", 10)
@@ -1570,6 +1667,57 @@ class StationProcess(unittest.TestCase):
                 states["perspective"] = await hold(3.0, done=lambda m: m["fly"]["ortho"] == 0)
                 reader.cancel()
         return info, states
+
+    def test_drives_through_the_controllers(self):
+        """pixi run drive <world> starts sim.launch.py, so the station's /cmd_vel drives the rover through the drive
+        controller: W held for 3 s moves it forward (ground truth on the page, /odom in this process)."""
+        path = self.world()
+        process = self.station(path)
+        self.wait_for(process, "driver station on", 120)
+        probe = rosstack.Probe()
+        self.addCleanup(probe.close)
+        probe.wait(lambda: probe.messages["/odom"], 60, "/odom from the drive controller")
+        url = re.search(r"driver station on (\S+)", "".join(process.output)).group(1)
+        before, after = asyncio.run(self.drive_session(url))
+        self.assertGreater(after["x"] - before["x"], 0.5, (before, after))
+        self.assertGreater(probe.messages["/odom"][-1].pose.pose.position.x, 0.5)
+        copy = self.copy_of(process)
+        process.send_signal(signal.SIGTERM)
+        self.assertEqual(process.wait(30), 0, "".join(process.output))
+        self.assert_world_stops(path)
+        self.assert_world_stops(copy)
+
+    async def drive_session(self, url):
+        """Hold W for 3 s of sim time as the page does (its input at 20 Hz; sim time from the telemetry's stats, so a
+        runner slower than real time drives as far): the rover's pose before and after."""
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(url + "ws") as ws:
+                latest, sim = {}, [0.0]
+
+                async def receive():
+                    async for msg in ws:
+                        data = json.loads(msg.data)
+                        if data["t"] == "telemetry" and data.get("pose"):
+                            latest.update(data["pose"])
+                        if data["t"] == "telemetry" and (data.get("stats") or {}).get("sim_time") is not None:
+                            sim[0] = data["stats"]["sim_time"]
+
+                async def hold(seconds, keys, timeout=60.0):
+                    start, end = sim[0], time.monotonic() + timeout
+                    while sim[0] - start < seconds and time.monotonic() < end:
+                        await ws.send_json({"t": "input", "keys": keys, "axes": [0, 0]})
+                        await asyncio.sleep(0.05)
+                    return dict(latest)
+
+                reader = asyncio.create_task(receive())
+                deadline = time.monotonic() + 30
+                while not (latest and sim[0]) and time.monotonic() < deadline:  # the first pose and sim time
+                    await asyncio.sleep(0.05)
+                before = await hold(1.0, [])
+                await hold(3.0, ["KeyW"])
+                after = await hold(1.0, [])
+                reader.cancel()
+        return before, after
 
     def test_stopped_while_the_world_loads(self):
         path = self.world()

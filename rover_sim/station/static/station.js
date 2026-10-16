@@ -1,6 +1,7 @@
 // Driver station page. Everything goes through one keyboard focus: the page
 // sends what is held at 20 Hz over the WebSocket (the station turns it into
-// /model/rover/cmd_vel and stops the rover when the page goes quiet), camera
+// /cmd_vel, geometry_msgs/TwistStamped for the drive controller, through
+// station/ros_link.py, and stops the rover when the page goes quiet), camera
 // moves as small deltas, and draws the telemetry the station sends at 10 Hz.
 // Fly and Map are inspection views only a simulation has: there the keyboard
 // flies the fly camera or moves the map, and only a gamepad drives the rover.
@@ -643,7 +644,7 @@ function showDrivetrain(m) {
   $("motor-table").hidden = !d;
   $("motors-figure").hidden = !d;
   $("drivetrain-note").textContent = d ? ""
-    : "No motor data: this rover drives with Gazebo's DiffDrive (DriveParams.mode = \"physical\" has the motor model).";
+    : "No motor data: this rover drives with Gazebo's DiffDrive (sim.yaml's drivetrain mode physical has the motor model).";
   if (!d) return;
   const limit = state.info ? state.info.drivetrain.current_limit : 20;
   const rows = WHEELS.map((name) => {

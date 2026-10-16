@@ -33,7 +33,7 @@ struct MotorParams {
   double damping = 2.0;           ///< [N m s/rad] driveline (A)
   double backlash = 0.026;        ///< [rad] total, 1.5 deg (A: IMS 0.8-2.5 deg [22])
   double kp = 4.0;                ///< [V/(rad/s)] (M: prototype tuning)
-  double ki = 160.0;              ///< [V/rad] integral time 25 ms (A: retuned, gen_model.DriveParams.ki)
+  double ki = 160.0;              ///< [V/rad] integral time 25 ms (A: retuned, sim.yaml drivetrain ki)
   double speed_filter = 0.005;    ///< [s] time constant of the measured speed (A)
   int substeps = 4;               ///< motor integration steps per physics step
 };
@@ -228,7 +228,7 @@ inline double DustRate(const DustParams& p, const Traction& ground, double hub_s
   return std::min(p.max_rate, ground.dust * (p.speed_gain * hub_speed + p.slip_gain * slip) * dig);
 }
 
-// --- The dig-in made visible: the tyre sink (gen_model.DriveParams.dig_sink) -------------------------------------
+// --- The dig-in made visible: the tyre sink (sim.yaml dig_sink) --------------------------------------------------
 
 /// How a dug wheel's tyre is drawn (<dig_sink>). Visual only: physics never sinks a wheel (DART has no per-contact
 /// normal offset), so the drivetrain moves the wheel's visuals, never its collision.

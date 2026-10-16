@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
-"""Fetch the git-ignored terrain rasters: pixi run fetch-data [--all] [--dry-run] [--verify].
+"""Fetch the git-ignored terrain rasters: pixi run fetch-data [--all] [--dry-run] [--verify] [--sources DIR].
 
 data/rasters.json lists every raster under data/ that git ignores, with its
 size, its SHA-256, the SHA-256 of its content (the pixels and georeferencing
 urc.dem.read_raster reads) and the tracked .json that says where it came
-from. A missing raster is fetched from its official source when it is one or
-more ImageServer exportImage requests (`official`; its .json lists them as
-url, urls or requests): each tile is placed on the raster's grid by its own
-georeferencing, the mosaic is written as a deflate GeoTIFF with the original
-file's georeferencing and metadata (its geotransform and `tags`) and kept
-only if its content matches, so it is the original but for its encoding. The
-others fetch-data cannot rebuild yet (the 0.5 m lidar DEMs and their source
-map, made by processing that is not in the repository; the NAIP 2021 route
-mosaic, whose .json gives only a URL template): for each one missing it
-names the worlds that need it (`worlds`) and what is planned (`rebuild`),
-and a teammate's clone lends it (tools/link_data.sh <that clone>). There is
-no other copy to fetch from; without such a raster sim-worlds skips the
-worlds that need it, and sim, drive and the tests' skips say why
-(world_missing).
+from. A missing raster is rebuilt from its official source (`official`):
+from one or more ImageServer exportImage requests (its .json lists them as
+url, urls or requests), each tile placed on the raster's grid by its own
+georeferencing and the mosaic written as a deflate GeoTIFF with the original
+file's georeferencing and metadata (its geotransform and `tags`); or, for
+the 0.5 m lidar DEMs and their source map, by the recipe of
+tools/usgs_lidar.py that its .json names, from the USGS tiles and point
+clouds listed there, each download checked against its size and SHA-256
+(--sources DIR keeps them for the next run), GDAL writing the tags. A raster
+is kept only if its content and tags match, so it is the original but for
+its encoding; a lidar rebuild that is not bit-identical (another platform's
+floating point) is kept when its stats (min, max and 16 x 16 block means)
+are within TOLERANCE of the manifest's, and fetch-data says so and names the
+machine (MACHINE). A raster that is not official fetch-data cannot rebuild:
+for each one missing it names the worlds that need it (`worlds`) and what is
+planned (`rebuild`), and a clone that has it lends it (tools/link_data.sh
+<that clone>); without such a raster sim-worlds skips the worlds that need
+it, and sim, drive and the tests' skips say why (world_missing).
 By default only the rasters the simulation reads (`required`); --all also the
 ones only the research and tools/make_relief_swatches.py read. Rasters already
 here are left alone (--verify checks them against the manifest); the tracked
@@ -30,10 +34,14 @@ differs from the manifest, or one it can fetch is missing); 2 for a usage
 error.
 """
 import argparse
+import concurrent.futures
+import contextlib
 import hashlib
 import http.client
 import json
 import os
+import platform
+import shutil
 import sys
 import tempfile
 import time
@@ -46,14 +54,25 @@ from PIL import Image, TiffImagePlugin, TiffTags
 
 SIM_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM_DIR))
+sys.path.insert(0, str(SIM_DIR / "tools"))  # usgs_lidar beside this file, also under python -I
 from urc import dem  # noqa: E402
+import usgs_lidar  # noqa: E402
 
 DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
-TRIES = 6  # per download: the ImageServers answer HTTP 500 now and then, and time out (HTTP 504) for minutes
+TRIES = 6  # per download: the ImageServers answer HTTP 500 and time out (HTTP 504) for minutes; rockyweb drops connections
 WAITS = (10, 20, 40, 80, 120)  # [s] between tries, 4.5 min in all (M: the first CI run met a 504, 2026-10-11)
+# Downloads at once of a lidar rebuild: rockyweb gave 0.14 MB/s to one connection and 0.32 MB/s to six
+# (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
+CONNECTIONS = 6
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
-LINK = "link it from a teammate's clone: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+LINK = "link it from a clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
+STATS_BLOCKS = 16  # blocks per side of a raster's stats
+# How far the stats of a lidar rebuild that is not bit-identical may be from the manifest's: 1 mm for the DEMs, a
+# thousandth of a code for the source map. Rounding differences between platforms (OpenCV's blur, GDAL's bilinear
+# kernel) are a few float32 steps (0.1 mm at 1400 m); a wrong tile, shift or step is centimetres (A).
+TOLERANCE = 1e-3
+MACHINE = f"{platform.system()} {platform.machine()}"  # what fetch-data names when a rebuild is not bit-identical
 # The TIFF tags of an original raster beyond its pixels' layout and encoding and the pixel scale and tiepoint its
 # geotransform gives (geotags), by the names rasters.json's `tags` gives them, with their TIFF types: GeoTIFF's
 # GeoKey directory and its double and ASCII parameters, GDAL's metadata and an image description.
@@ -62,6 +81,11 @@ TAGS = {"ImageDescription": (270, TiffTags.ASCII),
         "GeoDoubleParams": (dem.GEO_DOUBLE_PARAMS, TiffTags.DOUBLE),
         "GeoAsciiParams": (dem.GEO_ASCII_PARAMS, TiffTags.ASCII),
         "GDAL_METADATA": (dem.GDAL_METADATA, TiffTags.ASCII)}
+
+
+def say(line):
+    """Prints a progress line at once, also when stdout is a pipe (CI's log): a rebuild takes minutes."""
+    print(line, flush=True)
 
 
 def load_manifest(data_dir=DATA_DIR):
@@ -112,14 +136,35 @@ def file_sha256(path):
     return h.hexdigest()
 
 
+def content_digest(bands, transform):
+    """SHA-256 of a raster's float32 bands (B, H, W) and geotransform, as dem.read_raster returns them."""
+    h = hashlib.sha256(np.ascontiguousarray(bands).tobytes())
+    h.update(repr(tuple(float(v) for v in transform)).encode())
+    return h.hexdigest()
+
+
 def content_sha256(path):
     """SHA-256 of what the simulation reads from a raster: dem.read_raster's
     float32 bands (B, H, W) and geotransform. Any lossless encoding of the same
     pixels and georeferencing has the same one."""
-    bands, transform = dem.read_raster(path)
-    h = hashlib.sha256(np.ascontiguousarray(bands).tobytes())
-    h.update(repr(tuple(float(v) for v in transform)).encode())
-    return h.hexdigest()
+    return content_digest(*dem.read_raster(path))
+
+
+def stats(bands):
+    """A raster's stats: the min and max of its float32 bands (B, H, W) and the mean of each of STATS_BLOCKS x
+    STATS_BLOCKS blocks per band (rows and columns split as np.array_split splits them), rounded to 1e-6."""
+    def r(v):
+        return round(float(v), 6)
+    return {"min": r(bands.min()), "max": r(bands.max()),
+            "block_means": [[[r(block.mean(dtype=np.float64)) for block in np.array_split(rows, STATS_BLOCKS, axis=1)]
+                             for rows in np.array_split(band, STATS_BLOCKS, axis=0)] for band in bands]}
+
+
+def within(got, want, tolerance=TOLERANCE):
+    """Whether stats `got` are those of `want` within tolerance, number by number."""
+    a = np.array([got["min"], got["max"], *np.ravel(got["block_means"])], float)
+    b = np.array([want["min"], want["max"], *np.ravel(want["block_means"])], float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= tolerance))
 
 
 def tags_of(path):
@@ -129,17 +174,46 @@ def tags_of(path):
     return {name: list(value) if isinstance(value, tuple) else value for name, value in found.items()}
 
 
+def tags_match(entry, path):
+    """Whether the TIFF at path has the original's georeferencing and metadata, when entry lists them (`tags`)."""
+    return "tags" not in entry or tags_of(path) == entry["tags"]
+
+
+def verdict(entry, path):
+    """How the raster at path matches entry's content: "content verified" (the same pixels and georeferencing),
+    "content within TOLERANCE ..." (a lidar rebuild that is not bit-identical but has the same shape, the same
+    georeferencing and the manifest's stats within TOLERANCE), or None."""
+    try:
+        bands, transform = dem.read_raster(path)
+    except Exception:  # not a raster dem.read_raster accepts
+        return None
+    if content_digest(bands, transform) == entry["content_sha256"]:
+        return "content verified"
+    if ("stats" in entry and list(bands.shape) == entry["shape"] and list(transform) == entry["transform"]
+            and within(stats(bands), entry["stats"])):
+        return f"content within {TOLERANCE} of rasters.json's stats, not bit-identical"
+    return None
+
+
 def matches(entry, path):
-    """Whether the raster at path is entry's: the same file, or (fetched from
-    its official source, so encoded anew) the same content and tags."""
+    """Whether the raster at path is entry's: the same file, or (rebuilt from
+    its official source, so encoded anew) the same content, or a lidar rebuild
+    within TOLERANCE of its stats, with the original's tags."""
     if file_sha256(path) == entry["sha256"]:
         return True
-    try:
-        if content_sha256(path) != entry["content_sha256"]:
-            return False
-    except Exception:  # not a raster dem.read_raster accepts
-        return False
-    return "tags" not in entry or tags_of(path) == entry["tags"]
+    return verdict(entry, path) is not None and tags_match(entry, path)
+
+
+def check(entry, path):
+    """--verify's word for the raster at path: verified (with how, when it is within TOLERANCE), DIFFERS, MISSING."""
+    if not path.exists():
+        return "MISSING"
+    if file_sha256(path) == entry["sha256"]:
+        return "verified"
+    how = verdict(entry, path)
+    if how is None or not tags_match(entry, path):
+        return "DIFFERS"
+    return "verified" if how == "content verified" else f"verified, {how}"
 
 
 def transient(error):
@@ -168,6 +242,81 @@ def requests_of(provenance):
     if "url" in provenance:
         return [provenance["url"]]
     return list(provenance.get("urls") or provenance.get("requests") or [])
+
+
+def recipe_of(provenance):
+    """The tools/usgs_lidar.py recipe a raster's .json names, or None."""
+    return usgs_lidar.RECIPES.get(provenance.get("recipe"))
+
+
+def inputs_of(provenance):
+    """The USGS files a recipe reads, as the raster's .json lists them: [{url, size_bytes, sha256, ...}]."""
+    return [tile for key in recipe_of(provenance).inputs for tile in provenance[key]]
+
+
+def source_files(tiles, directory, get=download, log=say):
+    """The files of `tiles` ({url, size_bytes, sha256}) in directory, in their order: downloaded unless a file with
+    that SHA-256 is there, up to CONNECTIONS at once, and checked against the size and SHA-256 listed (rockyweb's
+    ETags are no checksums, so the provenance pins every file itself). A failed download raises with its URL: urllib's
+    errors leave it out, and the host tells S3 from rockyweb."""
+    paths = [Path(directory) / tile["url"].rsplit("/", 1)[1] for tile in tiles]
+
+    def fetch_file(tile, path):
+        try:
+            body = get(tile["url"])
+        except (OSError, http.client.HTTPException) as e:
+            raise RuntimeError(f"{tile['url']}: {e}") from e
+        digest = hashlib.sha256(body).hexdigest()
+        if (len(body), digest) != (tile["size_bytes"], tile["sha256"]):
+            raise ValueError(f"{tile['url']} is not the file the provenance lists ({len(body)} bytes, SHA-256 "
+                             f"{digest[:12]}...)")
+        part = path.with_name(f".{path.name}.part")
+        part.write_bytes(body)
+        os.replace(part, path)
+        return len(body)
+
+    pool = concurrent.futures.ThreadPoolExecutor(CONNECTIONS)
+    try:
+        sizes = [(path, pool.submit(fetch_file, tile, path)) for tile, path in zip(tiles, paths)
+                 if not (path.is_file() and file_sha256(path) == tile["sha256"])]
+        for path, size in sizes:  # in the listed order; the first failure raises
+            log(f"  {path.name}: downloaded, {size.result() / 1e6:.1f} MB")
+    finally:
+        pool.shutdown(cancel_futures=True)  # after a failure, start no other download
+    return paths
+
+
+class Rebuilds:
+    """The rasters the recipes of tools/usgs_lidar.py made in this run: a recipe that makes several (the route area's
+    DEM and its source map) runs once. The USGS files go to `sources` (kept) or to a temporary directory, the
+    recipes work in temporary directories; all of them are removed when `stack` closes."""
+
+    def __init__(self, data_dir, sources, get, stack):
+        self.data_dir, self.sources, self.get, self.stack, self.made = Path(data_dir), sources, get, stack, {}
+
+    def temporary(self, prefix):
+        return Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix=prefix)))
+
+    def output(self, entry, provenance, log=say):
+        """The file in a work directory that entry's recipe made for it; runs the recipe if this run has not."""
+        name = provenance["recipe"]
+        if name not in self.made:
+            try:
+                if self.sources is None:
+                    self.sources = self.temporary("fetch-data-sources-")
+                Path(self.sources).mkdir(parents=True, exist_ok=True)
+                recipe = recipe_of(provenance)
+                absent = [need for need in recipe.needs if not (self.data_dir / need).is_file()]
+                if absent:  # before any download
+                    raise FileNotFoundError(f"{', '.join(absent)} is not here (fetch-data fetches it first)")
+                files = {key: source_files(provenance[key], self.sources, self.get, log) for key in recipe.inputs}
+                self.made[name] = recipe.make(files, self.data_dir, self.temporary("fetch-data-work-"))
+            except Exception as e:
+                self.made[name] = e
+        made = self.made[name]
+        if isinstance(made, Exception):
+            raise made
+        return made[entry["path"]]
 
 
 def geotags(transform):
@@ -254,26 +403,54 @@ def mosaic(entry, provenance, get, out_path):
     write_geotiff(out_path, out, raster_tags(entry))
 
 
-def fetch(entry, data_dir, get=download, log=print):
+def plan(entry, data_dir):
+    """What the dry run would do for a missing raster fetch-data can fetch."""
+    provenance = json.loads((Path(data_dir) / entry["provenance"]).read_text())
+    if recipe_of(provenance) is None:
+        return f"would fetch from the official source, {len(requests_of(provenance))} request(s)"
+    tiles = inputs_of(provenance)
+    return (f"would rebuild it from the USGS lidar, {len(tiles)} file(s), "
+            f"{sum(t['size_bytes'] for t in tiles) / 1e6:.0f} MB")
+
+
+def fetch(entry, data_dir, get=download, log=say, rebuilds=None):
     """Fetch one raster from its official source into data_dir; True once it is in place and its content
-    verified."""
+    verified (rebuilds: the run's Rebuilds, for a raster a recipe makes). A rebuild kept within TOLERANCE is said
+    to be not bit-identical on this machine (MACHINE)."""
     path = data_dir / entry["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f".{path.name}.part")
-    try:
+    provenance = json.loads((data_dir / entry["provenance"]).read_text())
+    lidar = recipe_of(provenance) is not None
+    source = "the rebuild from the USGS lidar" if lidar else "the official source"
+    with contextlib.ExitStack() as stack:
         try:
-            mosaic(entry, json.loads((data_dir / entry["provenance"]).read_text()), get, part)
-        except Exception as e:  # any failure of the source
-            log(f"{entry['path']}: FAILED, the official source failed ({e})")
-            return False
-        if content_sha256(part) != entry["content_sha256"]:
-            log(f"{entry['path']}: FAILED, the official source now returns other pixels than rasters.json lists")
-            return False
-        os.replace(part, path)
-        log(f"{entry['path']}: fetched from its official source, content verified")
-        return True
-    finally:
-        part.unlink(missing_ok=True)
+            try:
+                if lidar:
+                    shutil.copyfile((rebuilds or Rebuilds(data_dir, None, get, stack)).output(entry, provenance, log),
+                                    part)
+                else:
+                    mosaic(entry, provenance, get, part)
+            except Exception as e:  # any failure of the source
+                log(f"{entry['path']}: FAILED, {source} failed ({e})")
+                return False
+            how = verdict(entry, part)
+            if how is None:
+                log(f"{entry['path']}: FAILED, {source} {'gives' if lidar else 'now returns'} other pixels than "
+                    "rasters.json lists")
+                return False
+            if not tags_match(entry, part):  # GDAL's in a lidar rebuild; a mosaic is written with them
+                log(f"{entry['path']}: FAILED, {source} gives other georeferencing or metadata than rasters.json "
+                    "lists (tags)")
+                return False
+            os.replace(part, path)
+            done = "rebuilt from the USGS lidar" if lidar else "fetched from its official source"
+            if how != "content verified":  # kept within TOLERANCE: where floating point rounded differently
+                done += f" on {MACHINE}"
+            log(f"{entry['path']}: {done}, {how}")
+            return True
+        finally:
+            part.unlink(missing_ok=True)
 
 
 def main(argv=None, get=download):
@@ -286,27 +463,32 @@ def main(argv=None, get=download):
     parser.add_argument("--verify", action="store_true",
                         help="check the rasters here against rasters.json; fetch nothing")
     parser.add_argument("--data", type=Path, default=DATA_DIR, help=f"data directory (default {DATA_DIR})")
+    parser.add_argument("--sources", type=Path,
+                        help="keep the USGS lidar files a rebuild downloads in this directory, and use the ones "
+                             "already there (default: a temporary directory, removed afterwards); put it outside "
+                             "the repository, for example ../lidar-sources: git does not ignore it")
     args = parser.parse_args(argv)
     failed, missing = 0, []
-    for entry in load_manifest(args.data)["rasters"]:
-        if not (args.all or entry["required"]):
-            continue
-        path = args.data / entry["path"]
-        if not (entry["official"] or path.exists()):  # nothing to fetch it from: say so, whatever the mode
-            print(f"{entry['path']}: missing, {needed_by(entry)}; {cannot_fetch(entry)}")
-            missing.append(entry)
-        elif args.verify:
-            state = "verified" if path.exists() and matches(entry, path) else "DIFFERS" if path.exists() else "MISSING"
-            print(f"{entry['path']}: {state}")
-            failed += state != "verified"
-        elif path.exists():
-            print(f"{entry['path']}: present")
-        elif args.dry_run:
-            count = len(requests_of(json.loads((args.data / entry["provenance"]).read_text())))
-            print(f"{entry['path']}: missing, would fetch from the official source, {count} request(s)")
-        elif not fetch(entry, args.data, get):
-            failed += 1
-    sys.stdout.flush()  # the summary after the lines above, also in a log
+    with contextlib.ExitStack() as stack:
+        rebuilds = Rebuilds(args.data, args.sources, get, stack)
+        for entry in load_manifest(args.data)["rasters"]:
+            if not (args.all or entry["required"]):
+                continue
+            path = args.data / entry["path"]
+            if not (entry["official"] or path.exists()):  # nothing to fetch it from: say so, whatever the mode
+                print(f"{entry['path']}: missing, {needed_by(entry)}; {cannot_fetch(entry)}")
+                missing.append(entry)
+            elif args.verify:
+                state = check(entry, path)
+                print(f"{entry['path']}: {state}")
+                failed += not state.startswith("verified")
+            elif path.exists():
+                print(f"{entry['path']}: present")
+            elif args.dry_run:
+                print(f"{entry['path']}: missing, {plan(entry, args.data)}")
+            elif not fetch(entry, args.data, get, rebuilds=rebuilds):
+                failed += 1
+            sys.stdout.flush()  # each line as it comes (a rebuild takes a while), and before the summary on stderr
     if failed and not args.verify:
         print(f"fetch-data: {failed} raster(s) not fetched (FAILED above); a clone that has them can link them "
               "here: rover_sim/tools/link_data.sh <that clone> (README, Simulation)", file=sys.stderr)

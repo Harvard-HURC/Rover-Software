@@ -7,15 +7,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import gen_model
 import viewers
+from rover_config import ROVER
 
-ROVER = gen_model.Params()
 FLY = viewers.FlyParams()
 # Speed presets 1-5: (linear [m/s], angular [rad/s]) at full stick.
 PRESETS = {1: (0.25, 0.4), 2: (0.6, 0.8), 3: (1.2, 1.2), 4: (2.0, 1.2), 5: (3.0, 1.2)}
 FAST = 2.0  # Shift multiplies the preset, up to what the rover can do:
-MAX_LINEAR = ROVER.wheel_speed * ROVER.wheel_radius  # [m/s] wheel joint velocity limit
+MAX_LINEAR = ROVER.wheel.top_speed * ROVER.wheel.radius  # [m/s] the top speed
 MAX_ANGULAR = 1.5  # [rad/s] spinning faster than this is not drivable from a camera
 # Acceleration limits [m/s^2, rad/s^2]: gentle speeding up, firmer slowing down.
 ACCEL = (1.0, 2.0)
@@ -114,11 +113,11 @@ class Look:
         self.center()
 
     def center(self):
-        self.pan, self.tilt = 0.0, self.rover.camera_pitch
+        self.pan, self.tilt = 0.0, self.rover.head.home_tilt
 
     def nudge(self, pan, tilt):
-        limit = self.rover.camera_pan_limit
-        lower, upper = self.rover.camera_tilt_limits
+        limit = self.rover.head.pan_limit
+        lower, upper = self.rover.head.tilt_limits
         self.pan = max(-limit, min(limit, self.pan + pan))
         self.tilt = max(lower, min(upper, self.tilt + tilt))
 
