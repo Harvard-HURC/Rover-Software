@@ -542,10 +542,12 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/pygments-2.21.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyparsing-3.3.3-pyh5ded981_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyqt-builder-1.18.2-pyhd8ed1ab_1.conda
+      - conda: https://prefix.dev/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-repeat-0.9.4-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-rerunfailures-16.6.1-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/python-can-4.6.1-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-gil-3.12.14-hd8ed1ab_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/python_abi-3.12-9_cp312.conda
@@ -561,6 +563,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/toml-0.10.2-pyhcf101f3_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/typeguard-4.6.0-pyhcf101f3_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/typing-3.10.0.0-pyhd8ed1ab_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/vcs2l-1.1.7-pyhcf101f3_0.conda
@@ -569,6 +572,8 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/wslink-2.5.7-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/zipp-4.1.1-pyh5ded981_0.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros-jazzy-desktop-0.11.0-hb0f4dca_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/linux-64/ros-jazzy-foxglove-bridge-3.4.3-hb0f4dca_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/linux-64/ros-jazzy-rviz2-14.1.23-hb0f4dca_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-action-msgs-2.0.4-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-action-tutorials-cpp-0.33.11-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-action-tutorials-interfaces-0.33.11-np2py312h2ed9cc7_21.conda
@@ -669,6 +674,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-fastrtps-cmake-module-3.6.4-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-filters-2.2.2-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-foonathan-memory-vendor-1.3.1-np2py312h2ed9cc7_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-foxglove-bridge-3.4.3-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-generate-parameter-library-0.7.6-np2py312h2c89a96_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-generate-parameter-library-py-0.7.6-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-geometry-msgs-5.3.8-np2py312h2ed9cc7_21.conda
@@ -841,6 +847,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rosidl-typesupport-interface-4.6.9-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rosidl-typesupport-introspection-c-4.6.9-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rosidl-typesupport-introspection-cpp-4.6.9-np2py312h2ed9cc7_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rosx-introspection-2.3.0-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rpyutils-0.4.2-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rqt-action-2.2.1-np2py312h2ed9cc7_21.conda
       - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rqt-bag-1.5.6-np2py312h2ed9cc7_21.conda
@@ -1007,10 +1014,12 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/pygments-2.21.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyparsing-3.3.3-pyh5ded981_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyqt-builder-1.18.2-pyhd8ed1ab_1.conda
+      - conda: https://prefix.dev/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-repeat-0.9.4-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-rerunfailures-16.6.1-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/python-can-4.6.1-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-gil-3.12.14-hd8ed1ab_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/python_abi-3.12-9_cp312.conda
@@ -1025,6 +1034,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/toml-0.10.2-pyhcf101f3_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/typeguard-4.6.0-pyhcf101f3_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/typing-3.10.0.0-pyhd8ed1ab_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/vcs2l-1.1.7-pyhcf101f3_0.conda
@@ -1416,6 +1426,8 @@ environments:
       - conda: https://prefix.dev/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
       - conda: https://prefix.dev/conda-forge/osx-arm64/zziplib-0.13.69-h57f5043_2.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros-jazzy-desktop-0.11.0-h60d57d3_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros-jazzy-foxglove-bridge-3.4.3-h60d57d3_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros-jazzy-rviz2-14.1.23-h60d57d3_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-action-msgs-2.0.4-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-action-tutorials-cpp-0.33.11-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-action-tutorials-interfaces-0.33.11-np2py312haf4906a_21.conda
@@ -1516,6 +1528,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-fastrtps-cmake-module-3.6.4-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-filters-2.2.2-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-foonathan-memory-vendor-1.3.1-np2py312haf4906a_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-foxglove-bridge-3.4.3-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-generate-parameter-library-0.7.6-np2py312h13627f0_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-generate-parameter-library-py-0.7.6-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-geometry-msgs-5.3.8-np2py312haf4906a_21.conda
@@ -1687,6 +1700,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rosidl-typesupport-interface-4.6.9-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rosidl-typesupport-introspection-c-4.6.9-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rosidl-typesupport-introspection-cpp-4.6.9-np2py312haf4906a_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rosx-introspection-2.3.0-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rpyutils-0.4.2-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rqt-action-2.2.1-np2py312haf4906a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rqt-bag-1.5.6-np2py312haf4906a_21.conda
@@ -1840,10 +1854,12 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/pygments-2.21.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyparsing-3.3.3-pyh5ded981_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pyqt-builder-1.18.2-pyhd8ed1ab_1.conda
+      - conda: https://prefix.dev/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-cov-7.1.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-repeat-0.9.4-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/pytest-rerunfailures-16.6.1-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/python-can-4.6.1-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/python-gil-3.12.14-hd8ed1ab_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/python_abi-3.12-9_cp312.conda
@@ -1858,6 +1874,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/toml-0.10.2-pyhcf101f3_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/typeguard-4.6.0-pyhcf101f3_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/typing-3.10.0.0-pyhd8ed1ab_2.conda
       - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/vcs2l-1.1.7-pyhcf101f3_0.conda
@@ -2199,6 +2216,8 @@ environments:
       - conda: https://prefix.dev/conda-forge/win-64/zstd-1.5.7-h534d264_7.conda
       - conda: https://prefix.dev/conda-forge/win-64/zziplib-0.13.69-h3ca93ac_2.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros-jazzy-desktop-0.11.0-h9490d1a_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/win-64/ros-jazzy-foxglove-bridge-3.4.3-h9490d1a_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/win-64/ros-jazzy-rviz2-14.1.23-h9490d1a_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-action-msgs-2.0.4-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-action-tutorials-cpp-0.33.11-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-action-tutorials-interfaces-0.33.11-np2py312hf80f32c_21.conda
@@ -2299,6 +2318,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-fastrtps-cmake-module-3.6.4-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-filters-2.2.2-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-foonathan-memory-vendor-1.3.1-np2py312hf80f32c_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-foxglove-bridge-3.4.3-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-generate-parameter-library-0.7.6-np2py312h5f99496_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-generate-parameter-library-py-0.7.6-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-geometry-msgs-5.3.8-np2py312hf80f32c_21.conda
@@ -2468,6 +2488,7 @@ environments:
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rosidl-typesupport-interface-4.6.9-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rosidl-typesupport-introspection-c-4.6.9-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rosidl-typesupport-introspection-cpp-4.6.9-np2py312hf80f32c_21.conda
+      - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rosx-introspection-2.3.0-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rpyutils-0.4.2-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rqt-action-2.2.1-np2py312hf80f32c_21.conda
       - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rqt-bag-1.5.6-np2py312hf80f32c_21.conda
@@ -10891,6 +10912,17 @@ packages:
   run_exports: {}
   size: 2952282
   timestamp: 1766858321453
+- conda: https://prefix.dev/conda-forge/noarch/pyserial-3.5-pyhcf101f3_2.conda
+  sha256: 8c618e8ca376d73133c9971abe45463a48c9cfb529788d609fd19568764941ba
+  md5: b27a6cd32160c34682ce6053b04c12c6
+  depends:
+  - python >=3.10
+  - python
+  license: BSD-3-Clause
+  license_family: BSD
+  run_exports: {}
+  size: 73910
+  timestamp: 1767289527295
 - conda: https://prefix.dev/conda-forge/noarch/pytest-9.1.1-pyhc364b38_2.conda
   sha256: 430051d80765207a7d782b2b188230ba1489d35c6e75fd9903f76cb9fda4af16
   md5: 64c98a12c4e23eb238bf66bbecafdf3c
@@ -10948,6 +10980,22 @@ packages:
   run_exports: {}
   size: 26527
   timestamp: 1788434181061
+- conda: https://prefix.dev/conda-forge/noarch/python-can-4.6.1-pyhd8ed1ab_0.conda
+  sha256: 199d56f3f6c5ae54429c317bad0eeca6abfb3bf2202123a20edb6e3b46b88a2b
+  md5: 0d418ae71cc36b2866e4a785b576dfc1
+  depends:
+  - msgpack-python
+  - packaging
+  - pyserial
+  - python >=3.9
+  - typing
+  - typing_extensions >=3.10.0.0
+  - wrapt >=1.10.0
+  license: LGPL-3.0-only
+  license_family: LGPL
+  run_exports: {}
+  size: 195404
+  timestamp: 1754995062582
 - conda: https://prefix.dev/conda-forge/noarch/python-dateutil-2.9.0.post0-pyhe01879c_2.conda
   sha256: d6a17ece93bbd5139e02d2bd7dbfa80bee1a4261dced63f65f679121686bf664
   md5: 5b8d21249ff20967101ffa321cab24e8
@@ -11135,6 +11183,16 @@ packages:
   run_exports: {}
   size: 38525
   timestamp: 1785075519409
+- conda: https://prefix.dev/conda-forge/noarch/typing-3.10.0.0-pyhd8ed1ab_2.conda
+  sha256: 92b084dfd77571be23ef84ad695bbea169e844821484b6d47d99f04ea4de32e8
+  md5: 28abeb80aea7eb4914f3a7543a47e248
+  depends:
+  - python >=3.9
+  license: PSF-2.0
+  license_family: PSF
+  run_exports: {}
+  size: 9502
+  timestamp: 1733927569850
 - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
   sha256: 2d888f90af0686044882c74193ec80a90ec1943145d94a7b1b048958acda1848
   md5: c70ad746c22219b9700931707482992c
@@ -22797,6 +22855,22 @@ packages:
   run_exports: {}
   size: 2011
   timestamp: 1788272902868
+- conda: https://prefix.dev/robostack-jazzy/linux-64/ros-jazzy-foxglove-bridge-3.4.3-hb0f4dca_21.conda
+  sha256: d86364cae13c89bc7a627f58ea4aaf05be0de6ece26828e1917cfe851a1e879a
+  md5: 78ca54c95f9b743a0d8bcdedc670fad0
+  depends:
+  - ros2-foxglove-bridge ==3.4.3
+  run_exports: {}
+  size: 2049
+  timestamp: 1788268304936
+- conda: https://prefix.dev/robostack-jazzy/linux-64/ros-jazzy-rviz2-14.1.23-hb0f4dca_21.conda
+  sha256: 6f7ee2f1f8acb41a90007e6fd291e87e0aba7bfc20538d20fc55df69caa70caa
+  md5: 14d73ee003d7e9d6713cfb002881348c
+  depends:
+  - ros2-rviz2 ==14.1.23
+  run_exports: {}
+  size: 2008
+  timestamp: 1788268301422
 - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-action-msgs-2.0.4-np2py312h2ed9cc7_21.conda
   sha256: 75c91d670430db142488c4dbe62dc83108f934d70c0c1b617a277d3129e50999
   md5: df4d6a8bfc17c1c02bf6089769bb1e20
@@ -24883,6 +24957,35 @@ packages:
   run_exports: {}
   size: 19501
   timestamp: 1788259344124
+- conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-foxglove-bridge-3.4.3-np2py312h2ed9cc7_21.conda
+  sha256: b221c369b342b4168709439f6e7bbdcc50faea2a4c0aeb4d05df0222ee902355
+  md5: b2001e92a45007c13ab1dbb7a831a6f9
+  depends:
+  - python
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rcl-interfaces
+  - ros2-rclcpp
+  - ros2-rclcpp-components
+  - ros2-rcpputils
+  - ros2-rcutils
+  - ros2-resource-retriever
+  - ros2-ros-workspace
+  - ros2-rosgraph-msgs
+  - ros2-rosidl-typesupport-introspection-cpp
+  - ros2-rosx-introspection
+  - ros2-service-msgs
+  - ros2-std-msgs
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  - numpy >=1.25,<3
+  license: MIT
+  run_exports: {}
+  size: 15689602
+  timestamp: 1788267880042
 - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-generate-parameter-library-0.7.6-np2py312h2c89a96_21.conda
   sha256: 07e330d7399d22301d2c1dabce9a99936e5136586b1a2dab113a9e7e099f642a
   md5: 6e1b4af49a8c5fd2df2703b5bc96cc21
@@ -29024,6 +29127,27 @@ packages:
   run_exports: {}
   size: 48436
   timestamp: 1788260493238
+- conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rosx-introspection-2.3.0-np2py312h2ed9cc7_21.conda
+  sha256: 3292d21691654e328fa6d3678d61672dd839d09be78c5c06dfc1840d734de4c9
+  md5: 56ad80c5ba9a108aeec5cca45612b8ed
+  depends:
+  - python
+  - rapidjson
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rclcpp
+  - ros2-ros-workspace
+  - ros2-rosbag2-cpp
+  - libstdcxx >=14
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - numpy >=1.25,<3
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  - python_abi 3.12.* *_cp312
+  license: MIT
+  run_exports: {}
+  size: 232272
+  timestamp: 1788267075709
 - conda: https://prefix.dev/robostack-jazzy/linux-64/ros2-rpyutils-0.4.2-np2py312h2ed9cc7_21.conda
   sha256: 7dad2429573fb2c296d13eaaa24ba0e7cef15913648fdc364b53e17922ce3a3e
   md5: 3a34626fa69b9b24314b97c15c2a7f7d
@@ -30873,6 +30997,22 @@ packages:
   run_exports: {}
   size: 1999
   timestamp: 1788469097974
+- conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros-jazzy-foxglove-bridge-3.4.3-h60d57d3_21.conda
+  sha256: 252014ea1aa0ae45191aecd195e5b0dbd0202fa85253f514d801ced68235564f
+  md5: dba21c81852acd3b39273560ed7b9fe7
+  depends:
+  - ros2-foxglove-bridge ==3.4.3
+  run_exports: {}
+  size: 2029
+  timestamp: 1788464916101
+- conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros-jazzy-rviz2-14.1.23-h60d57d3_21.conda
+  sha256: a09aa574d3d46cc28b55ae023e8df4b6cdc07477f5c71c4aec24f47defcddeef
+  md5: 203739640a5f63ac415e5de7399aeb9c
+  depends:
+  - ros2-rviz2 ==14.1.23
+  run_exports: {}
+  size: 1988
+  timestamp: 1788465190998
 - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-action-msgs-2.0.4-np2py312haf4906a_21.conda
   sha256: a35df0344a9132d49dd63c554abf46e4cfb9683bdfd23c2428d5747b3a8f1d4a
   md5: d44c0a3edeba62a1997a7e77ba472e39
@@ -32847,6 +32987,34 @@ packages:
   run_exports: {}
   size: 21162
   timestamp: 1788270684489
+- conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-foxglove-bridge-3.4.3-np2py312haf4906a_21.conda
+  sha256: 1fc9d345bc538b849e19c9f2d148cbbfec8338893a2d25982e2a852474462bd2
+  md5: 4b37b5dcf04848d686a2f90f31b147b1
+  depends:
+  - python
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rcl-interfaces
+  - ros2-rclcpp
+  - ros2-rclcpp-components
+  - ros2-rcpputils
+  - ros2-rcutils
+  - ros2-resource-retriever
+  - ros2-ros-workspace
+  - ros2-rosgraph-msgs
+  - ros2-rosidl-typesupport-introspection-cpp
+  - ros2-rosx-introspection
+  - ros2-service-msgs
+  - ros2-std-msgs
+  - libcxx >=19
+  - __osx >=12.0
+  - numpy >=1.25,<3
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  license: MIT
+  run_exports: {}
+  size: 12599521
+  timestamp: 1788464156279
 - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-generate-parameter-library-0.7.6-np2py312h13627f0_21.conda
   sha256: 4372d9c5d926df5ff26432d7b7c31ee56afe8a0c34a262825515649e74fc0f83
   md5: 6db0b51c2c8fdc49c6f52d66b2fd29a7
@@ -36738,6 +36906,26 @@ packages:
   run_exports: {}
   size: 49326
   timestamp: 1788361221532
+- conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rosx-introspection-2.3.0-np2py312haf4906a_21.conda
+  sha256: f674dac1046703c55261488f3544d60460f683882420634277780c50801b50f7
+  md5: b083cb3aec118536051ec9a11264917a
+  depends:
+  - python
+  - rapidjson
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rclcpp
+  - ros2-ros-workspace
+  - ros2-rosbag2-cpp
+  - libcxx >=19
+  - __osx >=12.0
+  - numpy >=1.25,<3
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  - python_abi 3.12.* *_cp312
+  license: MIT
+  run_exports: {}
+  size: 190507
+  timestamp: 1788463292413
 - conda: https://prefix.dev/robostack-jazzy/osx-arm64/ros2-rpyutils-0.4.2-np2py312haf4906a_21.conda
   sha256: 99b79db3c51891cf663c316dddf60892140bb431bb33bceddc2fdc100833cdc5
   md5: 83c1f8b7abe0fd72d37f78a0382e84bb
@@ -38420,6 +38608,22 @@ packages:
   run_exports: {}
   size: 1999
   timestamp: 1788478233116
+- conda: https://prefix.dev/robostack-jazzy/win-64/ros-jazzy-foxglove-bridge-3.4.3-h9490d1a_21.conda
+  sha256: 730fb3a2300b40859e7b4bb53ebe26e0e3fc02a804d87fafb326057a30662326
+  md5: 348a1354dd911f84dfbde7fa58e2a553
+  depends:
+  - ros2-foxglove-bridge ==3.4.3
+  run_exports: {}
+  size: 2037
+  timestamp: 1788454876389
+- conda: https://prefix.dev/robostack-jazzy/win-64/ros-jazzy-rviz2-14.1.23-h9490d1a_21.conda
+  sha256: 4d939c4c5cdfec96d4d76ac990c36831a47082c768dedf3db64dad7803d2f0f7
+  md5: 883975ec260e3464280b2ab67e826808
+  depends:
+  - ros2-rviz2 ==14.1.23
+  run_exports: {}
+  size: 1994
+  timestamp: 1788454873967
 - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-action-msgs-2.0.4-np2py312hf80f32c_21.conda
   sha256: c299aa6c698e5233b89845c16271014619e8f9428628b34e2d1868b19c543174
   md5: 47f6aac0752e302c5ac331c8c983be8d
@@ -40493,6 +40697,35 @@ packages:
   run_exports: {}
   size: 17475
   timestamp: 1788357192410
+- conda: https://prefix.dev/robostack-jazzy/win-64/ros2-foxglove-bridge-3.4.3-np2py312hf80f32c_21.conda
+  sha256: ff52a4e5131327c6064485578b0c6ce7f5a49012efffeff31e8effed49db107a
+  md5: 0c5998fcf10eafc5b0769a9f2d097ed1
+  depends:
+  - python
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rcl-interfaces
+  - ros2-rclcpp
+  - ros2-rclcpp-components
+  - ros2-rcpputils
+  - ros2-rcutils
+  - ros2-resource-retriever
+  - ros2-ros-workspace
+  - ros2-rosgraph-msgs
+  - ros2-rosidl-typesupport-introspection-cpp
+  - ros2-rosx-introspection
+  - ros2-service-msgs
+  - ros2-std-msgs
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  - ucrt >=10.0.20348.0
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  - numpy >=1.25,<3
+  - python_abi 3.12.* *_cp312
+  license: MIT
+  run_exports: {}
+  size: 14249607
+  timestamp: 1788453805696
 - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-generate-parameter-library-0.7.6-np2py312h5f99496_21.conda
   sha256: 69d3feed652ad44ccd2c772d4dcc11ee285dfc7fdf6489517db9eeb063a00109
   md5: 7b884337d8cc2747dd70423391abe4a5
@@ -44519,6 +44752,27 @@ packages:
   run_exports: {}
   size: 49137
   timestamp: 1788417932147
+- conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rosx-introspection-2.3.0-np2py312hf80f32c_21.conda
+  sha256: b8bbc49b9631e8f028e60cf4b232ba0c574c3f88a1c2df41d1bc68165f612bb0
+  md5: 3933108fae2cb65bc9d24d9bf0cebab3
+  depends:
+  - python
+  - rapidjson
+  - ros2-ament-index-cpp
+  - ros2-distro-mutex 0.16.* jazzy_*
+  - ros2-rclcpp
+  - ros2-ros-workspace
+  - ros2-rosbag2-cpp
+  - vc >=14.3,<15
+  - vc14_runtime >=14.44.35208
+  - ucrt >=10.0.20348.0
+  - numpy >=1.25,<3
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.16.0,<0.17.0a0
+  license: MIT
+  run_exports: {}
+  size: 220821
+  timestamp: 1788451368346
 - conda: https://prefix.dev/robostack-jazzy/win-64/ros2-rpyutils-0.4.2-np2py312hf80f32c_21.conda
   sha256: 33aff1a3a5eca48be48f085b4ccd9de8a9e4c943aa024d45ac76c13e48972625
   md5: f6f7e45055d77b6e13ea90185b8bb683

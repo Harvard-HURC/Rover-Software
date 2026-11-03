@@ -24,6 +24,24 @@ On the simulated rover (`pixi run sim` running), in `pixi shell`:
 
 `pixi run sim` and `pixi run drive` use the shell's ROS domain and gz partition (`ROS_DOMAIN_ID`, `GZ_PARTITION`), with ROS 2's default discovery, which reaches every computer on the subnet: in domain 0 two simulations on one network, or a simulation and the rover, drive each other. Give yours its own `ROS_DOMAIN_ID`, or set `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` to keep it on this computer (`docs/sim/manual.md`, Known limitations). The launcher runs each world in a domain and partition of its own, with `LOCALHOST`, as the tests do; its console names them (`ROS_DOMAIN_ID=<n> ros2 topic list` then sees the world's topics).
 
+## YAM arm
+
+The standalone [arm tools](../arm/README.md) expose these separately from the drive stack:
+
+| Interface | Type | Meaning |
+|---|---|---|
+| `/yam/joint_states` | sensor_msgs/JointState | Six measured arm angles [rad], joint1 through joint6, about 10 Hz |
+| `/yam/joint_commands` | sensor_msgs/JointState | Six named position targets [rad]; current wall-clock stamp (age 0 to 0.5 s), empty velocity and effort; reliable, volatile QoS |
+| `/yam/command_status` | std_msgs/String | Command acknowledgements, rejections and state changes |
+| `/yam/hold` (service) | std_srvs/Trigger | Cancel interpolation and hold the measured pose |
+| `/yam/robot_description` | std_msgs/String | Optional pinned YAM URDF (transient local), from `yam-description` |
+
+`yam-description` publishes the arm's TF on `/tf` and `/tf_static`, with frame prefix `yam/` and root
+`yam/base`. The arm is not yet mounted into the rover's URDF or ros2_control controller manager.
+The command node must remain running on the arm host to maintain the sender's motion lease. The sender
+owns CAN and requires `--enable-commands` for control. See the arm guide for limits, clock/discovery
+settings, localhost UDP transport, and the distinction between software hold and disabling torque.
+
 ## The simulation's own topics
 
 `rover_sim/launch/sim.launch.py` also bridges these (`rover_sim/bridge.yaml`): `/drivetrain` (std_msgs/String, the drivetrain's state as JSON at 50 Hz: each wheel's setpoint, speed, motor current, torque, voltage, saturation, slip, load, ground and dig factor; `cmd`, the twist the setpoints amount to), `/camera/pan` and `/camera/tilt` (Float64 target angles [rad], to the head), `/led` (the status LED: `red`, `blue`, `green`, `off`), and the referee's and the mission props' topics (`/urc/score`, `/urc/radio`, `/urc/display`, `/urc/launch_key`, `/astronaut/command`, `/astronaut/speech`, `/lander/joint_states`; `docs/sim/manual.md`).

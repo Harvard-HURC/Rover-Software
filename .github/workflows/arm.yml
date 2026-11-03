@@ -1,0 +1,34 @@
+name: YAM arm simulation
+
+on:
+  pull_request:
+    paths: ['arm/**', '.gitmodules', 'pixi.toml', 'pixi.lock', '.github/workflows/arm.yml']
+  push:
+    branches: [main, 'feat/yam-arm-setup']
+    paths: ['arm/**', '.gitmodules', 'pixi.toml', 'pixi.lock', '.github/workflows/arm.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  arm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: src
+          submodules: recursive
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.81.0
+          manifest-path: src/pixi.toml
+          locked: true
+          cache: true
+      - run: python3 -m pip install uv==0.13.0
+      - run: pixi run --locked yam-setup
+      - run: pixi run --locked yam-test
+      - run: git diff --exit-code

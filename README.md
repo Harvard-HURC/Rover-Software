@@ -2,6 +2,13 @@
 
 Welcome to the central repository for the HURC Rover's control software!
 
+### YAM arm
+
+The [arm setup guide](arm/README.md) includes the joint-state bridge, CAN sender, ROS command node,
+graphical controls, visualization, and hardware-free tests. It uses this repository's locked ROS
+environment and a pinned I2RT driver. On Ubuntu/WSL2, start with `pixi install --locked`,
+`pixi run --locked yam-setup`, then `pixi run --locked yam-test`; see the guide for USB/CAN and operation.
+
 ### Setup
 We use [pixi](https://pixi.prefix.dev/latest/#installation) to manage ROS packages with [RoboStack](https://robostack.github.io/GettingStarted.html). [CONTRIBUTING.md](CONTRIBUTING.md#set-up) has these steps for macOS, Linux and Windows (natively, and the simulation in WSL2)
 
