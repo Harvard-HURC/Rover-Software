@@ -168,6 +168,22 @@ Bring `main` into a long-lived branch with `git fetch origin && git merge origin
 
 Requiring CI and a review on `main` (branch protection, and "Require review from Code Owners") needs a repository admin. Until an admin turns it on, these rules hold by agreement.
 
+## Terrain download failures in CI
+
+HTTP 429 from USGS means the source is throttling downloads. `fetch-data` downloads lidar source tiles
+one at a time, retries transient errors up to six times, and honors `Retry-After` (seconds or an HTTP
+date). Without a longer server delay, 429 retries wait 60, 120, 240, 300 and 300 seconds. Each retry logs
+the URL, reason and wait; exhausted retries still fail the job, so missing terrain never becomes a
+passing simulation check.
+
+CI runs `pixi run fetch-data --sources ../lidar-sources` and preserves verified source tiles even after
+a failed fetch. Each attempt saves a new cache entry and restores the latest one for the same source
+provenance and OS. Every reused source is checked against its pinned SHA-256; an incomplete `.part`
+file is not cached. Completed rasters retain their separate cache. Rerun failed jobs after the source
+recovers; they can resume from saved source tiles. Locally, use `--sources` with a persistent directory
+outside the repository for the same behavior. A first fetch can take longer than the usual download
+estimate when the server requests a cooldown.
+
 ## How to
 
 ### Change the rover
