@@ -2,6 +2,13 @@
 
 Welcome to the central repository for the HURC Rover's control software!
 
+### YAM arm
+
+The [arm setup guide](arm/README.md) includes the joint-state bridge, CAN sender, ROS command node,
+graphical controls, visualization, and hardware-free tests. It uses this repository's locked ROS
+environment and a pinned I2RT driver. On Ubuntu/WSL2, start with `pixi install --locked`,
+`pixi run --locked yam-setup`, then `pixi run --locked yam-test`; see the guide for USB/CAN and operation.
+
 ### Setup
 We use [pixi](https://pixi.prefix.dev/latest/#installation) to manage ROS packages with [RoboStack](https://robostack.github.io/GettingStarted.html). [CONTRIBUTING.md](CONTRIBUTING.md#set-up) has these steps for macOS, Linux and Windows (natively, and the simulation in WSL2)
 
@@ -33,7 +40,7 @@ The manual is [docs/sim/manual.md](docs/sim/manual.md), with its [design notes](
 
 ### Tests
 - `pixi run test` runs the colcon tests of `rover_description` (xacro and `check_urdf` on the description, the team's linters), `rover_control` (GoogleTest, and `rover.launch.py` on the hardware stub) and `rover_sim` (C++, `RoverSimSystem` among them) and the simulation's suite, which also runs `RoverSimSystem` inside Gazebo with the controllers and `sim.launch.py` headless (the smoke test): about 17 minutes on an Apple M4. Tests that render skip on a machine without a GPU and say why
-- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data`, `pixi run test` (the rendering tests on macOS only) and then `git diff --exit-code`, which fails when the tests left a tracked file changed (they regenerate the tracked rover model, so one committed stale fails); on Windows `pixi run build`. The rasters are cached by what makes them (`rasters.json`, each raster's `.json`, `fetch_data.py` and `usgs_lidar.py`), so fetch-data downloads and rebuilds them only when one of those changes; a run whose fetch-data fails saves nothing, so the next run downloads them again
+- CI (`.github/workflows/ci.yml`) runs the same tasks on every pull request: on Ubuntu 24.04 and macOS (Apple silicon) `pixi run build`, `pixi run fetch-data`, `pixi run test` (the rendering tests on macOS only) and then `git diff --exit-code`, which fails when the tests left a tracked file changed (they regenerate the tracked rover model, so one committed stale fails); on Windows `pixi run build`. The rasters are cached by what makes them (`rasters.json`, each raster's `.json`, `fetch_data.py` and `usgs_lidar.py`), so fetch-data downloads and rebuilds them only when one of those changes; raw lidar source tiles also have a separate cache, saved even when a later download fails. A rerun verifies their SHA-256 hashes and downloads only missing or corrupt source tiles
 
 ### Platforms
 - **macOS (Apple silicon):** everything

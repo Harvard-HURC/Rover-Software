@@ -34,8 +34,8 @@ differs from the manifest, or one it can fetch is missing); 2 for a usage
 error.
 """
 import argparse
-import concurrent.futures
 import contextlib
+from email.utils import parsedate_to_datetime
 import hashlib
 import http.client
 import json
@@ -62,9 +62,9 @@ DATA_DIR = SIM_DIR / "data"
 MANIFEST = "rasters.json"  # in the data directory
 TRIES = 6  # per download: the ImageServers answer HTTP 500 and time out (HTTP 504) for minutes; rockyweb drops connections
 WAITS = (10, 20, 40, 80, 120)  # [s] between tries, 4.5 min in all (M: the first CI run met a 504, 2026-10-11)
-# Downloads at once of a lidar rebuild: rockyweb gave 0.14 MB/s to one connection and 0.32 MB/s to six
-# (M, 2026-10-10); the plan's run of 2026-10-10 got its 295 MB of LAZ in under 4 minutes.
-CONNECTIONS = 6
+# HTTP 429 persisted across CI reruns with six parallel lidar downloads (M, 2026-11-03).
+# Fetch source tiles serially and give throttling longer to clear than ordinary transient failures.
+THROTTLE_WAITS = (60, 120, 240, 300, 300)  # [s], minimum waits when Retry-After is absent or shorter (A)
 USER_AGENT = "Harvard-HURC Rover-Software fetch-data"
 LINK = "link it from a clone that has it: rover_sim/tools/link_data.sh <that clone> (README, Simulation)"
 STATS_BLOCKS = 16  # blocks per side of a raster's stats
@@ -224,8 +224,23 @@ def transient(error):
     return isinstance(error, (OSError, http.client.HTTPException))
 
 
+def retry_wait(error, attempt):
+    """Backoff in seconds, honoring Retry-After as either delay-seconds or an HTTP date (RFC 9110, 10.2.3)."""
+    wait = THROTTLE_WAITS[attempt] if isinstance(error, urllib.error.HTTPError) and error.code == 429 else WAITS[attempt]
+    if isinstance(error, urllib.error.HTTPError) and error.headers:
+        value = error.headers.get("Retry-After", "").strip()
+        try:
+            if value.isascii() and value.isdecimal():
+                wait = max(wait, int(value))
+            elif value:
+                wait = max(wait, parsedate_to_datetime(value).timestamp() - time.time())
+        except (TypeError, ValueError, OverflowError):
+            pass  # A malformed header must not disable the normal backoff.
+    return wait
+
+
 def download(url):
-    """The body at url, after up to TRIES attempts, waiting WAITS between them while the failure is transient."""
+    """The body at url, after up to TRIES attempts; throttling and Retry-After determine the retry delay."""
     for attempt in range(TRIES):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}),
@@ -234,7 +249,12 @@ def download(url):
         except (OSError, http.client.HTTPException) as error:  # HTTPException: IncompleteRead, a body cut short
             if attempt == TRIES - 1 or not transient(error):
                 raise
-            time.sleep(WAITS[attempt])
+            wait = retry_wait(error, attempt)
+            print(f"fetch-data: {url}: {error}; retry {attempt + 2}/{TRIES} in {wait:g} s",
+                  file=sys.stderr, flush=True)
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            time.sleep(wait)
 
 
 def requests_of(provenance):
@@ -256,7 +276,7 @@ def inputs_of(provenance):
 
 def source_files(tiles, directory, get=download, log=say):
     """The files of `tiles` ({url, size_bytes, sha256}) in directory, in their order: downloaded unless a file with
-    that SHA-256 is there, up to CONNECTIONS at once, and checked against the size and SHA-256 listed (rockyweb's
+    that SHA-256 is there, one at a time, and checked against the size and SHA-256 listed (rockyweb's
     ETags are no checksums, so the provenance pins every file itself). A failed download raises with its URL: urllib's
     errors leave it out, and the host tells S3 from rockyweb."""
     paths = [Path(directory) / tile["url"].rsplit("/", 1)[1] for tile in tiles]
@@ -275,14 +295,13 @@ def source_files(tiles, directory, get=download, log=say):
         os.replace(part, path)
         return len(body)
 
-    pool = concurrent.futures.ThreadPoolExecutor(CONNECTIONS)
-    try:
-        sizes = [(path, pool.submit(fetch_file, tile, path)) for tile, path in zip(tiles, paths)
-                 if not (path.is_file() and file_sha256(path) == tile["sha256"])]
-        for path, size in sizes:  # in the listed order; the first failure raises
-            log(f"  {path.name}: downloaded, {size.result() / 1e6:.1f} MB")
-    finally:
-        pool.shutdown(cancel_futures=True)  # after a failure, start no other download
+    for tile, path in zip(tiles, paths):
+        if path.is_file() and file_sha256(path) == tile["sha256"]:
+            continue
+        # Do not keep requesting other tiles while this host is throttling us. On failure,
+        # already verified files remain reusable with --sources; later tiles are untouched.
+        size = fetch_file(tile, path)
+        log(f"  {path.name}: downloaded, {size / 1e6:.1f} MB")
     return paths
 
 

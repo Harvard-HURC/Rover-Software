@@ -15,7 +15,6 @@ import json
 import shutil
 import sys
 import tempfile
-import threading
 import unittest
 import urllib.error
 from pathlib import Path
@@ -332,8 +331,8 @@ class Response:
         return self.body
 
 
-def http_error(code):
-    return urllib.error.HTTPError("https://example.test/exportImage", code, "error", {}, None)
+def http_error(code, headers=None):
+    return urllib.error.HTTPError("https://example.test/exportImage", code, "error", headers or {}, None)
 
 
 class Download(unittest.TestCase):
@@ -378,6 +377,36 @@ class Download(unittest.TestCase):
 
     def test_a_file_that_is_not_there_is_not_asked_for_again(self):
         result, waits = self.fetch(http_error(404), b"never asked")
+        self.assertIsInstance(result, urllib.error.HTTPError)
+        self.assertEqual(waits, [])
+
+    def test_throttling_honors_retry_after_seconds_and_reports_the_wait(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result, waits = self.fetch(http_error(429, {"Retry-After": "180"}), b"tile")
+        self.assertEqual((result, waits), (b"tile", [180]))
+        self.assertIn("retry 2/6 in 180 s", stderr.getvalue())
+        self.assertIn("https://example.test/exportImage", stderr.getvalue())
+
+    def test_retry_after_http_date_is_honored_for_a_server_outage(self):
+        with mock.patch.object(fetch_data.time, "time", return_value=0):
+            result, waits = self.fetch(http_error(503, {"Retry-After": "Thu, 01 Jan 1970 00:05:00 GMT"}), b"tile")
+        self.assertEqual((result, waits), (b"tile", [300]))
+
+    def test_missing_invalid_past_and_short_retry_after_keep_the_backoff(self):
+        for header in (None, "garbage", "-1", "0", "1.5", "Thu, 01 Jan 1970 00:00:00 GMT"):
+            with self.subTest(header=header):
+                result, waits = self.fetch(http_error(429, {"Retry-After": header} if header else {}), b"tile")
+                self.assertEqual((result, waits), (b"tile", [fetch_data.THROTTLE_WAITS[0]]))
+
+    def test_persistent_throttling_still_fails_after_bounded_attempts(self):
+        result, waits = self.fetch(*[http_error(429) for _ in range(fetch_data.TRIES)])
+        self.assertIsInstance(result, urllib.error.HTTPError)
+        self.assertEqual(result.code, 429)
+        self.assertEqual(waits, list(fetch_data.THROTTLE_WAITS))
+
+    def test_retry_after_does_not_make_a_permanent_error_retryable(self):
+        result, waits = self.fetch(http_error(404, {"Retry-After": "60"}), b"never asked")
         self.assertIsInstance(result, urllib.error.HTTPError)
         self.assertEqual(waits, [])
 
@@ -566,7 +595,7 @@ class Stats(unittest.TestCase):
 
 
 class Sources(unittest.TestCase):
-    """The USGS files a recipe reads: downloaded once, several at once, checked against the size and SHA-256 its
+    """The USGS files a recipe reads: downloaded serially, checked against the size and SHA-256 its
     provenance lists; a download cut short is tried again."""
 
     def setUp(self):
@@ -616,14 +645,28 @@ class Sources(unittest.TestCase):
             fetch_data.source_files(self.tiles, self.dir, self.server, lambda line: None)
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["a.laz"])
 
-    def test_they_are_downloaded_at_the_same_time(self):
-        both = threading.Barrier(2, timeout=10)
-
-        def get(url):  # answers once both requests are in flight; one at a time breaks the barrier after 10 s
-            both.wait()
+    def test_each_source_is_verified_and_saved_before_requesting_the_next(self):
+        def get(url):
+            if url.endswith("b.tif"):
+                self.assertEqual((self.dir / "a.laz").read_bytes(), b"first")
             return self.server(url)
         self.assertEqual(fetch_data.source_files(self.tiles, self.dir, get, lambda line: None),
                          [self.dir / "a.laz", self.dir / "b.tif"])
+
+    def test_failed_source_stops_new_requests_and_next_run_resumes_verified_files(self):
+        third = {"url": "https://example.test/c.laz", "size_bytes": 5, "sha256": sha256(b"third")}
+        tiles = self.tiles + [third]
+        self.server.bodies[third["url"]] = b"third"
+        del self.server.bodies["https://example.test/b.tif"]
+        with self.assertRaises(RuntimeError):
+            fetch_data.source_files(tiles, self.dir, self.server, lambda line: None)
+        self.assertEqual(self.server.asked, [tile["url"] for tile in self.tiles])
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["a.laz"])
+        self.server.bodies["https://example.test/b.tif"] = b"second"
+        self.server.asked.clear()
+        paths = fetch_data.source_files(tiles, self.dir, self.server, lambda line: None)
+        self.assertEqual(self.server.asked, [tile["url"] for tile in tiles[1:]])
+        self.assertEqual([p.read_bytes() for p in paths], [b"first", b"second", b"third"])
 
     def test_a_download_cut_short_is_tried_again(self):
         class Cut(io.BytesIO):  # a response whose body breaks off, as http.client reports it

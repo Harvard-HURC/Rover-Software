@@ -50,6 +50,21 @@ sim-realism = { cmd = "python rover_sim/tools/realism_report.py", depends-on = [
 # The mission routes driven by the physical rover (tens of minutes).
 sim-slow = { cmd = "python -m unittest -v test_urc_sim.MissionRoutes", cwd = "rover_sim/tests", env = { ROVER_SLOW = "1" }, depends-on = ["sim-build", "sim-model", "sim-worlds"] }
 
+[target.linux-64.tasks]
+# YAM tools run directly from source; no rover build or terrain download required.
+yam-setup = "bash arm/setup.sh"
+yam-bridge = "python -u arm/yam_ros_bridge.py"
+yam-sim = "bash arm/run-sender.sh --sim --enable-commands"
+yam-hardware = "bash arm/run-sender.sh --enable-commands"
+yam-feedback = "bash arm/run-sender.sh"
+yam-command = "python -u arm/yam_command_sender.py"
+yam-gui = "python -u arm/yam_command_sender.py --ros-args -p gui:=true"
+yam-daemon = "python -u arm/yam_command_sender.py --ros-args -p interactive:=false"
+yam-description = "ros2 launch arm/display.launch.py"
+yam-rviz = "rviz2 -f yam/base"
+yam-foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml address:=127.0.0.1"
+yam-test = "bash arm/test.sh"
+
 [target.win-64.tasks]
 # Windows builds the rover's packages without their tests (rover_sim configures to nothing there); the simulation
 # and the tests run on macOS and Linux (on Windows in WSL2, README, Platforms).
@@ -78,6 +93,9 @@ ros2-hardware-interface = ">=4.47.0,<5"
 ros2-diff-drive-controller = ">=4.42.1,<5"
 ros2-joint-state-broadcaster = ">=4.42.1,<5"
 ros2-ros2controlcli = ">=4.47.0,<5"
+python-can = ">=4.6.1,<5"
+ros-jazzy-foxglove-bridge = ">=3.4.3,<4"
+ros-jazzy-rviz2 = ">=14.1.23,<15"
 
 # rover_sim: Gazebo's libraries for the plugins and the simulation's Python. macOS and Linux only: on Windows the
 # simulation runs in WSL2.
